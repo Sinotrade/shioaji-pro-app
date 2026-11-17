@@ -19,8 +19,11 @@ import {
     renameWatchlist,
     resolveContract as resolveContractV2,
     syncWatchlist,
-    type ServerWatchlist
+    type ServerWatchlist,
+    type ServerWatchlistContract,
 } from '../lib/shioaji';
+import { contractLinkKey, isUsKey } from '../lib/contract-key';
+import { cachedUsInfo, loadUsInfo, resolveUsContract, toUsContractInfo } from '../lib/us/us-contracts';
 import { onContractEvent, registerCodeAlias } from '../lib/stream';
 import { notify } from '../lib/trade';
 import { onWatchlistChanged, type WatchlistChangedDetail } from '../lib/watchlist-sync';
@@ -45,17 +48,67 @@ const DEFAULT_SYMBOLS: { code: string; type: SecurityType }[] = [
 const LEGACY_KEY = 'sj-pro-watchlist';
 const ACTIVE_KEY = 'sj-pro-active-watchlist';
 
+/** 第一次把美股加進自選時提示一次（舊版 SDK 讀含美股的清單會失敗） */
+export const US_WATCHLIST_NOTICE_KEY = 'sj-pro-us-watchlist-notice:v1';
+
+function noticeUsWatchlistOnce() {
+    try {
+        if (localStorage.getItem(US_WATCHLIST_NOTICE_KEY)) return;
+        localStorage.setItem(US_WATCHLIST_NOTICE_KEY, '1');
+    } catch {
+        // 讀不到儲存空間：照樣提示，下次可能再提示一次
+    }
+    notify({
+        kind: 'info',
+        title: '自選清單已含美股',
+        body: '含美股的自選清單：使用 SDK 1.7.x 的程式讀取時會失敗，請改用 1.8.0b1 以上版本',
+    });
+}
+
+/** 自選成員（伺服器 wire 或 ContractInfo）共用的最小欄位 */
+type MemberBase = { security_type: string | null; code: string; region?: string | null };
+
+/** 成員的連動 key：美股 `US:CODE`，台股裸代碼（台股 `T` 與美股 `T` 不會撞名） */
+export const memberLinkKey = (contract: MemberBase) =>
+    contractLinkKey({ code: contract.code, region: contract.region === 'US' ? 'US' : 'TW' });
+
+const isUsMember = (contract: MemberBase) => contract.region === 'US';
+
+/** ContractInfo → 伺服器清單的成員格式；美股帶 region（台股維持舊格式） */
+function toWire(contract: ContractInfo): ServerWatchlistContract {
+    return {
+        security_type: contract.security_type,
+        exchange: contract.exchange ?? '',
+        code: contract.code,
+        ...(contract.region === 'US' ? { region: 'US' as const } : {}),
+    };
+}
+
 async function resolveContract(
     code: string,
     type?: SecurityType | null,
 ): Promise<ContractInfo> {
+    // 美股 `US:CODE` 一律走美股商品資訊，不打 region=TW 查詢
+    if (isUsKey(code)) return ensureContract(code);
     if (type) return resolveContractV2(code, type);
     return ensureContract(code);
 }
 
-function resolveWatchlistContract(
-    base: ServerWatchlist['contracts'][number],
+/**
+ * 還原美股成員：名稱與前一日參考價取自美股商品資訊（今日快取優先），
+ * 交易所以清單內存的實際交易所墊底；絕不以 region=TW 查詢。
+ */
+async function restoreUsMember(base: MemberBase & { exchange?: string | null }): Promise<ContractInfo> {
+    const info = await loadUsInfo(base.code).catch(() => cachedUsInfo(base.code));
+    const contract = toUsContractInfo(base.code, info, { exchange: base.exchange ?? '' });
+    if (!contract.exchange) throw new Error(`查不到美股 ${base.code} 的交易所`);
+    return contract;
+}
+
+export function resolveWatchlistContract(
+    base: ServerWatchlistContract,
 ): Promise<ContractInfo> {
+    if (isUsMember(base)) return restoreUsMember(base);
     // The watchlist already contains a Base contract. Fetch only the typed
     // details; preserve the generic lookup for legacy/missing types and WRT,
     // whose Info endpoint requires an underlying shard.
@@ -65,8 +118,8 @@ function resolveWatchlistContract(
     return resolveContract(base.code, base.security_type);
 }
 
-const membershipKey = (contract: { security_type: string | null; code: string }) =>
-    `${contract.security_type}:${contract.code}`;
+const membershipKey = (contract: MemberBase) =>
+    `${contract.security_type}:${memberLinkKey(contract)}`;
 
 /**
  * True when the server list's members differ from what the panel is about
@@ -74,12 +127,12 @@ const membershipKey = (contract: { security_type: string | null; code: string })
  * a read from a slightly older server snapshot is not mistaken for a change.
  */
 export function serverMembershipChanged(
-    server: { contracts: readonly { security_type: string | null; code: string }[] },
-    toSave: readonly { security_type: string | null; code: string }[],
-    committed?: ReadonlyMap<string, { security_type: string | null; code: string } | null>,
+    server: { contracts: readonly MemberBase[] },
+    toSave: readonly MemberBase[],
+    committed?: ReadonlyMap<string, MemberBase | null>,
 ): boolean {
     const members = new Set(server.contracts
-        .filter((contract) => !committed?.has(contract.code))
+        .filter((contract) => !committed?.has(memberLinkKey(contract)))
         .map(membershipKey));
     for (const contract of committed?.values() ?? []) {
         if (contract) members.add(membershipKey(contract));
@@ -141,13 +194,16 @@ export function useWatchlist() {
         primeContract(contract);
     }, []);
 
-    const attachSnapshots = useCallback((contracts: ContractInfo[]) => {
+    const attachSnapshots = useCallback((all: ContractInfo[]) => {
+        // 美股沒有快照（只有即時 tick 與前一日參考價），不送 fetchSnapshots
+        const contracts = all.filter((contract) => !isUsMember(contract));
         if (contracts.length === 0) return;
         fetchSnapshots(contracts)
             .then((snaps) => {
                 const byCode = new Map(snaps.map((s) => [s.code, s]));
                 setItems((prev) =>
                     prev.map((i) => {
+                        if (isUsMember(i.contract)) return i;
                         const snap =
                             byCode.get(i.contract.code) ??
                             (i.contract.target_code
@@ -163,8 +219,7 @@ export function useWatchlist() {
     const keepCommittedOrder = useCallback((id: string, list: ServerWatchlist) => {
         const anchor = committedOrder.current.get(id);
         if (!anchor) return list;
-        const key = (contract: { security_type: string | null; code: string }) =>
-            `${contract.security_type}:${contract.code}`;
+        const key = membershipKey;
         const byKey = new Map(list.contracts.map((contract) => [key(contract), contract]));
         const anchored = anchor.flatMap((contract) => {
             const base = byKey.get(key(contract));
@@ -201,20 +256,16 @@ export function useWatchlist() {
             const unconfirmed = committedMembership.current.get(list.id);
             const membership = unconfirmed?.size
                 ? { ...list, contracts: [
-                    ...list.contracts.filter((contract) => !unconfirmed.has(contract.code)),
-                    ...[...unconfirmed.values()].flatMap((contract) => contract ? [{
-                        security_type: contract.security_type,
-                        exchange: contract.exchange ?? '',
-                        code: contract.code,
-                    }] : []),
+                    ...list.contracts.filter((contract) => !unconfirmed.has(memberLinkKey(contract))),
+                    ...[...unconfirmed.values()].flatMap((contract) => contract ? [toWire(contract)] : []),
                 ] }
                 : list;
             const reconciled = keepCommittedOrder(list.id, membership);
             const expected = pendingServerContracts.current.get(list.id);
             if (!expected) return reconciled;
             if (expected.length === reconciled.contracts.length && expected.every((contract, index) =>
-                contract.code === reconciled.contracts[index]?.code &&
-                contract.security_type === reconciled.contracts[index]?.security_type)) {
+                reconciled.contracts[index] !== undefined &&
+                membershipKey(contract) === membershipKey(reconciled.contracts[index]!))) {
                 pendingServerContracts.current.delete(list.id);
                 return reconciled;
             }
@@ -235,11 +286,7 @@ export function useWatchlist() {
     }, []);
 
     const patchLocalContracts = useCallback((id: string, contracts: ContractInfo[]) => {
-        pendingServerContracts.current.set(id, contracts.map((contract) => ({
-            security_type: contract.security_type,
-            exchange: contract.exchange ?? '',
-            code: contract.code,
-        })));
+        pendingServerContracts.current.set(id, contracts.map(toWire));
         applyLocalLists(serverListsRef.current.map((list) => list.id === id
             ? { ...list, contracts: pendingServerContracts.current.get(id)! }
             : list));
@@ -248,12 +295,8 @@ export function useWatchlist() {
     const reconcileFailedMembership = useCallback((id: string, list: ServerWatchlist) => {
         const changes = committedMembership.current.get(id);
         if (!changes?.size) return keepCommittedOrder(id, list);
-        const unchanged = list.contracts.filter((contract) => !changes.has(contract.code));
-        const added = [...changes.values()].flatMap((contract) => contract ? [{
-            security_type: contract.security_type,
-            exchange: contract.exchange ?? '',
-            code: contract.code,
-        }] : []);
+        const unchanged = list.contracts.filter((contract) => !changes.has(memberLinkKey(contract)));
+        const added = [...changes.values()].flatMap((contract) => contract ? [toWire(contract)] : []);
         return keepCommittedOrder(id, { ...list, contracts: [...unchanged, ...added] });
     }, [keepCommittedOrder]);
 
@@ -342,12 +385,12 @@ export function useWatchlist() {
                         const list = reconcileFailedMembership(id, raw);
                         const previous = new Map(
                             (desiredContracts.current.get(id) ?? []).map((contract) => [
-                                `${contract.security_type}:${contract.code}`,
+                                membershipKey(contract),
                                 contract,
                             ]),
                         );
                         const authoritative = await Promise.all(list.contracts.map(
-                            (base) => previous.get(`${base.security_type}:${base.code}`) ??
+                            (base) => previous.get(membershipKey(base)) ??
                                 resolveWatchlistContract(base),
                         ));
                         desiredContracts.current.set(id, authoritative);
@@ -471,11 +514,7 @@ export function useWatchlist() {
         const list = serverListsRef.current.find((candidate) => candidate.id === id);
         if (list) {
             const desired = desiredContracts.current.get(id);
-            const contracts = desired?.map((contract) => ({
-                security_type: contract.security_type,
-                exchange: contract.exchange ?? '',
-                code: contract.code,
-            })) ?? list.contracts;
+            const contracts = desired?.map(toWire) ?? list.contracts;
             void loadList({ ...list, contracts }, true);
         }
     };
@@ -490,7 +529,17 @@ export function useWatchlist() {
             if (structureBusyRef.current) throw new Error('自選清單更新中，請稍後再試');
             const id = activeIdRef.current;
             if (!id) throw new Error('自選清單尚未就緒');
-            const contract = resolved ?? (await resolveContract(code, type));
+            let contract = resolved ?? (await resolveContract(code, type));
+            // 美股：搜尋建議的合約可能還沒有參考價，加入前補齊商品資訊；
+            // 送出的 exchange 必須是實際交易所（NASDAQ／NYSE／BATS／TXSE）
+            if (isUsMember(contract) && (!contract.us_reference || !contract.exchange)) {
+                const usContract = contract;
+                contract = await resolveUsContract(usContract.code).catch(() => usContract);
+            }
+            if (isUsMember(contract) && !contract.exchange) {
+                throw new Error(`查不到美股 ${contract.code} 的交易所，無法加入自選`);
+            }
+            const key = memberLinkKey(contract);
             // 組合商品（合成合約）不能進自選 — server 端自選清單只收
             // 一般合約 code，同步會 400；組合請用「組合商品」面板
             if (contract.combo) {
@@ -498,8 +547,8 @@ export function useWatchlist() {
                     '組合商品暫不支援加入自選，請使用「組合商品」面板',
                 );
             }
-            if (resolved) primeContract(resolved);
-            if (items.some((i) => i.contract.code === contract.code)) {
+            if (resolved) primeContract(contract);
+            if (items.some((i) => memberLinkKey(i.contract) === key)) {
                 return contract;
             }
             await subscribeContract(contract);
@@ -510,10 +559,11 @@ export function useWatchlist() {
             }
             await enqueueMutation(id, async () => {
                 const desired = desiredContracts.current.get(id) ?? [];
-                if (desired.some((item) => item.code === contract.code)) return;
+                if (desired.some((item) => memberLinkKey(item) === key)) return;
                 await addWatchlistContracts(id, [contract]);
+                if (isUsMember(contract)) noticeUsWatchlistOnce();
                 const changes = committedMembership.current.get(id) ?? new Map();
-                changes.set(contract.code, contract);
+                changes.set(key, contract);
                 committedMembership.current.set(id, changes);
                 // A move can update the desired order while POST is in flight.
                 const latest = desiredContracts.current.get(id) ?? desired;
@@ -538,23 +588,24 @@ export function useWatchlist() {
         ],
     );
 
+    // key：contractLinkKey（台股裸代碼、美股 `US:CODE`）
     const removeSymbol = useCallback(
-        async (code: string) => {
+        async (key: string) => {
             if (loading || structureBusyRef.current) return;
-            const item = items.find((i) => i.contract.code === code);
+            const item = items.find((i) => memberLinkKey(i.contract) === key);
             if (!item) return;
             const id = activeIdRef.current;
             if (id) {
                 await enqueueMutation(id, async () => {
                     await removeWatchlistContracts(id, [item.contract]);
                     const changes = committedMembership.current.get(id) ?? new Map();
-                    changes.set(code, null);
+                    changes.set(key, null);
                     committedMembership.current.set(id, changes);
                     const desired = desiredContracts.current.get(id) ?? [];
-                    desiredContracts.current.set(id, desired.filter((contract) => contract.code !== code));
+                    desiredContracts.current.set(id, desired.filter((contract) => memberLinkKey(contract) !== key));
                     patchLocalContracts(id, desiredContracts.current.get(id) ?? []);
                     if (activeIdRef.current === id) {
-                        setItems((prev) => prev.filter((i) => i.contract.code !== code));
+                        setItems((prev) => prev.filter((i) => memberLinkKey(i.contract) !== key));
                     }
                     await refreshLists().catch(() => undefined);
                 });
@@ -563,22 +614,23 @@ export function useWatchlist() {
         [items, loading, enqueueMutation, patchLocalContracts, refreshLists],
     );
 
-    // drag-to-reorder: move `fromCode` to the position of `toCode`
+    // drag-to-reorder: move `fromKey` to the position of `toKey`
+    // （contractLinkKey：台股裸代碼、美股 `US:CODE`）
     const reorderSymbol = useCallback(
-        (fromCode: string, toCode: string) => {
+        (fromKey: string, toKey: string) => {
             const id = activeIdRef.current;
             if (!id || !canReplaceList.current) return;
             const current = desiredContracts.current.get(id) ?? items.map((item) => item.contract);
-            const fromIdx = current.findIndex((contract) => contract.code === fromCode);
-            const toIdx = current.findIndex((contract) => contract.code === toCode);
+            const fromIdx = current.findIndex((contract) => memberLinkKey(contract) === fromKey);
+            const toIdx = current.findIndex((contract) => memberLinkKey(contract) === toKey);
             if (fromIdx === -1 || toIdx === -1 || fromIdx === toIdx) return;
             const next = [...current];
             const [moved] = next.splice(fromIdx, 1);
             next.splice(toIdx, 0, moved!);
             desiredContracts.current.set(id, next);
             setItems((prev) => {
-                const byCode = new Map(prev.map((item) => [item.contract.code, item]));
-                return next.map((contract) => byCode.get(contract.code) ?? { contract });
+                const byKey = new Map(prev.map((item) => [memberLinkKey(item.contract), item]));
+                return next.map((contract) => byKey.get(memberLinkKey(contract)) ?? { contract });
             });
             persistItems(id);
         },

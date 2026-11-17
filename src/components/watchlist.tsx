@@ -37,6 +37,9 @@ import type { ContractInfo } from '../lib/types/contract';
 import type { SecurityType } from '../lib/types/contract';
 import type { ProductSuggestion } from '../lib/product-search';
 import { fmtPct, fmtPrice, fmtSigned } from '../lib/utils/format';
+import { contractLinkKey } from '../lib/contract-key';
+import { fmtUsPrice } from '../lib/us/decimal';
+import type { SseTick } from '../lib/types/market';
 import { Sparkline } from './sparkline';
 import { RefreshButton } from './refresh-button';
 import { AsyncStatus } from './async-status';
@@ -51,8 +54,32 @@ const SPARK_KEY = 'sj-pro-watchlist-spark';
 
 type SortMode = 'custom' | 'desc' | 'asc';
 
+const isUs = (contract: ContractInfo) => contract.region === 'US';
+
+/**
+ * 美股即時價（SDK 1.8 us_tick，store key `US:CODE`）：close 為成交價字串，
+ * 漲跌與幅度用 tick 的 price_chg／pct_chg；沒有 pct_chg 時以前一日參考價推算。
+ * 沒有即時價回 null（畫面顯示「參考 {us_reference}」）。
+ */
+export function usLive(contract: ContractInfo, tick: SseTick | undefined) {
+    const close = tick ? Number(tick.close) : NaN;
+    if (!tick || !Number.isFinite(close) || close <= 0) return null;
+    const chgRaw = tick.price_chg !== undefined && tick.price_chg !== '' ? Number(tick.price_chg) : NaN;
+    const ref = Number(contract.us_reference ?? contract.reference);
+    const chg = Number.isFinite(chgRaw) ? chgRaw : ref > 0 ? close - ref : undefined;
+    const pctRaw = tick.pct_chg !== undefined && tick.pct_chg !== '' ? Number(tick.pct_chg) : NaN;
+    const pct = Number.isFinite(pctRaw)
+        ? pctRaw
+        : chg !== undefined && close - chg > 0 ? (chg / (close - chg)) * 100 : undefined;
+    return { last: tick.close, close, chg, pct };
+}
+
 // live percent change for sorting — quote first, snapshot fallback
+// 美股：有即時價才有漲跌幅，沒有就是 0
 function pctOf(item: WatchItem): number {
+    if (isUs(item.contract)) {
+        return usLive(item.contract, getQuote(contractLinkKey(item.contract))?.tick)?.pct ?? 0;
+    }
     const q = getQuote(item.contract.code);
     const ref = q?.index
         ? Number(q.index.reference)
@@ -100,9 +127,13 @@ const WatchRow = memo(function WatchRow({
     onDrop: () => void;
     onDragEnd: () => void;
 }) {
-    const quote = useQuote(item.contract.code);
+    // 連動 key：台股裸代碼、美股 `US:CODE`（美股 T 不會和任何台股代碼撞名）
+    const rowKey = contractLinkKey(item.contract);
+    const us = isUs(item.contract);
+    const quote = useQuote(rowKey);
     const tick = quote?.tick;
     const index = quote?.index;
+    const usQuote = us ? usLive(item.contract, tick) : null;
 
     const close = tick
         ? Number(tick.close)
@@ -140,7 +171,8 @@ const WatchRow = memo(function WatchRow({
                 ) === Number(Number(item.contract.reference).toFixed(4))
               ? snap.close
               : undefined;
-    const atLimit = limitStateOf(item.contract, limitPx);
+    // 美股沒有漲跌停（limit_up／limit_down 為 0），不亮燈
+    const atLimit = us ? null : limitStateOf(item.contract, limitPx);
     const limitLabel = atLimit === 'up' ? '漲停' : atLimit === 'down' ? '跌停' : '';
     // 亮燈樣式（設定 → 外觀，全域）；「不標示」時 lit 為 null
     const limitStyle = useLimitStyle();
@@ -149,6 +181,9 @@ const WatchRow = memo(function WatchRow({
     //（鎖停板的走勢本來就是一條平線），色塊延伸到小線圖欄、位置與其他
     // 停板列一致
     const blockWide = spark && lit !== null && limitStyle === 'block';
+    const priceDir = us
+        ? usQuote?.chg === undefined || usQuote.chg === 0 ? 'flat' : usQuote.chg > 0 ? 'up' : 'down'
+        : dir;
     // the flash overlay is re-keyed by flashSeq so the animation replays on
     // every real deal — the row itself stays mounted (hover state survives)
     const flashDir = !quote?.flashSeq
@@ -160,6 +195,8 @@ const WatchRow = memo(function WatchRow({
     return (
         <div
             data-code={item.contract.code}
+            data-key={rowKey}
+            data-region={us ? 'US' : undefined}
             data-limit={atLimit ?? undefined}
             className={`${styles.row[selected ? 'selected' : 'normal']} ${
                 lit && limitStyle === 'tint' ? styles.limitTint[lit] : ''
@@ -175,14 +212,14 @@ const WatchRow = memo(function WatchRow({
             }}
             onDragStart={(e) => {
                 e.dataTransfer.effectAllowed = 'move';
-                onDragStart(item.contract.code);
+                onDragStart(rowKey);
             }}
             // 排序模式外不接任何拖放（外部拖進來的檔案/文字不該變 drop
             // target，更不該觸發 handleDrop）
             onDragOver={(e) => {
                 if (!arrange) return;
                 e.preventDefault();
-                onDragOver(item.contract.code);
+                onDragOver(rowKey);
             }}
             onDrop={(e) => {
                 if (!arrange) return;
@@ -206,8 +243,14 @@ const WatchRow = memo(function WatchRow({
             )}
             <span className={`${styles.code} ${styles.firstCol}`}>
                 {item.contract.code}
+                {us && (
+                    <span className={styles.usBadge} title='美股，以美元報價'>
+                        美股
+                    </span>
+                )}
             </span>
-            {spark && !blockWide && (
+            {spark && us && <span className={styles.sparkCell} />}
+            {spark && !us && !blockWide && (
                 <span className={styles.sparkCell}>
                     <Sparkline
                         contract={item.contract}
@@ -224,18 +267,47 @@ const WatchRow = memo(function WatchRow({
                 } ${blockWide ? styles.numCellWide : ''}`}
                 title={lit ? `${limitLabel} ${fmtPrice(close)}` : undefined}
             >
-                <span className={`${styles.price} ${panel.dirText[dir]}`}>
-                    {lit ? (
-                        <span className={styles.srOnly}>{limitLabel} </span>
-                    ) : null}
-                    {tick?.simtrade ? (
-                        <span className={styles.simBadge}>試搓</span>
-                    ) : null}
-                    {fmtPrice(close)}
-                </span>
-                <span className={`${styles.change} ${panel.dirText[dir]}`}>
-                    {fmtSigned(chg)} {fmtPct(pct)}
-                </span>
+                {us ? (
+                    usQuote ? (
+                        <>
+                            <span className={`${styles.price} ${panel.dirText[priceDir]}`}>
+                                {fmtUsPrice(usQuote.last)}
+                            </span>
+                            <span className={`${styles.change} ${panel.dirText[priceDir]}`}>
+                                {fmtSigned(usQuote.chg)} {fmtPct(usQuote.pct)}
+                            </span>
+                        </>
+                    ) : (
+                        <>
+                            <span
+                                className={`${styles.price} ${styles.usReference}`}
+                                title={item.contract.reference_date
+                                    ? `前一日參考價（${item.contract.reference_date}）`
+                                    : '前一日參考價'}
+                            >
+                                {item.contract.us_reference
+                                    ? `參考 ${fmtUsPrice(item.contract.us_reference)}`
+                                    : '參考 —'}
+                            </span>
+                            <span className={styles.change}>USD</span>
+                        </>
+                    )
+                ) : (
+                    <>
+                        <span className={`${styles.price} ${panel.dirText[dir]}`}>
+                            {lit ? (
+                                <span className={styles.srOnly}>{limitLabel} </span>
+                            ) : null}
+                            {tick?.simtrade ? (
+                                <span className={styles.simBadge}>試搓</span>
+                            ) : null}
+                            {fmtPrice(close)}
+                        </span>
+                        <span className={`${styles.change} ${panel.dirText[dir]}`}>
+                            {fmtSigned(chg)} {fmtPct(pct)}
+                        </span>
+                    </>
+                )}
             </span>
             <span className={`${styles.name} ${styles.firstCol}`}>
                 {item.contract.name}
@@ -248,7 +320,7 @@ const WatchRow = memo(function WatchRow({
                         disabled={!canUp}
                         onClick={(e) => {
                             e.stopPropagation();
-                            onMove(item.contract.code, -1);
+                            onMove(rowKey, -1);
                         }}
                     >
                         <ChevronUp size={11} />
@@ -259,7 +331,7 @@ const WatchRow = memo(function WatchRow({
                         disabled={!canDown}
                         onClick={(e) => {
                             e.stopPropagation();
-                            onMove(item.contract.code, 1);
+                            onMove(rowKey, 1);
                         }}
                     >
                         <ChevronDown size={11} />
@@ -272,7 +344,7 @@ const WatchRow = memo(function WatchRow({
                     disabled={!canRemove}
                     onClick={(e) => {
                         e.stopPropagation();
-                        onRemove(item.contract.code);
+                        onRemove(rowKey);
                     }}
                 >
                     <X size={10} />
@@ -304,6 +376,7 @@ export function Watchlist({
     onHoldReload,
 }: {
     items: WatchItem[];
+    /** 目前選取商品的連動 key（contractLinkKey：台股裸代碼、美股 `US:CODE`） */
     selectedCode: string | null;
     onSelect: (c: ContractInfo) => void;
     onAdd: (
@@ -311,8 +384,10 @@ export function Watchlist({
         type?: SecurityType,
         resolved?: ContractInfo,
     ) => Promise<unknown>;
-    onRemove: (code: string) => void;
-    onReorder: (fromCode: string, toCode: string) => void;
+    /** key：contractLinkKey */
+    onRemove: (key: string) => void;
+    /** key：contractLinkKey */
+    onReorder: (fromKey: string, toKey: string) => void;
     serverLists: ServerWatchlist[];
     activeListId: string;
     onSelectList: (id: string) => void;
@@ -501,7 +576,7 @@ export function Watchlist({
     const moveRow = useCallback(
         (code: string, dir: -1 | 1) => {
             const to = neighborCode(
-                items.map((i) => i.contract.code),
+                items.map((i) => contractLinkKey(i.contract)),
                 code,
                 dir,
             );
@@ -530,7 +605,9 @@ export function Watchlist({
         submitBusy.current = true;
         setBusy(true);
         try {
-            if (item) await onAdd(item.code, item.security_type, item.contract);
+            // 美股建議以 `US:CODE` 加入（不帶型別，避免以 region=TW 查詢）
+            if (item?.region === 'US') await onAdd(item.key ?? `US:${item.code}`, undefined, item.contract);
+            else if (item) await onAdd(item.code, item.security_type, item.contract);
             else await onAdd(code);
             if (search.isCurrent(submitVersion) && activeListRef.current === activeListId) setInput('');
         } catch {
@@ -760,9 +837,9 @@ export function Watchlist({
                     )}
                     {viewItems.map((item, idx) => (
                         <WatchRow
-                            key={item.contract.code}
+                            key={contractLinkKey(item.contract)}
                             item={item}
-                            selected={item.contract.code === selectedCode}
+                            selected={contractLinkKey(item.contract) === selectedCode}
                             spark={spark}
                             arrange={arrange && !loading && !loadError}
                             canUp={idx > 0 && !loading && !loadError}
@@ -770,7 +847,7 @@ export function Watchlist({
                             canRemove={!loading}
                             onMove={moveRow}
                             dropTarget={
-                                arrange && item.contract.code === dropCode
+                                arrange && contractLinkKey(item.contract) === dropCode
                             }
                             onSelect={onSelect}
                             onRemove={onRemove}
@@ -842,7 +919,7 @@ export function Watchlist({
                 <input
                     ref={inputRef}
                     className={styles.addInput}
-                    placeholder='股票、期貨或指數（如 台積電期）'
+                    placeholder='股票、期貨、指數或美股（如 台積電期、AAPL）'
                     role='combobox'
                     aria-autocomplete='list'
                     aria-expanded={suggestions.length > 0}

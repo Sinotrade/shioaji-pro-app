@@ -66,6 +66,27 @@ export const simBadge = style({
     whiteSpace: 'nowrap',
 });
 
+// 美股標記：代碼後的小字（美股以美元報價、沒有漲跌停）
+export const usBadge = style({
+    fontFamily: vars.font.body,
+    fontSize: '0.56rem',
+    fontWeight: 600,
+    padding: '0 3px',
+    marginLeft: 4,
+    borderRadius: vars.radius.sm,
+    color: vars.color.mutedForeground,
+    border: `1px solid ${vars.color.border}`,
+    whiteSpace: 'nowrap',
+    verticalAlign: 'middle',
+});
+
+// 美股尚無即時價：顯示前一日參考價（較淡，與即時價區分）
+export const usReference = style({
+    color: vars.color.mutedForeground,
+    fontWeight: 500,
+    fontSize: '0.74rem',
+});
+
 // 右側數字區（價格＋漲跌兩行）— 最後一欄、跨兩列；代碼／名稱固定第一欄
 export const numCell = style({
     gridColumn: '-2 / -1',

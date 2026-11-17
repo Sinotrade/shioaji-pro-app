@@ -29,6 +29,7 @@ import {
 import type {
     ContractBase,
     ContractInfo,
+    Region,
     SecurityType,
     TickBandsResponse,
 } from './types/contract';
@@ -1625,10 +1626,31 @@ export function fetchComboTrades() {
 
 // ---- server watchlists ----
 
+/**
+ * 伺服器自選清單的成員。region 由 sw／SDK 1.8 起回傳（TW／US）；舊伺服器
+ * 沒有這個欄位，一律視為台股。美股成員的 exchange 是實際交易所
+ * （NASDAQ／NYSE／BATS／TXSE）。
+ */
+export interface ServerWatchlistContract {
+    security_type: SecurityType;
+    exchange: string;
+    code: string;
+    region?: Region;
+}
+
 export interface ServerWatchlist {
     id: string;
     name: string;
-    contracts: { security_type: SecurityType; exchange: string; code: string }[];
+    contracts: ServerWatchlistContract[];
+}
+
+// 自選成員的 wire 格式：region 一律送（舊伺服器忽略）；美股必須帶實際
+// 交易所（NASDAQ／NYSE／BATS／TXSE），缺交易所就不送，避免存成無法還原的成員
+function watchlistContractKey(c: ContractBase) {
+    if (c.region === 'US' && !c.exchange) {
+        throw new Error(`美股 ${c.code} 缺少交易所，無法加入自選`);
+    }
+    return contractKey(c);
 }
 
 export function fetchWatchlists() {
@@ -1641,25 +1663,25 @@ export function createWatchlist(
 ) {
     return apiPost<ServerWatchlist>('/api/v1/watchlist', {
         name,
-        contracts: contracts.map(contractKey),
+        contracts: contracts.map(watchlistContractKey),
     });
 }
 
 export function syncWatchlist(id: string, contracts: ContractBase[]) {
     return apiPut<ServerWatchlist>(`/api/v1/watchlist/${id}`, {
-        contracts: contracts.map(contractKey),
+        contracts: contracts.map(watchlistContractKey),
     });
 }
 
 export function addWatchlistContracts(id: string, contracts: ContractBase[]) {
     return apiPost<ServerWatchlist>(`/api/v1/watchlist/${id}/contracts`, {
-        contracts: contracts.map(contractKey),
+        contracts: contracts.map(watchlistContractKey),
     });
 }
 
 export function removeWatchlistContracts(id: string, contracts: ContractBase[]) {
     return apiDelete<ServerWatchlist>(`/api/v1/watchlist/${id}/contracts`, {
-        contracts: contracts.map(contractKey),
+        contracts: contracts.map(watchlistContractKey),
     });
 }
 
