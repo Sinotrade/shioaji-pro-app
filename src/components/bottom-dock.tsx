@@ -38,6 +38,7 @@ import { fmtMoney, fmtSigned } from '../lib/utils/format';
 import { vars } from '../theme.css';
 import { AccountPane, type AccountRefreshControls } from './bottom-dock-account';
 import { OrdersPane } from './bottom-dock-orders';
+import { UsOrdersSection, UsPositionsSection } from './us-dock';
 import { PositionsPane } from './bottom-dock-positions';
 import {
     accountToRef,
@@ -359,6 +360,8 @@ export function BottomDock({
                     onSelectCode={onSelectCode}
                 />
             )}
+            {/* 美股（H 帳戶）另列區段；只篩期貨或選了單一台股帳戶時不顯示 */}
+            {tab === 'positions' && market !== 'F' && !scope && <UsPositionsSection />}
             {tab === 'orders' && (
                 <OrdersPane
                     trades={trades}
@@ -377,6 +380,7 @@ export function BottomDock({
                     onShowAllRequestHandled={() => setShowAllOrders(0)}
                 />
             )}
+            {tab === 'orders' && market !== 'F' && !scope && <UsOrdersSection />}
             {tab === 'account' && (
                 <div className={panel.panelBody}>
                     <AccountPane
