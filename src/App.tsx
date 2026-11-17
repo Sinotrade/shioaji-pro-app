@@ -2,6 +2,7 @@
 // Dynamic panel blocks on a draggable grid, with named layout profiles.
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { watchUsTradingState } from './lib/us/us-trading-state';
 import GridLayout, {
     useContainerWidth,
     type LayoutItem,
@@ -1015,6 +1016,8 @@ function PopoutView({
 }
 
 export default function App() {
+    // 美股交易狀態在 App 層啟動：有 H 帳戶就開始，不等美股面板打開
+    useEffect(() => (POPOUT_TYPE === 'traypanel' ? undefined : watchUsTradingState()), []);
     if (POPOUT_TYPE === 'traypanel') return <TrayPanel />;
     if (POPOUT_TYPE && POPOUT_TYPES.has(POPOUT_TYPE)) {
         return <PopoutView type={POPOUT_TYPE as BlockType} code={POPOUT_CODE} />;

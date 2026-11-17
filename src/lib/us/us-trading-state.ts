@@ -523,6 +523,21 @@ export function startUsTradingState() {
     statusChanged();
 }
 
+/**
+ * App 層呼叫：有可交易的 H 帳戶就啟動美股交易狀態（委託／回報／庫存），
+ * 不等任何美股面板打開；帳戶清單晚到也會在出現 H 帳戶時啟動。回傳取消監看。
+ */
+export function watchUsTradingState(): () => void {
+    if (usAccounts().length) { startUsTradingState(); return () => undefined; }
+    let stop: (() => void) | null = null;
+    stop = subscribeAccounts(() => {
+        if (!usAccounts().length) return;
+        startUsTradingState();
+        stop?.(); stop = null;
+    });
+    return () => { stop?.(); stop = null; };
+}
+
 export function useUsTradingState(): UsTradingState {
     useEffect(startUsTradingState, []);
     return useSyncExternalStore(subscribeUsTradingState, getUsTradingState);
