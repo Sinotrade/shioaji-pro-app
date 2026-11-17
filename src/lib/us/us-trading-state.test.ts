@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const m = vi.hoisted(() => ({
     accounts: [] as unknown[],
@@ -41,7 +41,11 @@ beforeEach(() => {
     m.accounts = [S, H];
     m.trades.mockReset(); m.health.mockReset(); m.positions.mockReset(); m.apiGet.mockReset();
     us.resetUsTradingStateForTest();
+    // 固定在美東 2026-11-18 盤中，trade_date 篩選才不隨執行日期變
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(Date.UTC(2026, 10, 18, 15, 0));
 });
+afterEach(() => { vi.useRealTimers(); });
 
 describe('UpdateQty is idempotent (order_quantity sets the absolute state)', () => {
     it('does not double-deduct when the same reduction is applied twice', () => {
@@ -81,6 +85,29 @@ describe('refresh boundaries', () => {
         await first; await second;
         expect(m.trades).toHaveBeenCalledTimes(2);
         expect(us.getUsTradingState().trades[0]!.status.status).toBe('Cancelled');
+    });
+});
+
+describe('snapshot adoption', () => {
+    it('does not publish a regressed snapshot when buffered reports fail to apply', async () => {
+        us.startUsTradingState();
+        us.resetUsTradingStateForTest({ trades: [{ ...row({ status: 'PartFilled', deal_quantity: '5' }), account: H }] });
+        let resolve!: (rows: unknown[]) => void;
+        m.trades.mockReturnValueOnce(new Promise(r => { resolve = r; })).mockResolvedValue([row({ status: 'PartFilled', deal_quantity: '5' })]);
+        const run = us.refreshUsAccount(H);
+        // 對不上的逐筆成交（沒有 exchange_seq）→ 套不上
+        m.onEvent!(normalizeOrderEvent(fx.dealMinimal));
+        resolve([row()]); // 較舊的快照：成交 0
+        await run;
+        const t = us.getUsTradingState().trades[0]!;
+        expect(t.status.deal_quantity).toBe('5');
+        expect(t.status.status).toBe('PartFilled');
+    });
+
+    it('drops yesterday\'s DAY orders from a snapshot after the New York date rolls', async () => {
+        m.trades.mockResolvedValue([row({}, { id: 'y', trade_date: '20261117' })]);
+        await us.refreshUsAccount(H);
+        expect(us.getUsTradingState().trades).toHaveLength(0);
     });
 });
 

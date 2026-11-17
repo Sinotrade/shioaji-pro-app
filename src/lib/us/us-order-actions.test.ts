@@ -40,72 +40,89 @@ beforeEach(() => {
 });
 
 describe('cancelUsTrade', () => {
-    it('maps -2054 to the friendly retry message without reading back', async () => {
+    /** 伺服器狀態：刪單送出前回讀看到 pre，送出後回讀看到 post */
+    function server(pre: AccountedUsTrade, post: AccountedUsTrade) {
+        let sent = false;
+        m.cancel.mockImplementation(async () => { sent = true; return {}; });
+        m.refresh.mockImplementation(async () => { m.rows = [sent ? post : pre]; });
+    }
+
+    it('maps -2054 to the friendly retry message', async () => {
+        m.rows = [row()];
         m.cancel.mockRejectedValue(new Error('400 此委託不存在 -2054'));
         await expect(cancelUsTrade(row())).rejects.toBeInstanceOf(UsCancelTooEarlyError);
         await expect(cancelUsTrade(row())).rejects.toThrow('剛送出的委託稍後再刪');
-        expect(m.refresh).not.toHaveBeenCalled();
     });
 
     it('confirms by read-back and reports shares actually cancelled (fills meanwhile excluded)', async () => {
-        m.cancel.mockResolvedValue({});
-        m.rows = [row()];
-        m.refresh.mockImplementation(async () => { m.rows = [row({ status: 'Cancelled', deal_quantity: '2', cancel_quantity: '8' })]; });
+        server(row(), row({ status: 'Cancelled', deal_quantity: '2', cancel_quantity: '8' }));
         const r = await cancelUsTrade(row(), { readDelayMs: 0 });
         expect(r).toMatchObject({ confirmed: true, cancelled: '8' });
         expect(m.refresh).toHaveBeenCalledWith(H);
     });
 
-    it('uses the freshest row as the baseline, not the stale one passed in', async () => {
-        m.cancel.mockResolvedValue({});
-        // 畫面上的舊列：未成交 10；狀態裡已成交 6
-        const fresh = row({ status: 'PartFilled', deal_quantity: '6' });
-        m.rows = [fresh];
-        m.refresh.mockImplementation(async () => { m.rows = [row({ status: 'Cancelled', deal_quantity: '6', cancel_quantity: '4' })]; });
+    it('reads the order back from the server before cancelling (another terminal reduced it)', async () => {
+        // App 畫面：未成交 10；伺服器：別的終端機已減量 6 → 只剩 4
+        m.rows = [row()];
+        server(row({ cancel_quantity: '6' }), row({ status: 'Cancelled', cancel_quantity: '10' }));
         const r = await cancelUsTrade(row(), { readDelayMs: 0 });
         expect(r).toMatchObject({ confirmed: true, cancelled: '4' });
+        expect(m.refresh.mock.invocationCallOrder[0]).toBeLessThan(m.cancel.mock.invocationCallOrder[0]!);
     });
 
-    it('does not treat Failed or Inactive as a confirmed cancel', async () => {
-        m.cancel.mockResolvedValue({});
-        m.rows = [row()];
-        m.refresh.mockImplementation(async () => { m.rows = [row({ status: 'Failed' })]; });
+    it('does not cancel when the pre-cancel read-back fails', async () => {
+        m.refresh.mockRejectedValue(new Error('503'));
+        await expect(cancelUsTrade(row())).rejects.toThrow('未刪單');
+        expect(m.cancel).not.toHaveBeenCalled();
+    });
+
+    it('reports fully filled before cancel, with nothing to re-place', async () => {
+        server(row(), row({ status: 'Filled', deal_quantity: '10' }));
+        const r = await cancelUsTrade(row(), { readDelayMs: 0 });
+        expect(r).toMatchObject({ confirmed: true, filled: true, cancelled: '0' });
+        // 回讀時已全部成交：不送刪單
+        server(row({ status: 'Filled', deal_quantity: '10' }), row({ status: 'Filled', deal_quantity: '10' }));
+        m.cancel.mockClear();
+        expect(await cancelUsTrade(row(), { readDelayMs: 0 })).toMatchObject({ filled: true });
+        expect(m.cancel).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        ['Failed', { status: 'Failed' }],
+        ['Inactive without cancel', { status: 'Inactive' }],
+        ['Cancelled with nothing cancelled', { status: 'Cancelled', deal_quantity: '0', cancel_quantity: '0' }],
+        ['PendingSubmit with cancel_quantity', { status: 'PendingSubmit', cancel_quantity: '10' }],
+        ['Submitted with cancel_quantity', { status: 'Submitted', deal_quantity: '2', cancel_quantity: '8' }],
+    ] as const)('does not confirm on %s', async (_name, post) => {
+        server(row(), row(post as Partial<AccountedUsTrade['status']>));
         expect((await cancelUsTrade(row(), { readAttempts: 1, readDelayMs: 0 })).confirmed).toBe(false);
-        m.rows = [row()];
-        m.refresh.mockImplementation(async () => { m.rows = [row({ status: 'Inactive' })]; });
+    });
+
+    it('requires deal + cancel to cover the larger of the baseline and read-back order quantity', async () => {
+        const shrunk = row({ status: 'Cancelled', cancel_quantity: '6' });
+        shrunk.order = { ...shrunk.order, quantity: '6' };
+        server(row(), shrunk);
         expect((await cancelUsTrade(row(), { readAttempts: 1, readDelayMs: 0 })).confirmed).toBe(false);
     });
 
     it('rejects a read-back whose fills went backwards (older snapshot)', async () => {
-        m.cancel.mockResolvedValue({});
-        m.rows = [row({ status: 'PartFilled', deal_quantity: '3' })];
-        m.refresh.mockImplementation(async () => { m.rows = [row({ status: 'Cancelled', deal_quantity: '1', cancel_quantity: '9' })]; });
+        server(row({ status: 'PartFilled', deal_quantity: '3' }), row({ status: 'Cancelled', deal_quantity: '1', cancel_quantity: '9' }));
         expect((await cancelUsTrade(row(), { readAttempts: 1, readDelayMs: 0 })).confirmed).toBe(false);
     });
 
-    it('accepts cancel_quantity covering the remainder as evidence', async () => {
-        m.cancel.mockResolvedValue({});
-        m.rows = [row()];
-        m.refresh.mockImplementation(async () => { m.rows = [row({ status: 'Submitted', deal_quantity: '2', cancel_quantity: '8' })]; });
-        const r = await cancelUsTrade(row(), { readDelayMs: 0 });
-        expect(r).toMatchObject({ confirmed: true, cancelled: '8' });
-    });
-
     it('stops reading back when the server or mode changed', async () => {
-        m.cancel.mockResolvedValue({});
-        m.rows = [row({ status: 'Cancelled', cancel_quantity: '10' })];
-        m.sameEnv = false;
+        server(row(), row({ status: 'Cancelled', cancel_quantity: '10' }));
+        m.cancel.mockImplementation(async () => { m.sameEnv = false; return {}; });
         const r = await cancelUsTrade(row(), { readDelayMs: 0 });
         expect(r.confirmed).toBe(false);
-        expect(m.refresh).not.toHaveBeenCalled();
+        expect(m.refresh).toHaveBeenCalledTimes(1);
     });
 
     it('stays unconfirmed when the order is still working after the reads', async () => {
-        m.cancel.mockResolvedValue({});
-        m.rows = [row()];
+        server(row(), row());
         const r = await cancelUsTrade(row(), { readAttempts: 2, readDelayMs: 0 });
         expect(r.confirmed).toBe(false);
-        expect(m.refresh).toHaveBeenCalledTimes(2);
+        expect(m.refresh).toHaveBeenCalledTimes(3);
     });
 });
 

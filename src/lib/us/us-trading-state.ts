@@ -138,7 +138,35 @@ function mergeAccount(account: Account, rows: UsTrade[]) {
         .filter(t => !t.order.account || (t.order.account.broker_id === account.broker_id && t.order.account.account_id === account.account_id
             && (!t.order.account.account_type || t.order.account.account_type === 'H')))
         .map(t => ({ ...t, account }));
-    return dropExpiredDayOrders([...state.trades.filter(t => keyOf(t.account) !== k), ...incoming]);
+    // 美東換日後，快照裡昨天的 DAY 單不採用（不只看資料裡的最大日期）
+    return dropBeforeNyDate(dropExpiredDayOrders([...state.trades.filter(t => keyOf(t.account) !== k), ...incoming]), nyDate());
+}
+
+/**
+ * 快照套不上期間回報時用：每筆委託的成交／取消量取目前狀態與快照的較大值
+ * （數量只增不減），避免發布倒退的快照；之後再重查確認。
+ */
+function keepMonotonic(merged: AccountedUsTrade[], account: Account): AccountedUsTrade[] {
+    const k = keyOf(account);
+    const current = new Map(state.trades.filter(t => keyOf(t.account) === k).map(t => [t.order.id, t]));
+    return merged.map(t => {
+        if (keyOf(t.account) !== k) return t;
+        const cur = current.get(t.order.id);
+        if (!cur) return t;
+        const dealCur = String(cur.status.deal_quantity ?? '0');
+        const dealSnap = String(t.status.deal_quantity ?? '0');
+        const cancelCur = String(cur.status.cancel_quantity ?? '0');
+        const cancelSnap = String(t.status.cancel_quantity ?? '0');
+        const dealAhead = decCompare(dealCur, dealSnap) > 0;
+        const cancelAhead = decCompare(cancelCur, cancelSnap) > 0;
+        if (!dealAhead && !cancelAhead) return t;
+        const deals = dealAhead ? dealCur : dealSnap;
+        const cancelled = cancelAhead ? cancelCur : cancelSnap;
+        return { ...t, status: { ...t.status,
+            deal_quantity: deals, cancel_quantity: cancelled,
+            deals: dealAhead ? cur.status.deals : t.status.deals,
+            status: statusOf(t, t.order.quantity, deals, cancelled) } };
+    });
 }
 
 /**
@@ -172,9 +200,10 @@ export function refreshUsAccount(account: Account): Promise<void> {
             const projected = projectUsReport(merged, report, account);
             if (projected) merged = projected; else unapplied = true;
         }
+        // 期間的回報有套不上的：快照可能比回報舊 → 數量取較大值不倒退，再查一次確認
+        if (unapplied) merged = keepMonotonic(merged, account);
         publish({ trades: merged, updatedAt: Date.now(), error: null });
-        // 期間的回報有套不上的：快照可能比回報舊，再查一次確認（只補一次）
-        if (unapplied && buffer.length) scheduleAccountRefetch(account);
+        if (unapplied) scheduleAccountRefetch(account);
     }).finally(() => {
         if (duringQuery.get(k) === buffer) duringQuery.delete(k);
         accountInFlight.delete(k);

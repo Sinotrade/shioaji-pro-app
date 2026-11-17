@@ -140,3 +140,23 @@ it('labels long positions 庫存 and keeps a refresh button on errors', async ()
     expect(all()).toContain('請按更新重試');
     expect(view.root.findAll(n => n.props?.label === '更新美股庫存').length).toBeGreaterThan(0);
 });
+
+it('says fully filled before cancel and does not offer a re-place', async () => {
+    m.cancel.mockResolvedValue({ confirmed: true, filled: true, cancelled: '0' });
+    await act(async () => { view = create(createElement(UsOrdersSection)); });
+    await act(async () => { btn(/^改價$/)!.props.onClick(); });
+    const price = view.root.findAll(n => n.type === 'input' && n.props['aria-label'] === '新價格')[0]!;
+    await act(async () => { price.props.onChange({ target: { value: '170.5' } }); });
+    await act(async () => { await btn(/確認刪除原委託/)!.props.onClick(); });
+    expect(all()).toContain('刪單前已全部成交');
+    expect(btn(/送出新委託/)).toBeUndefined();
+});
+
+it('prefills the reprice dialog with a formatted price', async () => {
+    m.state = { ...m.state, trades: [{ ...trade, order: { ...trade.order, price: '225.5' } }] };
+    await act(async () => { view = create(createElement(UsOrdersSection)); });
+    await act(async () => { btn(/^改價$/)!.props.onClick(); });
+    const price = view.root.findAll(n => n.type === 'input' && n.props['aria-label'] === '新價格')[0]!;
+    expect(price.props.value).toBe('225.50');
+    expect(all()).not.toContain('新價格和原價格相同');
+});

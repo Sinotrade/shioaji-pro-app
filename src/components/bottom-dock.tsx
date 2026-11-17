@@ -324,7 +324,9 @@ export function BottomDock({
                 </span>
                 {us.shown && us.pnlUsd !== null && (
                     <span className={styles.sumItem}>
-                        <span className={styles.sumLabel}>美股損益（USD）</span>
+                        <span className={styles.sumLabel} title={us.pnlPartial ? '部分美股庫存沒有市價，未計入損益' : undefined}>
+                            美股損益（USD）{us.pnlPartial ? '（部分無市價）' : ''}
+                        </span>
                         <span className={`${styles.sumValue} ${panel.dirText[us.pnlUsd.trim().startsWith('-') ? 'down' : decIsPositiveText(us.pnlUsd) ? 'up' : 'flat']}`}>
                             {maskMoney(`${decIsPositiveText(us.pnlUsd) ? '+' : ''}${fmtDec(us.pnlUsd, { minFraction: 2, maxFraction: 2 })}`, privMoney)}
                         </span>

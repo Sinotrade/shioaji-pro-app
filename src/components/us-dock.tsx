@@ -12,7 +12,7 @@ import { orderNumber, orderStatusLabel } from '../lib/order-status-label';
 import { maskAccountId, maskMoney, usePrivacyMode, usePrivacyMoney } from '../lib/privacy';
 import type { AccountedUsTrade, UsOrderReq } from '../lib/types/us';
 import { decAdd, decIsPositive, decToInt, fmtDec, fmtUsPrice } from '../lib/us/decimal';
-import { cancelUsTrade, placeReplacement, type UsCancelResult, priceChangeProblem, reduceUsTrade, replacementOrder, UsCancelTooEarlyError } from '../lib/us/us-order-actions';
+import { cancelUsTrade, placeReplacement, US_FILLED_BEFORE_CANCEL, type UsCancelResult, priceChangeProblem, reduceUsTrade, replacementOrder, UsCancelTooEarlyError } from '../lib/us/us-order-actions';
 import { getUsTradingState, refreshUsPositions, refreshUsTrades, subscribeUsTradingState, useUsTradingState, usRemaining, US_POSITIONS_UNAVAILABLE } from '../lib/us/us-trading-state';
 import { RefreshButton } from './refresh-button';
 import { UsMarketBadge } from './us-order-panel';
@@ -33,6 +33,8 @@ export interface UsDockSummary {
     totalOrders: number;
     /** 美股未實現損益合計（USD 字串）；沒有可加總的值為 null。絕不和台幣相加 */
     pnlUsd: string | null;
+    /** 有庫存因沒有市價（損益 null）沒算進 pnlUsd */
+    pnlPartial: boolean;
 }
 
 /** 底部 dock 分頁計數與摘要用：只讀狀態，不啟動查詢（區段自己會啟動） */
@@ -41,11 +43,12 @@ export function useUsDockSummary(visible: boolean): UsDockSummary {
     const s = useSyncExternalStore(subscribeUsTradingState, getUsTradingState);
     return useMemo(() => {
         const shown = visible && has;
-        if (!shown) return { shown, positions: null, activeOrders: 0, totalOrders: 0, pnlUsd: null };
+        if (!shown) return { shown, positions: null, activeOrders: 0, totalOrders: 0, pnlUsd: null, pnlPartial: false };
         let pnl: string | null = null;
+        let partial = false;
         if (s.positionsStatus === 'ready') {
             for (const p of s.positions) {
-                if (p.pnl === null || p.pnl === undefined) continue;
+                if (p.pnl === null || p.pnl === undefined) { partial = true; continue; }
                 pnl = decAdd(pnl ?? '0', String(p.pnl)) ?? pnl;
             }
         }
@@ -55,6 +58,7 @@ export function useUsDockSummary(visible: boolean): UsDockSummary {
             activeOrders: s.trades.filter(t => decIsPositive(usRemaining(t))).length,
             totalOrders: s.trades.length,
             pnlUsd: pnl,
+            pnlPartial: partial && pnl !== null,
         };
     }, [visible, has, s]);
 }
@@ -99,7 +103,7 @@ export function UsOrdersSection() {
         markBusy(k, true);
         try {
             const r = await cancelUsTrade(t);
-            say(t, r.confirmed ? 'ok' : 'err', r.confirmed ? `已刪單（取消 ${fmtDec(r.cancelled)} 股）` : '刪單已送出，尚未確認；請稍後按更新查看');
+            say(t, r.confirmed ? 'ok' : 'err', r.filled ? US_FILLED_BEFORE_CANCEL : r.confirmed ? `已刪單（取消 ${fmtDec(r.cancelled)} 股）` : '刪單已送出，尚未確認；請稍後按更新查看');
         } catch (e) {
             say(t, 'err', e instanceof UsCancelTooEarlyError ? e.message : e instanceof Error ? e.message : String(e));
         } finally { markBusy(k, false); }
@@ -225,7 +229,10 @@ function StepLine({ n, step }: { n: number; step: StepState }) {
 }
 
 export function UsRepriceDialog({ row, onClose }: { row: AccountedUsTrade; onClose: () => void }) {
-    const [price, setPrice] = useState(String(row.order.price ?? ''));
+    const [price, setPrice] = useState(() => {
+        const shown = fmtUsPrice(row.order.price);
+        return shown === '—' ? '' : shown;
+    });
     const [step1, setStep1] = useState<StepState>({ state: 'pending', text: `刪除原委託（未成交 ${fmtDec(usRemaining(row))} 股 @ ${fmtUsPrice(row.order.price)}）` });
     const [step2, setStep2] = useState<StepState>({ state: 'pending', text: '以新價格重新下單' });
     const [next, setNext] = useState<{ order: UsOrderReq; env: UsCancelResult['env'] } | null>(null);
@@ -249,6 +256,11 @@ export function UsRepriceDialog({ row, onClose }: { row: AccountedUsTrade; onClo
             const r = await cancelUsTrade(row);
             if (!r.confirmed) {
                 setStep1({ state: 'err', text: '刪單已送出但尚未確認，為避免重複下單不會重下；請稍後按更新查看' });
+                return;
+            }
+            if (r.filled) {
+                setStep1({ state: 'ok', text: `${US_FILLED_BEFORE_CANCEL}，沒有取消任何股數` });
+                setStep2({ state: 'err', text: '已全部成交，不重下' });
                 return;
             }
             setStep1({ state: 'ok', text: `原委託已刪除，取消 ${fmtDec(r.cancelled)} 股` });
@@ -295,7 +307,8 @@ export function UsRepriceDialog({ row, onClose }: { row: AccountedUsTrade; onClo
                     />
                     <ArrowRight size={12} aria-hidden />
                 </label>
-                {!started && edited && problem && <span className={styles.rowError}>{problem}</span>}
+                {/* 固定保留一行高度：錯誤出現時對話框不跳動 */}
+                <span className={styles.rowError} style={{ minHeight: '1.4em' }} aria-live='polite'>{!started && edited && problem ? problem : ''}</span>
                 <StepLine n={1} step={step1} />
                 <StepLine n={2} step={step2} />
                 <div className={styles.dialogActions}>
@@ -352,7 +365,7 @@ export function UsPositionsSection() {
                             return (
                                 <tr key={`${p.account.broker_id}:${p.account.account_id}:${p.code}:${p.id}`}>
                                     <td className={`${styles.td} ${panel.mono}`}>{p.code}</td>
-                                    <td className={`${styles.td} ${panel.dirText[p.direction === 'Buy' ? 'up' : 'down']}`}>{p.direction === 'Buy' ? '庫存' : '空'}</td>
+                                    <td className={`${styles.td} ${panel.dirText[p.direction === 'Buy' ? 'flat' : 'down']}`}>{p.direction === 'Buy' ? '庫存' : '空'}</td>
                                     <td className={`${styles.td} ${styles.num}`}>{fmtDec(p.quantity)}</td>
                                     <td className={`${styles.td} ${styles.num}`}>{fmtUsPrice(p.price)}</td>
                                     <td className={`${styles.td} ${styles.num}`}>{fmtUsPrice(p.market_price)}</td>

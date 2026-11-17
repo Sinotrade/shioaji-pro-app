@@ -39,47 +39,73 @@ export class UsCancelTooEarlyError extends Error {
 }
 
 export interface UsCancelResult {
-    /** 回讀看到刪單證據（狀態 Cancelled，或取消量補足剩餘）且成交量沒有倒退 */
+    /** 回讀有明確結果：刪單成功，或刪單前已全部成交 */
     confirmed: boolean;
-    /** 本次實際取消的股數（確認後才有；以回讀結果保守計算） */
+    /** 本次實際取消、可以重下的股數（確認後才有；保守計算） */
     cancelled?: string;
+    /** 刪單前已全部成交：沒有取消任何股數，不重下 */
+    filled?: boolean;
     /** 回讀後的委託列 */
     row?: AccountedUsTrade;
     /** 第一步開始時的伺服器與模式；改價第二步必須仍是同一個 */
     env: ServerModeGuard;
 }
 
+export const US_FILLED_BEFORE_CANCEL = '刪單前已全部成交';
+
 const qty = (v: UsAmount | null | undefined) => (v === null || v === undefined ? '0' : String(v));
 const minDec = (a: string, b: string) => (decCompare(a, b) <= 0 ? a : b);
+const maxDec = (a: string, b: string) => (decCompare(a, b) >= 0 ? a : b);
+
+export type UsCancelEvidence = { kind: 'cancelled'; cancelled: string } | { kind: 'filled' };
 
 /**
- * 回讀結果有沒有刪單證據，有的話回傳本次取消的股數。
- * - 成交量不可比刪單前少（舊快照）。
- * - 狀態 Cancelled，或 取消量增加且 成交＋取消 補足委託量。
- * - Failed／Inactive 等其他終態不算刪單成功，不可拿來重下。
- * 取消股數＝委託量−目前成交−刪單前已取消，再不超過取消量的增加（若有）。
+ * 比較刪單前（伺服器回讀的基準）與刪單後回讀，判斷結果；看不出來回 null。
+ * - 成交量不可比基準少（舊快照）→ null。
+ * - 狀態 Filled 且取消量沒增加 → 刪單前已全部成交。
+ * - 刪單成功需要：狀態 Cancelled（或 Filled／Inactive 且取消量增加），而且
+ *   成交＋取消 ≥ max(基準委託量, 回讀委託量)。PendingSubmit、Failed 等不算。
+ * - 可重下股數＝min(基準剩餘−期間新增成交, 取消量相對基準的增加)。
  */
-export function cancelEvidence(before: UsTrade, now: UsTrade): string | null {
+export function cancelEvidence(before: UsTrade, now: UsTrade): UsCancelEvidence | null {
     const dealsBefore = qty(before.status.deal_quantity);
     const dealsNow = qty(now.status.deal_quantity);
     if (decCompare(dealsNow, dealsBefore) < 0) return null;
     const cancelBefore = qty(before.status.cancel_quantity);
     const cancelNow = qty(now.status.cancel_quantity);
     const cancelDelta = decSub(cancelNow, cancelBefore) ?? '0';
-    const covered = decCompare(decAdd(dealsNow, cancelNow) ?? '0', now.order.quantity) >= 0;
-    const isCancelled = now.status.status === 'Cancelled';
-    if (!isCancelled && !(decIsPositive(cancelDelta) && covered)) return null;
-    let cancelled = decSub(decSub(now.order.quantity, dealsNow) ?? '0', cancelBefore) ?? '0';
-    if (decIsPositive(cancelDelta)) cancelled = minDec(cancelled, cancelDelta);
-    return decIsPositive(cancelled) ? cancelled : '0';
+    const status = now.status.status;
+    if (status === 'Filled' && !decIsPositive(cancelDelta)) return { kind: 'filled' };
+    const terminalWithCancel = status === 'Cancelled'
+        || ((status === 'Filled' || status === 'Inactive') && decIsPositive(cancelDelta));
+    if (!terminalWithCancel) return null;
+    const orderQty = maxDec(qty(before.order.quantity), qty(now.order.quantity));
+    if (decCompare(decAdd(dealsNow, cancelNow) ?? '0', orderQty) < 0) return null;
+    const filledMeanwhile = decSub(dealsNow, dealsBefore) ?? '0';
+    const fromBaseline = decSub(usRemaining(before), filledMeanwhile) ?? '0';
+    const cancelled = minDec(fromBaseline, cancelDelta);
+    return { kind: 'cancelled', cancelled: decIsPositive(cancelled) ? cancelled : '0' };
 }
 
-/** 刪單並回讀確認（最多 readAttempts 次權威查詢，間隔 readDelayMs） */
+/**
+ * 刪單並回讀確認。送出前先向伺服器回讀（refresh）這筆委託當基準：別的終端機
+ * 可能已減量，App 還沒看到。之後最多 readAttempts 次權威查詢，間隔 readDelayMs。
+ */
 export async function cancelUsTrade(row: AccountedUsTrade, opts: { readAttempts?: number; readDelayMs?: number } = {}): Promise<UsCancelResult> {
     const env = captureServerMode();
     const account = currentAccount(row);
-    // 以目前最新的列為基準（傳進來的列可能是舊畫面）
-    const before = findRow(row) ?? row;
+    try {
+        await refreshUsAccount(account);
+    } catch (error) {
+        throw Object.assign(new Error(`無法取得這筆委託的最新狀態，未刪單：${usErrorText(error)}`), { mutationNotStarted: true as const, cause: error });
+    }
+    if (!env()) throw Object.assign(new Error(SERVER_MODE_CHANGED_MESSAGE), { mutationNotStarted: true as const });
+    const before = findRow(row);
+    if (!before) throw Object.assign(new Error('伺服器查不到這筆委託，未刪單；請按更新查看'), { mutationNotStarted: true as const });
+    if (!decIsPositive(usRemaining(before))) {
+        if (before.status.status === 'Filled') return { confirmed: true, filled: true, cancelled: '0', row: before, env };
+        throw Object.assign(new Error('這筆委託已沒有剩餘股數，未刪單'), { mutationNotStarted: true as const });
+    }
     try {
         const trade = await cancelUsOrder(before.order.id, account, {
             beforeDispatch: () => {
@@ -97,8 +123,10 @@ export async function cancelUsTrade(row: AccountedUsTrade, opts: { readAttempts?
         if (!env()) break; // 換了伺服器或模式：回讀結果不能當作這筆刪單的證據
         try { await refreshUsAccount(account); } catch { continue; }
         const now = findRow(row);
-        const cancelled = now ? cancelEvidence(before, now) : null;
-        if (now && cancelled !== null) return { confirmed: true, cancelled, row: now, env };
+        const evidence = now ? cancelEvidence(before, now) : null;
+        if (!now || !evidence) continue;
+        if (evidence.kind === 'filled') return { confirmed: true, filled: true, cancelled: '0', row: now, env };
+        return { confirmed: true, cancelled: evidence.cancelled, row: now, env };
     }
     return { confirmed: false, row: findRow(row), env };
 }
