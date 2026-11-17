@@ -1,6 +1,6 @@
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { act, create, type ReactTestRenderer } from 'react-test-renderer';
+import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({ panel: vi.fn(() => null), defaults: vi.fn(), load: vi.fn(), save: vi.fn(), select: vi.fn(), start: vi.fn(), reload: vi.fn(), stop: vi.fn(), logout: vi.fn(), clearHash: vi.fn(), openLogs: vi.fn() }));
 vi.mock('../lib/spawn-keys', () => ({ clearStoredSpawnKeyHash: mocks.clearHash }));
@@ -180,5 +180,46 @@ describe('server start failure', () => {
         await startNow();
         expect(text()).toContain('無法連線至永豐主機');
         expect(text()).not.toContain('LEAKME');
+    });
+});
+
+// 登出說明的純文字（說明裡夾著連結，toJSON 會把文字切成好幾段）
+const alertText = () => {
+    const walk = (n: ReactTestInstance | string): string => typeof n === 'string' ? n : n.children.map(walk).join('');
+    return walk(view!.root.find((n) => n.type === 'p' && n.props.role === 'alert'));
+};
+
+describe('應用程式鎖連續輸錯 10 次登出之後', () => {
+    it('登入畫面說明原因並附 API 金鑰申請連結；顯示過就清掉，下次不再出現', async () => {
+        const store = new Map([['sj-pro-app-lock-logged-out', '1']]);
+        vi.stubGlobal('localStorage', { getItem: (k: string) => store.get(k) ?? null, removeItem: (k: string) => void store.delete(k) });
+        await act(async () => { view = create(createElement(OnboardingSetup)); });
+        expect(alertText()).toContain('解鎖密碼連續錯 10 次，已登出。請重新輸入 API 金鑰登入；還沒有金鑰可到這裡申請。');
+        expect(view!.root.findByType('a').props.href).toBe('https://www.sinotrade.com.tw/newweb/PythonAPIKey/');
+        expect(store.has('sj-pro-app-lock-logged-out')).toBe(false);
+        await act(async () => view!.unmount());
+        await act(async () => { view = create(createElement(OnboardingSetup)); });
+        expect(JSON.stringify(view!.toJSON())).not.toContain('連續錯 10 次');
+    });
+});
+
+describe('登出說明的值不認得', () => {
+    it('原型上的名字（constructor）不當成登出原因', async () => {
+        vi.stubGlobal('localStorage', { getItem: () => 'constructor', removeItem: () => {} });
+        await act(async () => { view = create(createElement(OnboardingSetup)); });
+        expect(view!.root.findAll((n) => n.type === 'p' && n.props.role === 'alert')).toHaveLength(0);
+    });
+});
+
+describe('應用程式鎖按了忘記密碼登出之後', () => {
+    it('登入畫面說明已清除金鑰、附申請連結，並提醒應用程式鎖已關閉', async () => {
+        const store = new Map([['sj-pro-app-lock-logged-out', 'forgot']]);
+        vi.stubGlobal('localStorage', { getItem: (k: string) => store.get(k) ?? null, removeItem: (k: string) => void store.delete(k) });
+        await act(async () => { view = create(createElement(OnboardingSetup)); });
+        const shown = alertText();
+        expect(shown).toContain('已登出，並清除這台電腦的 API 金鑰。請重新輸入 API 金鑰登入；還沒有金鑰可到這裡申請。');
+        expect(shown).not.toContain('連續錯 10 次');
+        expect(shown).toContain('應用程式鎖已關閉，登入後可到「設定 → 應用程式鎖」重新開啟。');
+        expect(view!.root.findByType('a').props.href).toBe('https://www.sinotrade.com.tw/newweb/PythonAPIKey/');
     });
 });
