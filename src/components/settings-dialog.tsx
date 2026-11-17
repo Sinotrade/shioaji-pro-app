@@ -303,7 +303,7 @@ function SoundPrivacySection() {
 }
 
 export function AccountsSection() {
-    const { accounts, selectedStock, selectedFutures, loaded, loadError } = useAccounts();
+    const { accounts, selectedStock, selectedFutures, selectedIntl, loaded, loadError } = useAccounts();
     const simulation = useServerInfo()?.simulation === true;
     const priv = usePrivacyMode();
     const [refreshing, setRefreshing] = useState(false);
@@ -311,7 +311,7 @@ export function AccountsSection() {
     const unsignedTypes = (['S', 'F'] as const).filter((t) =>
         accounts.some((a) => a.account_type === t && !a.signed),
     );
-    const groups: { label: string; type: 'S' | 'F'; selected: string }[] = [
+    const groups: { label: string; type: 'S' | 'F' | 'H'; selected: string }[] = [
         {
             label: '證券帳戶',
             type: 'S',
@@ -324,6 +324,14 @@ export function AccountsSection() {
             type: 'F',
             selected: selectedFutures
                 ? `${selectedFutures.broker_id}-${selectedFutures.account_id}`
+                : '',
+        },
+        {
+            // 複委託（美股）：只用在美股下單面板與美股委託
+            label: '複委託帳戶（美股）',
+            type: 'H',
+            selected: selectedIntl
+                ? `${selectedIntl.broker_id}-${selectedIntl.account_id}`
                 : '',
         },
     ];
