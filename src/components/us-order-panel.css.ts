@@ -210,8 +210,9 @@ export const smallBtn = style({
 export const section = style({
     borderTop: `1px solid ${vars.color.border}`,
     marginTop: vars.space.xs,
-    flexShrink: 0,
-    maxHeight: '45%',
+    // 用剩下的高度，表格只在這一層捲動（不再巢狀捲動、不被 45% 截斷）
+    flex: '0 1 auto',
+    minHeight: 0,
     overflowY: 'auto',
 });
 

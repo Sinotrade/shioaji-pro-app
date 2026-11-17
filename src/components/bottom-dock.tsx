@@ -38,7 +38,8 @@ import { fmtMoney, fmtSigned } from '../lib/utils/format';
 import { vars } from '../theme.css';
 import { AccountPane, type AccountRefreshControls } from './bottom-dock-account';
 import { OrdersPane } from './bottom-dock-orders';
-import { UsOrdersSection, UsPositionsSection } from './us-dock';
+import { UsOrdersSection, UsPositionsSection, useUsDockSummary } from './us-dock';
+import { decIsPositive as decIsPositiveText, fmtDec } from '../lib/us/decimal';
 import { PositionsPane } from './bottom-dock-positions';
 import {
     accountToRef,
@@ -149,11 +150,18 @@ export function BottomDock({
         remainingWorkingOrderQuantity(t) > 0,
     ).length;
 
+    // 美股（H 帳戶）計數併入分頁標籤；損益不併：台幣與美元分開顯示
+    const us = useUsDockSummary(market !== 'F' && !scope);
+    const usPositions = us.shown ? us.positions ?? 0 : 0;
+    const usPending = us.shown && us.positions === null;
+    const posCount = positions.length + usPositions;
+    const ordActive = activeOrders + (us.shown ? us.activeOrders : 0);
+    const ordTotal = scopedTrades.length + (us.shown ? us.totalOrders : 0);
     const tabs: { key: TabKey; label: string }[] = [
-        { key: 'positions', label: `持倉 Positions [${positionsStatus === 'ready' ? positions.length : positions.length > 0 ? `${positions.length}+` : '…'}]` },
+        { key: 'positions', label: `持倉 Positions [${positionsStatus === 'ready' && !usPending ? posCount : posCount > 0 ? `${posCount}+` : '…'}]` },
         {
             key: 'orders',
-            label: `委託 Orders [${ordersStatus === 'ready' ? `${activeOrders}/${scopedTrades.length}` : trades.length > 0 ? `${activeOrders}/${scopedTrades.length}+` : '…'}]`,
+            label: `委託 Orders [${ordersStatus === 'ready' ? `${ordActive}/${ordTotal}` : ordTotal > 0 ? `${ordActive}/${ordTotal}+` : '…'}]`,
         },
         { key: 'account', label: '帳務/交割 Account' },
     ];
@@ -300,7 +308,7 @@ export function BottomDock({
             </div>
             <div className={styles.summaryRow}>
                 <span className={styles.sumItem}>
-                    <span className={styles.sumLabel}>總損益</span>
+                    <span className={styles.sumLabel}>{us.shown ? '總損益（台幣）' : '總損益'}</span>
                     <span
                         className={`${styles.sumValue} ${panel.dirText[pnlDir]}`}
                     >
@@ -314,6 +322,14 @@ export function BottomDock({
                         )}
                     </span>
                 </span>
+                {us.shown && us.pnlUsd !== null && (
+                    <span className={styles.sumItem}>
+                        <span className={styles.sumLabel}>美股損益（USD）</span>
+                        <span className={`${styles.sumValue} ${panel.dirText[us.pnlUsd.trim().startsWith('-') ? 'down' : decIsPositiveText(us.pnlUsd) ? 'up' : 'flat']}`}>
+                            {maskMoney(`${decIsPositiveText(us.pnlUsd) ? '+' : ''}${fmtDec(us.pnlUsd, { minFraction: 2, maxFraction: 2 })}`, privMoney)}
+                        </span>
+                    </span>
+                )}
                 {market !== 'F' && stockRows.length > 0 && (
                     <span className={styles.sumItem}>
                         <span className={styles.sumLabel}>總市值</span>

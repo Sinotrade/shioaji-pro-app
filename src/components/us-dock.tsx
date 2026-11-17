@@ -5,15 +5,15 @@
 // 美股帳務沒有保證金、交割、可用額度（H 帳戶 422），帳務分頁不顯示美股。
 
 import { AlertTriangle, ArrowRight, CheckCircle2, Circle, Loader2, XCircle } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { useAccounts } from '../lib/account-store';
 import { canTrade } from '../lib/account-tradable';
 import { orderNumber, orderStatusLabel } from '../lib/order-status-label';
 import { maskAccountId, maskMoney, usePrivacyMode, usePrivacyMoney } from '../lib/privacy';
 import type { AccountedUsTrade, UsOrderReq } from '../lib/types/us';
-import { decIsPositive, decToInt, fmtDec } from '../lib/us/decimal';
-import { cancelUsTrade, placeReplacement, priceChangeProblem, reduceUsTrade, replacementOrder, UsCancelTooEarlyError } from '../lib/us/us-order-actions';
-import { refreshUsPositions, refreshUsTrades, useUsTradingState, usRemaining, US_POSITIONS_UNAVAILABLE } from '../lib/us/us-trading-state';
+import { decAdd, decIsPositive, decToInt, fmtDec, fmtUsPrice } from '../lib/us/decimal';
+import { cancelUsTrade, placeReplacement, type UsCancelResult, priceChangeProblem, reduceUsTrade, replacementOrder, UsCancelTooEarlyError } from '../lib/us/us-order-actions';
+import { getUsTradingState, refreshUsPositions, refreshUsTrades, subscribeUsTradingState, useUsTradingState, usRemaining, US_POSITIONS_UNAVAILABLE } from '../lib/us/us-trading-state';
 import { RefreshButton } from './refresh-button';
 import { UsMarketBadge } from './us-order-panel';
 import * as styles from './us-order-panel.css';
@@ -24,11 +24,46 @@ function useHasIntlAccount() {
     return accounts.some(a => a.account_type === 'H' && canTrade(a));
 }
 
+export interface UsDockSummary {
+    /** 有可交易的 H 帳戶且目前篩選會顯示美股 */
+    shown: boolean;
+    /** 美股庫存筆數；尚未就緒為 null */
+    positions: number | null;
+    activeOrders: number;
+    totalOrders: number;
+    /** 美股未實現損益合計（USD 字串）；沒有可加總的值為 null。絕不和台幣相加 */
+    pnlUsd: string | null;
+}
+
+/** 底部 dock 分頁計數與摘要用：只讀狀態，不啟動查詢（區段自己會啟動） */
+export function useUsDockSummary(visible: boolean): UsDockSummary {
+    const has = useHasIntlAccount();
+    const s = useSyncExternalStore(subscribeUsTradingState, getUsTradingState);
+    return useMemo(() => {
+        const shown = visible && has;
+        if (!shown) return { shown, positions: null, activeOrders: 0, totalOrders: 0, pnlUsd: null };
+        let pnl: string | null = null;
+        if (s.positionsStatus === 'ready') {
+            for (const p of s.positions) {
+                if (p.pnl === null || p.pnl === undefined) continue;
+                pnl = decAdd(pnl ?? '0', String(p.pnl)) ?? pnl;
+            }
+        }
+        return {
+            shown,
+            positions: s.positionsStatus === 'ready' ? s.positions.length : null,
+            activeOrders: s.trades.filter(t => decIsPositive(usRemaining(t))).length,
+            totalOrders: s.trades.length,
+            pnlUsd: pnl,
+        };
+    }, [visible, has, s]);
+}
+
 const rowKey = (t: AccountedUsTrade) => `${t.account.broker_id}:${t.account.account_id}:${t.order.id}`;
 
 function priceCell(t: AccountedUsTrade) {
     if (t.order.price_type === 'MKT') return '市價';
-    return fmtDec(t.order.price);
+    return fmtUsPrice(t.order.price);
 }
 
 // ---- 委託 ----
@@ -37,7 +72,13 @@ export function UsOrdersSection() {
     const has = useHasIntlAccount();
     const s = useUsTradingState();
     const priv = usePrivacyMode();
-    const [busy, setBusy] = useState<string | null>(null);
+    // 每筆委託各自的處理中狀態：一筆在刪單時，其他筆仍可操作
+    const [busy, setBusy] = useState<ReadonlySet<string>>(() => new Set());
+    const markBusy = (k: string, on: boolean) => setBusy(prev => {
+        const next = new Set(prev);
+        if (on) next.add(k); else next.delete(k);
+        return next;
+    });
     const [rowMsg, setRowMsg] = useState<Record<string, { kind: 'ok' | 'err'; text: string }>>({});
     const [reduceFor, setReduceFor] = useState<string | null>(null);
     const [reduceQty, setReduceQty] = useState('');
@@ -53,18 +94,22 @@ export function UsOrdersSection() {
     const say = (t: AccountedUsTrade, kind: 'ok' | 'err', text: string) => setRowMsg(m => ({ ...m, [rowKey(t)]: { kind, text } }));
 
     const cancel = async (t: AccountedUsTrade) => {
-        setBusy(rowKey(t));
+        const k = rowKey(t);
+        if (busy.has(k)) return;
+        markBusy(k, true);
         try {
             const r = await cancelUsTrade(t);
             say(t, r.confirmed ? 'ok' : 'err', r.confirmed ? `已刪單（取消 ${fmtDec(r.cancelled)} 股）` : '刪單已送出，尚未確認；請稍後按更新查看');
         } catch (e) {
             say(t, 'err', e instanceof UsCancelTooEarlyError ? e.message : e instanceof Error ? e.message : String(e));
-        } finally { setBusy(null); }
+        } finally { markBusy(k, false); }
     };
 
     const reduce = async (t: AccountedUsTrade) => {
         const n = Number(reduceQty);
-        setBusy(rowKey(t));
+        const k = rowKey(t);
+        if (busy.has(k)) return;
+        markBusy(k, true);
         try {
             await reduceUsTrade(t, n);
             say(t, 'ok', `減量 ${n} 股已送出`);
@@ -72,7 +117,7 @@ export function UsOrdersSection() {
             setReduceQty('');
         } catch (e) {
             say(t, 'err', e instanceof Error ? e.message : String(e));
-        } finally { setBusy(null); }
+        } finally { markBusy(k, false); }
     };
 
     return (
@@ -121,7 +166,7 @@ export function UsOrdersSection() {
                                     <td className={`${styles.td} ${styles.num}`}>
                                         {fmtDec(t.order.quantity)} / {fmtDec(t.status.deal_quantity)} / {fmtDec(remaining)}
                                     </td>
-                                    <td className={`${styles.td} ${styles.num}`}>{t.status.avg_price ? fmtDec(t.status.avg_price) : '—'}</td>
+                                    <td className={`${styles.td} ${styles.num}`}>{t.status.avg_price ? fmtUsPrice(t.status.avg_price) : '—'}</td>
                                     <td className={styles.td}>{t.order.time_in_force ?? ''}{t.order.session && t.order.session !== 'Regular' ? ` ${t.order.session}` : ''}</td>
                                     <td className={styles.td} title={t.status.msg || undefined}>
                                         {orderStatusLabel(t.status.status)}
@@ -141,14 +186,14 @@ export function UsOrdersSection() {
                                                             value={reduceQty}
                                                             onChange={e => setReduceQty(e.target.value.replace(/\D/g, ''))}
                                                         />
-                                                        <button className={styles.smallBtn} disabled={busy === k || !reduceQty} onClick={() => void reduce(t)}>確認減量</button>
+                                                        <button className={styles.smallBtn} disabled={busy.has(k) || !reduceQty} onClick={() => void reduce(t)}>確認減量</button>
                                                         <button className={styles.smallBtn} onClick={() => { setReduceFor(null); setReduceQty(''); }}>取消</button>
                                                     </>
                                                 ) : (
                                                     <>
-                                                        <button className={styles.smallBtn} disabled={busy === k} onClick={() => { setReduceFor(k); setReduceQty(''); }}>減量</button>
-                                                        <button className={styles.smallBtn} disabled={busy === k || t.order.price_type === 'MKT'} title={t.order.price_type === 'MKT' ? '市價單不能改價' : '美股改價＝先刪單再以新價格重下'} onClick={() => setRepriceRow(t)}>改價</button>
-                                                        <button className={styles.smallBtn} disabled={busy === k} onClick={() => void cancel(t)}>{busy === k ? '處理中…' : '刪單'}</button>
+                                                        <button className={styles.smallBtn} disabled={busy.has(k)} onClick={() => { setReduceFor(k); setReduceQty(''); }}>減量</button>
+                                                        <button className={styles.smallBtn} disabled={busy.has(k) || t.order.price_type === 'MKT'} title={t.order.price_type === 'MKT' ? '市價單不能改價' : '美股改價＝先刪單再以新價格重下'} onClick={() => setRepriceRow(t)}>改價</button>
+                                                        <button className={styles.smallBtn} disabled={busy.has(k)} onClick={() => void cancel(t)}>{busy.has(k) ? '處理中…' : '刪單'}</button>
                                                     </>
                                                 )}
                                             </div>
@@ -181,10 +226,12 @@ function StepLine({ n, step }: { n: number; step: StepState }) {
 
 export function UsRepriceDialog({ row, onClose }: { row: AccountedUsTrade; onClose: () => void }) {
     const [price, setPrice] = useState(String(row.order.price ?? ''));
-    const [step1, setStep1] = useState<StepState>({ state: 'pending', text: `刪除原委託（未成交 ${fmtDec(usRemaining(row))} 股 @ ${fmtDec(row.order.price)}）` });
+    const [step1, setStep1] = useState<StepState>({ state: 'pending', text: `刪除原委託（未成交 ${fmtDec(usRemaining(row))} 股 @ ${fmtUsPrice(row.order.price)}）` });
     const [step2, setStep2] = useState<StepState>({ state: 'pending', text: '以新價格重新下單' });
-    const [next, setNext] = useState<UsOrderReq | null>(null);
+    const [next, setNext] = useState<{ order: UsOrderReq; env: UsCancelResult['env'] } | null>(null);
     const [running, setRunning] = useState(false);
+    // 開窗時價格等於原價：使用者改過之後才顯示檢查結果
+    const [edited, setEdited] = useState(false);
     const problem = priceChangeProblem(row, price);
     const started = step1.state !== 'pending';
 
@@ -207,8 +254,8 @@ export function UsRepriceDialog({ row, onClose }: { row: AccountedUsTrade; onClo
             setStep1({ state: 'ok', text: `原委託已刪除，取消 ${fmtDec(r.cancelled)} 股` });
             const order = replacementOrder(row, r.cancelled ?? '0', price);
             if (typeof order === 'string') { setStep2({ state: 'err', text: order }); return; }
-            setNext(order);
-            setStep2({ state: 'pending', text: `以 ${order.price} 重下 ${order.quantity} 股（${order.time_in_force}）— 請按「送出新委託」確認` });
+            setNext({ order, env: r.env });
+            setStep2({ state: 'pending', text: `以 ${fmtUsPrice(order.price)} 重下 ${order.quantity} 股（${order.time_in_force}）— 請按「送出新委託」確認` });
         } catch (e) {
             setStep1({ state: 'err', text: e instanceof UsCancelTooEarlyError ? e.message : e instanceof Error ? e.message : String(e) });
         } finally { setRunning(false); }
@@ -219,8 +266,8 @@ export function UsRepriceDialog({ row, onClose }: { row: AccountedUsTrade; onClo
         setRunning(true);
         setStep2(s => ({ ...s, state: 'running' }));
         try {
-            const t = await placeReplacement(row, next);
-            setStep2({ state: 'ok', text: `新委託已送出：${orderStatusLabel(t.status?.status)} #${orderNumber(t)}，${next.quantity} 股 @ ${next.price}` });
+            const t = await placeReplacement(row, next.order, next.env);
+            setStep2({ state: 'ok', text: `新委託已送出：${orderStatusLabel(t.status?.status)} #${orderNumber(t)}，${next.order.quantity} 股 @ ${fmtUsPrice(next.order.price)}` });
             setNext(null);
         } catch (e) {
             // 拒單照原文顯示
@@ -244,11 +291,11 @@ export function UsRepriceDialog({ row, onClose }: { row: AccountedUsTrade; onClo
                         aria-label='新價格'
                         disabled={started}
                         value={price}
-                        onChange={e => setPrice(e.target.value.replace(/[^\d.]/g, ''))}
+                        onChange={e => { setEdited(true); setPrice(e.target.value.replace(/[^\d.]/g, '')); }}
                     />
                     <ArrowRight size={12} aria-hidden />
                 </label>
-                {!started && problem && <span className={styles.rowError}>{problem}</span>}
+                {!started && edited && problem && <span className={styles.rowError}>{problem}</span>}
                 <StepLine n={1} step={step1} />
                 <StepLine n={2} step={step2} />
                 <div className={styles.dialogActions}>
@@ -275,12 +322,12 @@ export function UsPositionsSection() {
                 <UsMarketBadge />
                 <span>美股庫存</span>
                 <span style={{ flex: 1 }} />
-                {s.positionsStatus !== 'unsupported' && (
-                    <RefreshButton label='更新美股庫存' loading={s.positionsStatus === 'loading'} onClick={() => void refreshUsPositions()} iconSize={12} />
-                )}
+                <RefreshButton label='更新美股庫存' loading={s.positionsStatus === 'loading'} onClick={() => void refreshUsPositions()} iconSize={12} />
             </div>
-            {s.positionsStatus === 'unsupported' || s.positionsStatus === 'error' ? (
+            {s.positionsStatus === 'unsupported' ? (
                 <div className={styles.sectionHead}>{US_POSITIONS_UNAVAILABLE}</div>
+            ) : s.positionsStatus === 'error' ? (
+                <div className={`${styles.sectionHead} ${panel.statusText.err}`} role='status'>{s.positionsError ?? '美股庫存查詢失敗，請按更新重試'}</div>
             ) : s.positionsStatus !== 'ready' ? (
                 <div className={styles.sectionHead}>查詢中…</div>
             ) : s.positions.length === 0 ? (
@@ -305,10 +352,10 @@ export function UsPositionsSection() {
                             return (
                                 <tr key={`${p.account.broker_id}:${p.account.account_id}:${p.code}:${p.id}`}>
                                     <td className={`${styles.td} ${panel.mono}`}>{p.code}</td>
-                                    <td className={`${styles.td} ${panel.dirText[p.direction === 'Buy' ? 'up' : 'down']}`}>{p.direction === 'Buy' ? '多' : '空'}</td>
+                                    <td className={`${styles.td} ${panel.dirText[p.direction === 'Buy' ? 'up' : 'down']}`}>{p.direction === 'Buy' ? '庫存' : '空'}</td>
                                     <td className={`${styles.td} ${styles.num}`}>{fmtDec(p.quantity)}</td>
-                                    <td className={`${styles.td} ${styles.num}`}>{fmtDec(p.price)}</td>
-                                    <td className={`${styles.td} ${styles.num}`}>{fmtDec(p.market_price)}</td>
+                                    <td className={`${styles.td} ${styles.num}`}>{fmtUsPrice(p.price)}</td>
+                                    <td className={`${styles.td} ${styles.num}`}>{fmtUsPrice(p.market_price)}</td>
                                     <td className={`${styles.td} ${styles.num}`}>{p.market_value === null || p.market_value === undefined ? '—' : maskMoney(fmtDec(p.market_value, { minFraction: 2, maxFraction: 2 }), privMoney)}</td>
                                     <td className={`${styles.td} ${styles.num} ${panel.dirText[pnlDir]}`}>{p.pnl === null || p.pnl === undefined ? '—' : maskMoney(fmtDec(p.pnl, { minFraction: 2, maxFraction: 2 }), privMoney)}</td>
                                     <td className={`${styles.td} ${styles.num} ${panel.dirText[pnlDir]}`}>{p.pnl_pct === null || p.pnl_pct === undefined ? '—' : `${fmtDec(p.pnl_pct, { maxFraction: 2 })}%`}</td>

@@ -20,11 +20,12 @@ import { notify } from '../lib/trade';
 import type { Action } from '../lib/types/order';
 import type { Account } from '../lib/types/portfolio';
 import type { UsPriceType, UsTimeInForce } from '../lib/types/us';
-import { decMul, decRound, fmtDec } from '../lib/us/decimal';
+import { decMul, decRound, fmtDec, fmtUsPrice } from '../lib/us/decimal';
 import { placeUsOrder, usErrorText } from '../lib/us/us-api';
 import { cachedUsInfo, getUsContractRecord, loadUsInfo, searchUsCodes, usContractName } from '../lib/us/us-contracts';
 import { buildUsOrderReq, US_PRICE_TYPE_LABEL, US_PRICE_TYPES, US_TIME_IN_FORCE_ENABLED, US_TIME_IN_FORCE_LABEL, usOrderProblem, usPriceTypeAllowed } from '../lib/us/us-order-rules';
 import { observeUsTrade } from '../lib/us/us-trading-state';
+import { useMeasuredWidth } from './bottom-dock-shared';
 import * as panel from './panel.css';
 import * as ticket from './order-ticket.css';
 import * as styles from './us-order-panel.css';
@@ -69,6 +70,9 @@ export function UsOrderPanel() {
     const [busy, setBusy] = useState(false);
     const [feedback, setFeedback] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
     const blurTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+    // 窄面板（約 293px）下拉時不顯示交易所欄，留給代碼與名稱
+    const searchBox = useMeasuredWidth();
+    const narrowSearch = searchBox.width > 0 && searchBox.width < 320;
 
     const hits = useMemo(() => (open ? searchUsCodes(query, VISIBLE_SUGGESTIONS) : []), [open, query, catalog]);
     // 只對看得到的幾筆查名稱（限流與每日快取在 us-contracts）
@@ -143,6 +147,9 @@ export function UsOrderPanel() {
             const trade = await placeUsOrder({ code, exchange }, order, orderAccount, {
                 beforeDispatch: () => {
                     if (!sameServerMode()) throw Object.assign(new Error(SERVER_MODE_CHANGED_MESSAGE), { tradingGateRejected: true });
+                    // 確認視窗期間可能啟動了 Kill Switch：送出前一刻再查一次
+                    const lockedNow = checkUsOrderAllowed();
+                    if (lockedNow) throw Object.assign(new Error(lockedNow), { tradingGateRejected: true });
                 },
             });
             observeUsTrade(trade, orderAccount);
@@ -193,7 +200,7 @@ export function UsOrderPanel() {
 
             <div className={ticket.fieldRow}>
                 <span className={ticket.fieldLabel}>商品</span>
-                <div className={styles.searchWrap}>
+                <div className={styles.searchWrap} ref={searchBox.ref}>
                     <input
                         className={styles.searchInput}
                         value={query}
@@ -225,7 +232,7 @@ export function UsOrderPanel() {
                                     >
                                         <span className={styles.suggestionCode}>{h.code}</span>
                                         <span className={styles.suggestionName}>{usContractName(h.code) ?? ''}</span>
-                                        <span className={styles.suggestionExchange}>{h.exchange}</span>
+                                        {!narrowSearch && <span className={styles.suggestionExchange}>{h.exchange}</span>}
                                     </button>
                                 </li>
                             ))}
@@ -239,7 +246,7 @@ export function UsOrderPanel() {
                     <span className={styles.infoName}>{code}{name ? ` ${name}` : ''}</span>
                     <span className={styles.refLabel}>參考價（前一日）</span>
                     <span className={styles.infoMeta}>{[exchange, info?.currency ?? 'USD'].filter(Boolean).join(' · ')}</span>
-                    <span className={styles.refValue}>{info?.reference ? fmtDec(info.reference, { minFraction: 2 }) : '—'}</span>
+                    <span className={styles.refValue}>{info?.reference ? fmtUsPrice(info.reference) : '—'}</span>
                     {info?.referenceDate && <span className={styles.infoMeta} style={{ gridColumn: '1 / -1', textAlign: 'right' }}>{info.referenceDate}</span>}
                     {info?.tradingSuspended && <span className={`${styles.infoMeta} ${styles.warn}`} style={{ gridColumn: '1 / -1' }}>暫停交易</span>}
                     {infoError && <span className={`${styles.infoMeta} ${styles.warn}`} style={{ gridColumn: '1 / -1' }}>{infoError}</span>}
@@ -289,7 +296,7 @@ export function UsOrderPanel() {
                         className={ticket.numInput}
                         inputMode='decimal'
                         aria-label='價格（USD）'
-                        placeholder={info?.reference ? `參考 ${info.reference}` : 'USD'}
+                        placeholder={info?.reference ? `參考 ${fmtUsPrice(info.reference)}` : 'USD'}
                         value={price}
                         onChange={e => setPrice(e.target.value.replace(/[^\d.]/g, ''))}
                     />

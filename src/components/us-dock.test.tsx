@@ -97,3 +97,46 @@ it('shows US positions with — for null market fields, or the later-version not
     await act(async () => { view = create(createElement(UsPositionsSection)); });
     expect(all()).toContain('美股庫存將於後續版本提供');
 });
+
+it('keeps busy per order: cancelling one row leaves the others usable', async () => {
+    const second = { ...trade, order: { ...trade.order, id: 't2', seqno: '21157800' }, status: { ...trade.status, id: 't2' } };
+    m.state = { ...m.state, trades: [trade, second] };
+    let release!: (v: unknown) => void;
+    m.cancel.mockReturnValueOnce(new Promise(r => { release = r; }));
+    await act(async () => { view = create(createElement(UsOrdersSection)); });
+    await act(async () => { void btn(/^刪單$/)!.props.onClick(); });
+    const cancels = view.root.findAllByType('button').filter(b => /^(刪單|處理中…)$/.test(text(b)));
+    expect(cancels.map(b => text(b))).toEqual(['處理中…', '刪單']);
+    expect(cancels[1]!.props.disabled).toBe(false);
+    await act(async () => { release({ confirmed: true, cancelled: '8' }); });
+});
+
+it('opens the reprice dialog without a same-price error, and validates after editing', async () => {
+    await act(async () => { view = create(createElement(UsOrdersSection)); });
+    await act(async () => { btn(/^改價$/)!.props.onClick(); });
+    expect(all()).not.toContain('新價格和原價格相同');
+    expect(all()).toContain('173.97');
+    const price = view.root.findAll(n => n.type === 'input' && n.props['aria-label'] === '新價格')[0]!;
+    await act(async () => { price.props.onChange({ target: { value: '173.97' } }); });
+    expect(all()).toContain('新價格和原價格相同');
+});
+
+it('shows US prices with at least two decimals', async () => {
+    m.state = { ...m.state, trades: [{ ...trade, order: { ...trade.order, price: '174' }, status: { ...trade.status, avg_price: '173.9' } }] };
+    await act(async () => { view = create(createElement(UsOrdersSection)); });
+    expect(all()).toContain('174.00');
+    expect(all()).toContain('173.90');
+});
+
+it('labels long positions 庫存 and keeps a refresh button on errors', async () => {
+    m.state = { ...m.state, positionsStatus: 'ready', positions: [{ id: 0, code: 'NVDA', direction: 'Buy', quantity: '1', price: '170',
+        market_price: null, market_value: null, pnl: null, pnl_pct: null, currency: 'USD', account: H }] };
+    await act(async () => { view = create(createElement(UsPositionsSection)); });
+    expect(all()).toContain('庫存');
+    expect(all()).toContain('170.00');
+    await act(async () => view.unmount());
+    m.state = { ...m.state, positionsStatus: 'error', positions: [], positionsError: '暫時無法確認美股庫存功能，請按更新重試' };
+    await act(async () => { view = create(createElement(UsPositionsSection)); });
+    expect(all()).toContain('請按更新重試');
+    expect(view.root.findAll(n => n.props?.label === '更新美股庫存').length).toBeGreaterThan(0);
+});

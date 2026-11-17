@@ -132,3 +132,18 @@ it('degrades without H accounts or US contracts', async () => {
     await mount();
     expect(all()).toContain('沒有可交易的複委託（H）帳戶');
 });
+
+it('re-checks the kill switch right before dispatch (locked during the confirm)', async () => {
+    m.place.mockImplementationOnce(async (_c: unknown, _o: unknown, _a: unknown, opts: { beforeDispatch: () => void }) => {
+        m.locked = true;
+        opts.beforeDispatch();
+        return {};
+    });
+    await mount();
+    await pickAapl();
+    await act(async () => { input('價格（USD）').props.onChange({ target: { value: '229.5' } }); });
+    await act(async () => { await btn(/買進下單/)!.props.onClick(); });
+    await act(async () => { await btn(/確認買進/)!.props.onClick(); });
+    expect(m.observe).not.toHaveBeenCalled();
+    expect(all()).toContain('風控鎖啟動中');
+});

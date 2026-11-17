@@ -493,6 +493,8 @@ function RiskSection() {
                 <br />
                 停損/停利觸價單不受風控封鎖。
                 <br />
+                美股（複委託）只受 Kill Switch 封鎖，單筆上限與日虧上限只算台股／期貨。
+                <br />
                 Kill Switch（鎖定下單）在畫面右上角「風控」鈕，一鍵鎖定/解鎖。
             </span>
             <span className={hud.settingLabel}>下單確認</span>
