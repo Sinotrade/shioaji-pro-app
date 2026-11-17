@@ -239,10 +239,15 @@ export function retainUsQuoteStreams(): () => void {
         released = true;
         usStreamRefs--;
         if (usStreamRefs > 0) return;
-        usSources.forEach(source => source.close());
-        usSources.clear();
-        if (usReopenTimer) { clearTimeout(usReopenTimer); usReopenTimer = null; }
+        closeUsStreams();
     };
+}
+
+/** 關掉美股 SSE（釋放最後一個訂閱，或這個視窗交出串流擁有權） */
+function closeUsStreams() {
+    usSources.forEach(source => source.close());
+    usSources.clear();
+    if (usReopenTimer) { clearTimeout(usReopenTimer); usReopenTimer = null; }
 }
 
 function nextTickState(prev: QuoteState | undefined, tick: SseTick): QuoteState {
@@ -907,6 +912,8 @@ export function ensureStream() {
             onOwn: () => {
                 if (isChildWindow()) invalidateTradingMirror();
                 ownerListeners.forEach(listener => listener());
+                // 接手擁有權：這個視窗已有的美股訂閱要重新開美股 SSE
+                openUsStreams();
                 everDown = true;
                 if (held) pendingConnect = true;
                 else startConnection();
@@ -916,6 +923,8 @@ export function ensureStream() {
                 pendingConnect = false;
                 es?.close();
                 es = null;
+                // 交出擁有權：美股 SSE 跟著關，由新的擁有者開
+                closeUsStreams();
                 if (retryTimer) clearTimeout(retryTimer);
                 retryTimer = null;
                 setStatus('connecting');
