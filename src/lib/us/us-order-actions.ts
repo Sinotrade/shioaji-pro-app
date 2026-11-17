@@ -87,6 +87,28 @@ export function cancelEvidence(before: UsTrade, now: UsTrade): UsCancelEvidence 
     return { kind: 'cancelled', cancelled: decIsPositive(cancelled) ? cancelled : '0' };
 }
 
+const TERMINAL_STATUS: ReadonlySet<string> = new Set(['Cancelled', 'Filled', 'Failed', 'Inactive']);
+
+/**
+ * 刪單前的基準：伺服器回讀與本機已知列單調合併。成交／取消量取較大者，
+ * 已終態不回退；委託量以伺服器為準（減量只會變小）。避免較舊的回讀把
+ * 基準拉低，讓可重下股數算多。
+ */
+export function mergeMonotonic(local: AccountedUsTrade, server: AccountedUsTrade): AccountedUsTrade {
+    const status = TERMINAL_STATUS.has(local.status.status) && !TERMINAL_STATUS.has(server.status.status)
+        ? local.status.status
+        : server.status.status;
+    return {
+        ...server,
+        status: {
+            ...server.status,
+            status,
+            deal_quantity: maxDec(qty(local.status.deal_quantity), qty(server.status.deal_quantity)),
+            cancel_quantity: maxDec(qty(local.status.cancel_quantity), qty(server.status.cancel_quantity)),
+        },
+    };
+}
+
 /**
  * 刪單並回讀確認。送出前先向伺服器回讀（refresh）這筆委託當基準：別的終端機
  * 可能已減量，App 還沒看到。之後最多 readAttempts 次權威查詢，間隔 readDelayMs。
@@ -94,13 +116,16 @@ export function cancelEvidence(before: UsTrade, now: UsTrade): UsCancelEvidence 
 export async function cancelUsTrade(row: AccountedUsTrade, opts: { readAttempts?: number; readDelayMs?: number } = {}): Promise<UsCancelResult> {
     const env = captureServerMode();
     const account = currentAccount(row);
+    // 回讀前先記下本機已知的列（回報已投影）；伺服器回讀可能比它舊
+    const local = findRow(row) ?? row;
     try {
         await refreshUsAccount(account);
     } catch (error) {
         throw Object.assign(new Error(`無法取得這筆委託的最新狀態，未刪單：${usErrorText(error)}`), { mutationNotStarted: true as const, cause: error });
     }
     if (!env()) throw Object.assign(new Error(SERVER_MODE_CHANGED_MESSAGE), { mutationNotStarted: true as const });
-    const before = findRow(row);
+    const server = findRow(row);
+    const before = server ? mergeMonotonic(local, server) : undefined;
     if (!before) throw Object.assign(new Error('伺服器查不到這筆委託，未刪單；請按更新查看'), { mutationNotStarted: true as const });
     if (!decIsPositive(usRemaining(before))) {
         if (before.status.status === 'Filled') return { confirmed: true, filled: true, cancelled: '0', row: before, env };

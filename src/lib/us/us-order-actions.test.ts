@@ -18,7 +18,7 @@ vi.mock('./us-trading-state', async () => {
     return { usRemaining: real.usRemaining, observeUsTrade: vi.fn(), refreshUsAccount: m.refresh, getUsTradingState: () => ({ trades: m.rows }) };
 });
 
-import { cancelUsTrade, placeReplacement, priceChangeProblem, reduceUsTrade, replacementOrder, UsCancelTooEarlyError } from './us-order-actions';
+import { cancelUsTrade, mergeMonotonic, placeReplacement, priceChangeProblem, reduceUsTrade, replacementOrder, UsCancelTooEarlyError } from './us-order-actions';
 import type { AccountedUsTrade } from '../types/us';
 import type { ServerModeGuard } from '../server-info-store';
 
@@ -68,6 +68,24 @@ describe('cancelUsTrade', () => {
         const r = await cancelUsTrade(row(), { readDelayMs: 0 });
         expect(r).toMatchObject({ confirmed: true, cancelled: '4' });
         expect(m.refresh.mock.invocationCallOrder[0]).toBeLessThan(m.cancel.mock.invocationCallOrder[0]!);
+    });
+
+    it('merges a stale pre-cancel read-back monotonically with the locally known row', async () => {
+        // 本機：回報已投影取消 6；伺服器回讀較舊：取消 0。刪剩下 4 → 最多重下 4
+        m.rows = [row({ cancel_quantity: '6' })];
+        server(row({ cancel_quantity: '0' }), row({ status: 'Cancelled', cancel_quantity: '10' }));
+        const r = await cancelUsTrade(row(), { readDelayMs: 0 });
+        expect(r).toMatchObject({ confirmed: true, cancelled: '4' });
+        const step2 = replacementOrder(row(), r.cancelled!, '170');
+        expect(typeof step2 === 'string' ? 0 : step2.quantity).toBeLessThanOrEqual(4);
+    });
+
+    it('never regresses a terminal local status or lower fills in the baseline', () => {
+        const merged = mergeMonotonic(
+            row({ status: 'Cancelled', deal_quantity: '5', cancel_quantity: '5' }),
+            row({ status: 'Submitted', deal_quantity: '3', cancel_quantity: '0', order_quantity: '9' }),
+        );
+        expect(merged.status).toMatchObject({ status: 'Cancelled', deal_quantity: '5', cancel_quantity: '5', order_quantity: '9' });
     });
 
     it('does not cancel when the pre-cancel read-back fails', async () => {
