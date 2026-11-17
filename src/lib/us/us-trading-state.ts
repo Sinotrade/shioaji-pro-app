@@ -19,6 +19,7 @@ import type { OrderEventReport } from '../order-report';
 import { reportBody } from '../portfolio-projection';
 import { usReportLedger } from '../report-ledger';
 import { getApiBase } from '../runtime';
+import { getServerModeVersion, subscribeServerInfo } from '../server-info-store';
 import { ensureStream, getStreamStatus, onOrderEvent, subscribeStatusStore } from '../stream';
 import type { Account } from '../types/portfolio';
 import type { OrderStatusName } from '../types/order';
@@ -90,6 +91,22 @@ function statusOf(t: UsTrade, quantity: UsAmount, deals: UsAmount, cancelled: Us
     return t.status.status === 'PendingSubmit' || t.status.status === 'PreSubmitted' ? 'Submitted' : t.status.status;
 }
 
+/** 美東日期 YYYYMMDD（美股交易日以美東為準） */
+export function nyDate(now: number = Date.now()): string {
+    const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' })
+        .formatToParts(new Date(now));
+    const get = (type: string) => parts.find(p => p.type === type)?.value ?? '';
+    return `${get('year')}${get('month')}${get('day')}`;
+}
+
+/** 美東換日：交易日早於今天的委託（DAY 單已過期）不再顯示 */
+export function dropBeforeNyDate(rows: AccountedUsTrade[], today: string): AccountedUsTrade[] {
+    return rows.filter(t => {
+        const d = (t.order.trade_date ?? '').replace(/-/g, '');
+        return !d || d >= today;
+    });
+}
+
 /** 只留各帳戶最新交易日的委託：換日後過期的 DAY 單不顯示 */
 export function dropExpiredDayOrders(rows: AccountedUsTrade[]): AccountedUsTrade[] {
     const latest = new Map<string, string>();
@@ -109,7 +126,11 @@ export function dropExpiredDayOrders(rows: AccountedUsTrade[]): AccountedUsTrade
 // ---- 權威查詢 ----
 
 const accountInFlight = new Map<string, Promise<void>>();
+const accountQueued = new Map<string, Promise<void>>();
+/** 查詢進行中收到的回報：快照回來後疊回去（快照邊界） */
+const duringQuery = new Map<string, OrderEventReport[]>();
 let allInFlight: Promise<void> | null = null;
+let allQueued: Promise<void> | null = null;
 
 function mergeAccount(account: Account, rows: UsTrade[]) {
     const k = keyOf(account);
@@ -120,23 +141,57 @@ function mergeAccount(account: Account, rows: UsTrade[]) {
     return dropExpiredDayOrders([...state.trades.filter(t => keyOf(t.account) !== k), ...incoming]);
 }
 
-/** 一個 H 帳戶的權威委託查詢（update_status）；同帳戶同時只跑一次 */
+/**
+ * 一個 H 帳戶的權威委託查詢（update_status）。同帳戶同時只跑一次；查詢中又
+ * 被要求時，結束後再查一次（不吞掉必要的重查）。查詢期間收到的回報會在快照
+ * 回來後重新套用，晚到的快照不會蓋掉較新的回報。
+ */
 export function refreshUsAccount(account: Account): Promise<void> {
     const k = keyOf(account);
     const existing = accountInFlight.get(k);
-    if (existing) return existing;
+    if (existing) {
+        let queued = accountQueued.get(k);
+        if (!queued) {
+            queued = existing.catch(() => undefined).then(() => {
+                accountQueued.delete(k);
+                return refreshUsAccount(account);
+            });
+            accountQueued.set(k, queued);
+        }
+        return queued;
+    }
     const base = getApiBase();
+    const buffer: OrderEventReport[] = [];
+    duringQuery.set(k, buffer);
     const run = fetchUsTrades(account, true).then(rows => {
+        // 換了伺服器：結果作廢；模式穩定後的重查由 startUsTradingState 觸發
         if (base !== getApiBase()) return;
-        publish({ trades: mergeAccount(account, Array.isArray(rows) ? rows : []), updatedAt: Date.now(), error: null });
-    }).finally(() => { accountInFlight.delete(k); });
+        let merged = mergeAccount(account, Array.isArray(rows) ? rows : []);
+        let unapplied = false;
+        for (const report of buffer) {
+            const projected = projectUsReport(merged, report, account);
+            if (projected) merged = projected; else unapplied = true;
+        }
+        publish({ trades: merged, updatedAt: Date.now(), error: null });
+        // 期間的回報有套不上的：快照可能比回報舊，再查一次確認（只補一次）
+        if (unapplied && buffer.length) scheduleAccountRefetch(account);
+    }).finally(() => {
+        if (duringQuery.get(k) === buffer) duringQuery.delete(k);
+        accountInFlight.delete(k);
+    });
     accountInFlight.set(k, run);
     return run;
 }
 
 /** 所有 H 帳戶重新查詢；成功後檢查回報快取健康度決定是否保留提示 */
 export function refreshUsTrades(): Promise<void> {
-    if (allInFlight) return allInFlight;
+    if (allInFlight) {
+        allQueued ??= allInFlight.catch(() => undefined).then(() => {
+            allQueued = null;
+            return refreshUsTrades();
+        });
+        return allQueued;
+    }
     const accounts = usAccounts();
     if (!accounts.length) {
         publish({ trades: [], loading: false });
@@ -148,7 +203,7 @@ export function refreshUsTrades(): Promise<void> {
         const failed = results.filter(r => r.status === 'rejected');
         if (failed.length) {
             const reason = (failed[0] as PromiseRejectedResult).reason;
-            publish({ loading: false, error: `美股委託查詢失敗，保留上次資料：${reason instanceof Error ? reason.message : String(reason)}` });
+            publish({ loading: false, error: `美股委託查詢失敗，保留上次資料；請按更新重試（${reason instanceof Error ? reason.message : String(reason)}）` });
             return;
         }
         publish({ loading: false, hint: (await anyDealUnhealthy(accounts)) ? US_DEAL_UNHEALTHY_HINT : null });
@@ -213,11 +268,16 @@ export function projectUsReport(rows: AccountedUsTrade[], report: OrderEventRepo
                 if (all === null) return null;
                 if (cut !== null && decCompare(decAdd(cancelled, cut) ?? '0', all) !== 0) return null;
                 cancelled = all;
-            } else if (cut !== null) {
-                cancelled = decAdd(cancelled, cut) ?? cancelled;
-            } else if (after !== null && !decIsPositive(deals)) {
-                cancelled = decSub(old.order.quantity, after) ?? cancelled;
-            } else return null;
+            } else {
+                // 減量：以 order_quantity（本次操作後的數量）設定絕對值，重送或重播
+                // 同一筆不會重複扣。已有成交時 order_quantity 是否含成交未確認 → 重查。
+                if (after === null || decIsPositive(deals)) return null;
+                const absolute = decSub(old.order.quantity, after);
+                if (absolute === null || !decIsPositive(absolute) && !decIsPositive(cancelled)) return null;
+                // 比目前已知的取消量小＝較舊的回報，保留現況
+                if (decCompare(absolute, cancelled) < 0) return rows;
+                cancelled = absolute;
+            }
             if (decCompare(decAdd(cancelled, deals) ?? '0', old.order.quantity) > 0) return null;
         } else if (report.opType !== 'New') {
             return null; // 美股沒有改價回報；其他未知操作交給重新查詢
@@ -260,6 +320,7 @@ function onUsReport(report: OrderEventReport) {
     if (report.market !== 'us') return;
     const account = accountOfReport(report);
     if (!account) return; // 不是本 App 可交易的 H 帳戶
+    duringQuery.get(keyOf(account))?.push(report);
     const projected = projectUsReport(state.trades, report, account);
     if (projected) publish({ trades: projected });
     else scheduleAccountRefetch(account);
@@ -267,17 +328,31 @@ function onUsReport(report: OrderEventReport) {
 
 // ---- 庫存（feat/intl-portfolio；能力未確認前要能降級） ----
 
-let positionsCapability: Promise<boolean> | null = null;
+export type UsCapability = 'yes' | 'no' | 'unknown';
+let positionsCapability: Promise<UsCapability> | null = null;
 let capabilityBase = '';
 
-/** sidecar 的 OpenAPI 有美股帳務（list_dividends 或 IntlPosition）才查庫存 */
-export function hasUsPortfolioCapability(): Promise<boolean> {
+/**
+ * sidecar 的 OpenAPI 有美股帳務（list_dividends 或 IntlPosition）才查庫存。
+ * 讀不到 OpenAPI（sidecar 剛啟動、暫時錯誤）是 unknown，不快取、下次再問；
+ * 只有讀到文件且確定沒有才是 no。
+ */
+export function hasUsPortfolioCapability(): Promise<UsCapability> {
     const base = getApiBase();
     if (base !== capabilityBase) { capabilityBase = base; positionsCapability = null; }
-    positionsCapability ??= apiGet<{ paths?: Record<string, unknown>; components?: { schemas?: Record<string, unknown> } }>('/openapi.json')
-        .then(doc => !!(doc?.paths?.['/api/v1/portfolio/list_dividends'] || doc?.components?.schemas?.IntlPosition))
-        .catch(() => false);
-    return positionsCapability;
+    if (positionsCapability) return positionsCapability;
+    const run: Promise<UsCapability> = apiGet<{ paths?: Record<string, unknown>; components?: { schemas?: Record<string, unknown> } }>('/openapi.json')
+        .then(doc => {
+            if (!doc || typeof doc !== 'object' || (!doc.paths && !doc.components)) return 'unknown' as const;
+            return doc.paths?.['/api/v1/portfolio/list_dividends'] || doc.components?.schemas?.IntlPosition ? 'yes' as const : 'no' as const;
+        })
+        .catch(() => 'unknown' as const)
+        .then(result => {
+            if (result === 'unknown' && positionsCapability === run) positionsCapability = null;
+            return result;
+        });
+    positionsCapability = run;
+    return run;
 }
 
 /** 回應是不是 IntlPosition[]（台股形狀或錯誤形狀一律當不支援） */
@@ -293,20 +368,36 @@ export function parseIntlPositions(value: unknown): IntlPosition[] | null {
     return value as IntlPosition[];
 }
 
+const errorText = (e: unknown) => e instanceof Error ? e.message : String(e);
+
 export async function refreshUsPositions(): Promise<void> {
     const accounts = usAccounts();
-    if (!accounts.length) { publish({ positions: [], positionsStatus: 'idle' }); return; }
+    if (!accounts.length) { publish({ positions: [], positionsStatus: 'idle', positionsError: null }); return; }
+    const base = getApiBase();
+    const mode = getServerModeVersion();
+    const stale = () => base !== getApiBase() || mode !== getServerModeVersion();
     publish({ positionsStatus: state.positionsStatus === 'ready' ? 'ready' : 'loading' });
-    if (!(await hasUsPortfolioCapability())) {
+    const capability = await hasUsPortfolioCapability();
+    if (stale()) return; // 模式穩定後會再查一次
+    if (capability === 'no') {
         publish({ positions: [], positionsStatus: 'unsupported', positionsError: null });
         return;
     }
+    if (capability === 'unknown') {
+        publish({ positionsStatus: 'error', positionsError: '暫時無法確認美股庫存功能，請按更新重試' });
+        return;
+    }
     const results = await Promise.allSettled(accounts.map(a => fetchUsPositions(a)));
+    if (stale()) return;
     const rows: (IntlPosition & { account: Account })[] = [];
     for (const [i, r] of results.entries()) {
-        const parsed = r.status === 'fulfilled' ? parseIntlPositions(r.value) : null;
+        if (r.status === 'rejected') {
+            publish({ positionsStatus: 'error', positionsError: `美股庫存查詢失敗，請按更新重試（${errorText(r.reason)}）` });
+            return;
+        }
+        const parsed = parseIntlPositions(r.value);
         if (!parsed) {
-            publish({ positions: [], positionsStatus: 'unsupported', positionsError: null });
+            publish({ positionsStatus: 'error', positionsError: '美股庫存回應格式不符，請按更新重試' });
             return;
         }
         rows.push(...parsed.map(p => ({ ...p, account: accounts[i]! })));
@@ -356,7 +447,34 @@ export function startUsTradingState() {
         knownKeys = next;
         if (wasLive) void refreshUsTrades().catch(() => undefined);
     });
+    // 伺服器或模式變了（冷啟動第一次得知模式、模擬↔正式）：舊查詢作廢，穩定後重查
+    let knownMode = getServerModeVersion();
+    let knownBase = getApiBase();
+    let modeTimer: ReturnType<typeof setTimeout> | null = null;
+    const stopServerInfo = subscribeServerInfo(() => {
+        const mode = getServerModeVersion();
+        const base = getApiBase();
+        if (mode === knownMode && base === knownBase) return;
+        knownMode = mode; knownBase = base;
+        if (modeTimer) clearTimeout(modeTimer);
+        modeTimer = setTimeout(() => {
+            modeTimer = null;
+            void refreshUsTrades().catch(() => undefined);
+            void refreshUsPositions().catch(() => undefined);
+        }, 300);
+    });
+    // 美東換日：清掉過期委託並重查
+    let today = nyDate();
+    const dayTimer = setInterval(() => {
+        const now = nyDate();
+        if (now === today) return;
+        today = now;
+        publish({ trades: dropBeforeNyDate(state.trades, now) });
+        void refreshUsTrades().catch(() => undefined);
+        void refreshUsPositions().catch(() => undefined);
+    }, 60_000);
     import.meta.hot?.dispose(() => {
+        stopServerInfo(); clearInterval(dayTimer); if (modeTimer) clearTimeout(modeTimer);
         stopEvents(); stopGaps(); stopStatus(); stopAccounts(); gapTimers.forEach(clearTimeout);
         refetchTimers.forEach(clearTimeout); refetchTimers.clear();
         started = false;
@@ -374,7 +492,10 @@ export function useUsTradingState(): UsTradingState {
 export function resetUsTradingStateForTest(next: Partial<UsTradingState> = {}) {
     state = { ...initial(), ...next };
     accountInFlight.clear();
+    accountQueued.clear();
+    duringQuery.clear();
     allInFlight = null;
+    allQueued = null;
     refetchTimers.forEach(clearTimeout);
     refetchTimers.clear();
     positionsCapability = null;

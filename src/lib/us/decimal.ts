@@ -144,3 +144,8 @@ export function fmtDec(v: UsAmount | null | undefined, opts: { minFraction?: num
     int = int!.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
     return `${neg ? '-' : ''}${int}${frac ? `.${frac}` : ''}`;
 }
+
+/** 美股價格顯示：至少 2 位、最多 4 位小數；不合法回 — */
+export function fmtUsPrice(v: string | number | null | undefined): string {
+    return fmtDec(v === null || v === undefined ? v : String(v), { minFraction: 2, maxFraction: 4 });
+}

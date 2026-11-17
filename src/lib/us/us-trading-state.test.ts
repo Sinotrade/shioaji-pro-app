@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const m = vi.hoisted(() => ({
     accounts: [] as unknown[],
     trades: vi.fn(), health: vi.fn(), positions: vi.fn(), apiGet: vi.fn(),
+    onEvent: null as null | ((r: unknown) => void),
 }));
 vi.mock('../account-store', () => ({
     getAccountState: () => ({ accounts: m.accounts }),
@@ -10,7 +11,8 @@ vi.mock('../account-store', () => ({
 }));
 vi.mock('../account-tradable', () => ({ canTrade: () => true }));
 vi.mock('../stream', () => ({
-    ensureStream: vi.fn(), getStreamStatus: () => 'down', onOrderEvent: () => () => undefined, subscribeStatusStore: () => () => undefined,
+    ensureStream: vi.fn(), getStreamStatus: () => 'down',
+    onOrderEvent: (fn: (r: unknown) => void) => { m.onEvent = fn; return () => undefined; }, subscribeStatusStore: () => () => undefined,
 }));
 vi.mock('./us-api', () => ({ fetchUsTrades: m.trades, fetchUsTradeCacheHealth: m.health, fetchUsPositions: m.positions }));
 vi.mock('../api', () => ({ apiGet: m.apiGet }));
@@ -39,6 +41,61 @@ beforeEach(() => {
     m.accounts = [S, H];
     m.trades.mockReset(); m.health.mockReset(); m.positions.mockReset(); m.apiGet.mockReset();
     us.resetUsTradingStateForTest();
+});
+
+describe('UpdateQty is idempotent (order_quantity sets the absolute state)', () => {
+    it('does not double-deduct when the same reduction is applied twice', () => {
+        const once = us.projectUsReport([row()], normalizeOrderEvent(fx.orderUpdateQty)!, H)!;
+        const twice = us.projectUsReport(once, normalizeOrderEvent(fx.orderUpdateQty)!, H)!;
+        expect(twice[0]!.status.cancel_quantity).toBe('50');
+        expect(us.usRemaining(twice[0]!)).toBe('150');
+    });
+
+    it('refetches instead of guessing once the order has fills', () => {
+        expect(us.projectUsReport([row({ deal_quantity: '10' })], normalizeOrderEvent(fx.orderUpdateQty)!, H)).toBeNull();
+    });
+});
+
+describe('refresh boundaries', () => {
+    it('re-applies reports received while the snapshot query was in flight', async () => {
+        us.startUsTradingState();
+        let resolve!: (rows: unknown[]) => void;
+        m.trades.mockReturnValueOnce(new Promise(r => { resolve = r; }));
+        m.health.mockResolvedValue({ state: 'Healthy', reasons: [] });
+        const run = us.refreshUsAccount(H);
+        // 查詢期間收到減量回報；快照是查詢開始時的（未減量）
+        m.onEvent!(normalizeOrderEvent(fx.orderUpdateQty));
+        resolve([row()]);
+        await run;
+        expect(us.getUsTradingState().trades[0]!.status.cancel_quantity).toBe('50');
+    });
+
+    it('runs one more query when a refresh is requested during one in flight', async () => {
+        let resolve!: (rows: unknown[]) => void;
+        m.trades.mockReturnValueOnce(new Promise(r => { resolve = r; })).mockResolvedValue([row({ status: 'Cancelled', cancel_quantity: '200' })]);
+        const first = us.refreshUsAccount(H);
+        const second = us.refreshUsAccount(H);
+        const third = us.refreshUsAccount(H);
+        expect(second).toBe(third);
+        resolve([row()]);
+        await first; await second;
+        expect(m.trades).toHaveBeenCalledTimes(2);
+        expect(us.getUsTradingState().trades[0]!.status.status).toBe('Cancelled');
+    });
+});
+
+describe('New York day rollover', () => {
+    it('computes the America/New_York date', () => {
+        // 2026-11-18 03:00 UTC = 11/17 22:00 EST
+        expect(us.nyDate(Date.UTC(2026, 10, 18, 3, 0))).toBe('20261117');
+        expect(us.nyDate(Date.UTC(2026, 10, 18, 6, 0))).toBe('20261118');
+    });
+
+    it('drops rows from before the current New York trade date', () => {
+        const old = row({}, { id: 'old', trade_date: '20261117' });
+        const today = row({}, { id: 'new', trade_date: '20261118' });
+        expect(us.dropBeforeNyDate([old, today], '20261118').map(t => t.order.id)).toEqual(['new']);
+    });
 });
 
 describe('projectUsReport', () => {
@@ -113,7 +170,26 @@ describe('US positions capability', () => {
         m.apiGet.mockResolvedValue({ paths: { '/api/v1/portfolio/list_dividends': {} } });
         m.positions.mockResolvedValue([{ id: 1, code: '2330', quantity: 1000, price: 600, last_price: 610, pnl: 10000, direction: 'Buy' }]);
         await us.refreshUsPositions();
-        expect(us.getUsTradingState().positionsStatus).toBe('unsupported');
+        // 宣告了 API 但回應形狀不對：是錯誤（可重試），不是「不支援」
+        expect(us.getUsTradingState().positionsStatus).toBe('error');
+    });
+
+    it('treats an unreadable OpenAPI as a transient error, not unsupported, and asks again', async () => {
+        m.apiGet.mockRejectedValueOnce(new Error('fetch failed'));
+        await us.refreshUsPositions();
+        expect(us.getUsTradingState().positionsStatus).toBe('error');
+        expect(us.getUsTradingState().positionsError).toContain('重試');
+        m.apiGet.mockResolvedValue({ components: { schemas: { IntlPosition: {} } } });
+        m.positions.mockResolvedValue([]);
+        await us.refreshUsPositions();
+        expect(us.getUsTradingState().positionsStatus).toBe('ready');
+    });
+
+    it('shows a failed positions read as an error', async () => {
+        m.apiGet.mockResolvedValue({ paths: { '/api/v1/portfolio/list_dividends': {} } });
+        m.positions.mockRejectedValue(new Error('503 busy'));
+        await us.refreshUsPositions();
+        expect(us.getUsTradingState().positionsStatus).toBe('error');
     });
 
     it('reads IntlPosition rows with null market fields', async () => {

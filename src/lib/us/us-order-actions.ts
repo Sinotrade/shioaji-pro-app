@@ -10,9 +10,10 @@
 import { getAccountState } from '../account-store';
 import { canTrade } from '../account-tradable';
 import { checkUsOrderAllowed } from '../risk';
+import { captureServerMode, SERVER_MODE_CHANGED_MESSAGE, type ServerModeGuard } from '../server-info-store';
 import type { Account } from '../types/portfolio';
-import type { AccountedUsTrade, UsOrderReq, UsTimeInForce, UsTrade } from '../types/us';
-import { decCompare, decIsPositive, decSub, decToInt } from './decimal';
+import type { AccountedUsTrade, UsAmount, UsOrderReq, UsTimeInForce, UsTrade } from '../types/us';
+import { decAdd, decCompare, decIsPositive, decSub, decToInt } from './decimal';
 import { cancelUsOrder, placeUsOrder, reduceUsOrderQty, usErrorText } from './us-api';
 import { isUsCancelTooEarly, US_CANCEL_TOO_EARLY_MESSAGE, US_TIME_IN_FORCE_ENABLED, usOrderProblem } from './us-order-rules';
 import { getUsTradingState, observeUsTrade, refreshUsAccount, usRemaining } from './us-trading-state';
@@ -38,22 +39,53 @@ export class UsCancelTooEarlyError extends Error {
 }
 
 export interface UsCancelResult {
-    /** 回讀確認已無剩餘 */
+    /** 回讀看到刪單證據（狀態 Cancelled，或取消量補足剩餘）且成交量沒有倒退 */
     confirmed: boolean;
-    /** 本次實際取消的股數（確認後才有） */
+    /** 本次實際取消的股數（確認後才有；以回讀結果保守計算） */
     cancelled?: string;
     /** 回讀後的委託列 */
     row?: AccountedUsTrade;
+    /** 第一步開始時的伺服器與模式；改價第二步必須仍是同一個 */
+    env: ServerModeGuard;
+}
+
+const qty = (v: UsAmount | null | undefined) => (v === null || v === undefined ? '0' : String(v));
+const minDec = (a: string, b: string) => (decCompare(a, b) <= 0 ? a : b);
+
+/**
+ * 回讀結果有沒有刪單證據，有的話回傳本次取消的股數。
+ * - 成交量不可比刪單前少（舊快照）。
+ * - 狀態 Cancelled，或 取消量增加且 成交＋取消 補足委託量。
+ * - Failed／Inactive 等其他終態不算刪單成功，不可拿來重下。
+ * 取消股數＝委託量−目前成交−刪單前已取消，再不超過取消量的增加（若有）。
+ */
+export function cancelEvidence(before: UsTrade, now: UsTrade): string | null {
+    const dealsBefore = qty(before.status.deal_quantity);
+    const dealsNow = qty(now.status.deal_quantity);
+    if (decCompare(dealsNow, dealsBefore) < 0) return null;
+    const cancelBefore = qty(before.status.cancel_quantity);
+    const cancelNow = qty(now.status.cancel_quantity);
+    const cancelDelta = decSub(cancelNow, cancelBefore) ?? '0';
+    const covered = decCompare(decAdd(dealsNow, cancelNow) ?? '0', now.order.quantity) >= 0;
+    const isCancelled = now.status.status === 'Cancelled';
+    if (!isCancelled && !(decIsPositive(cancelDelta) && covered)) return null;
+    let cancelled = decSub(decSub(now.order.quantity, dealsNow) ?? '0', cancelBefore) ?? '0';
+    if (decIsPositive(cancelDelta)) cancelled = minDec(cancelled, cancelDelta);
+    return decIsPositive(cancelled) ? cancelled : '0';
 }
 
 /** 刪單並回讀確認（最多 readAttempts 次權威查詢，間隔 readDelayMs） */
 export async function cancelUsTrade(row: AccountedUsTrade, opts: { readAttempts?: number; readDelayMs?: number } = {}): Promise<UsCancelResult> {
+    const env = captureServerMode();
     const account = currentAccount(row);
-    // 實際取消量＝刪單前剩餘−期間新增成交（不依賴 cancel_quantity 是否累計）
-    const remainingBefore = usRemaining(row);
-    const dealsBefore = row.status.deal_quantity ?? '0';
+    // 以目前最新的列為基準（傳進來的列可能是舊畫面）
+    const before = findRow(row) ?? row;
     try {
-        const trade = await cancelUsOrder(row.order.id, account);
+        const trade = await cancelUsOrder(before.order.id, account, {
+            beforeDispatch: () => {
+                if (!env()) throw Object.assign(new Error(SERVER_MODE_CHANGED_MESSAGE), { tradingGateRejected: true });
+            },
+        });
         if (trade?.order?.id) observeUsTrade(trade, account);
     } catch (error) {
         if (isUsCancelTooEarly(error instanceof Error ? error.message : String(error))) throw new UsCancelTooEarlyError();
@@ -62,15 +94,13 @@ export async function cancelUsTrade(row: AccountedUsTrade, opts: { readAttempts?
     const attempts = opts.readAttempts ?? 3;
     for (let i = 0; i < attempts; i++) {
         await sleep(i === 0 ? (opts.readDelayMs ?? 600) : (opts.readDelayMs ?? 1000));
+        if (!env()) break; // 換了伺服器或模式：回讀結果不能當作這筆刪單的證據
         try { await refreshUsAccount(account); } catch { continue; }
         const now = findRow(row);
-        if (now && !decIsPositive(usRemaining(now))) {
-            const filledMeanwhile = decSub(now.status.deal_quantity ?? '0', dealsBefore) ?? '0';
-            const cancelled = decSub(remainingBefore, filledMeanwhile) ?? '0';
-            return { confirmed: true, cancelled: decIsPositive(cancelled) ? cancelled : '0', row: now };
-        }
+        const cancelled = now ? cancelEvidence(before, now) : null;
+        if (now && cancelled !== null) return { confirmed: true, cancelled, row: now, env };
     }
-    return { confirmed: false, row: findRow(row) };
+    return { confirmed: false, row: findRow(row), env };
 }
 
 /** 減量 reduceBy 股（1..剩餘） */
@@ -102,13 +132,17 @@ export function replacementOrder(row: AccountedUsTrade, cancelledShares: string,
     return { action: row.order.action, price: newPrice.trim(), quantity: qty, price_type: 'LMT', time_in_force: tif };
 }
 
-/** 改價第二步：以新價格重下（風控鎖照樣檢查） */
-export async function placeReplacement(row: AccountedUsTrade, order: UsOrderReq): Promise<UsTrade> {
-    const blocked = checkUsOrderAllowed();
-    if (blocked) throw Object.assign(new Error(blocked), { mutationNotStarted: true as const });
+/** 改價第二步：以新價格重下。必須和第一步同一個伺服器與模式；送出前一刻再查風控鎖 */
+export async function placeReplacement(row: AccountedUsTrade, order: UsOrderReq, env: ServerModeGuard): Promise<UsTrade> {
+    const gate = () => {
+        const blocked = checkUsOrderAllowed();
+        if (blocked) throw Object.assign(new Error(blocked), { mutationNotStarted: true as const, tradingGateRejected: true });
+        if (!env()) throw Object.assign(new Error('伺服器或模式已和刪單時不同，這筆沒有重下，請重新下單'), { mutationNotStarted: true as const, tradingGateRejected: true });
+    };
+    gate();
     const account = currentAccount(row);
     try {
-        const trade = await placeUsOrder({ code: row.contract.code, exchange: row.contract.exchange }, order, account);
+        const trade = await placeUsOrder({ code: row.contract.code, exchange: row.contract.exchange }, order, account, { beforeDispatch: gate });
         observeUsTrade(trade, account);
         return trade;
     } catch (error) {
