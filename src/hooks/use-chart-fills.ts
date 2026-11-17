@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type RefObject } from 'react';
 import type { IChartApi, ISeriesApi, MouseEventParams } from 'lightweight-charts';
 import { createProjectionCache, fillDecimals, fillPriceText, missingDeals, priceKey, projectChartFills, resolvedCode, rolloverCodes, type ChartFill, type FillRollover } from '../lib/chart-fills';
-import { FillMarksLayer, type FillMarkGroup, type FillMarkStyle, type FillRect } from '../lib/chart-fill-marks';
+import { FillMarksLayer, type FillMarkGroup, type FillMarkShape, type FillMarkStyle, type FillRect } from '../lib/chart-fill-marks';
 import { ensureContract, getCachedContract } from '../lib/contracts-cache';
 import { expiryTime } from '../lib/flash-link';
 import type { ContractBase, ContractInfo } from '../lib/types/contract';
@@ -103,7 +103,7 @@ function markText(style: FillMarkStyle, group: { action: ChartFill['action']; pr
 }
 
 // 僅呈現既有成交。建立/卸載跟圖表生命週期走，不訂閱行情或查詢帳務。
-export function useChartFills({ chartRef, seriesRef, trades, contract, account, accounts, bars, dataVersion, minutes, dayOnly, visible, ready, retain, env, context, style, priceDecimals, up, down, labelBg, avoid }: {
+export function useChartFills({ chartRef, seriesRef, trades, contract, account, accounts, bars, dataVersion, minutes, dayOnly, visible, ready, retain, env, context, style, shape = 'triangle', priceDecimals, up, down, labelBg, avoid }: {
     chartRef: RefObject<IChartApi | null>;
     seriesRef: RefObject<ISeriesApi<'Candlestick'> | null>;
     trades: readonly AccountedTrade[];
@@ -123,6 +123,8 @@ export function useChartFills({ chartRef, seriesRef, trades, contract, account, 
     env: string | null;
     context: string;
     style: FillMarkStyle;
+    /** 標記形狀；沒傳就是三角形 */
+    shape?: FillMarkShape;
     /** 價位標籤的最少小數位（同最高／最低標記） */
     priceDecimals: (price: number) => number;
     up: string;
@@ -306,7 +308,7 @@ export function useChartFills({ chartRef, seriesRef, trades, contract, account, 
         if (ok) keptRef.current.groups = shown;
     }, [shown, ok]);
     // 樣式一定要交給圖層，否則排版停在預設的 price 規則
-    useEffect(() => layerRef.current?.setStyle({ up, down, labelBg, style }), [up, down, labelBg, style]);
+    useEffect(() => layerRef.current?.setStyle({ up, down, labelBg, style, shape }), [up, down, labelBg, style, shape]);
 
     const group = hover?.scope === scope ? groups.get(hover.key) : undefined;
     // 滑到的那組排最前，再接同一根 K 棒的其他成交（報價每跳都會重繪，同一組就沿用同一個陣列）

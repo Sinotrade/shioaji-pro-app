@@ -403,9 +403,9 @@ function Preview() {
                     <button aria-pressed={settings.mode === 'dark'} onClick={() => theme.setThemeSettings({ mode: 'dark' })}>深色</button>
                     <button aria-pressed={settings.mode === 'light'} onClick={() => theme.setThemeSettings({ mode: 'light' })}>淺色</button>
                 </div>
-                <label>成交標記
+                <label>標籤
                     <select value={fillStyle} onChange={event => fillPrefs.setChartFillStyle(event.target.value as typeof fillStyle)}>
-                        <option value="dot">三角形</option>
+                        <option value="dot">不標</option>
                         <option value="side">買賣</option>
                         <option value="price">價格</option>
                     </select>

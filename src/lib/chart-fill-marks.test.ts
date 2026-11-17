@@ -22,6 +22,7 @@ import {
     layoutFillMarks,
     type FillAction,
     type FillMarkPoint,
+    type FillMarkShape,
     type FillMarkStyle,
     type FillRect,
 } from './chart-fill-marks';
@@ -769,5 +770,155 @@ describe('FillMarksLayer', () => {
         draw(layer, ctx);
         const border = calls.slice(calls.findIndex((c) => c.op === 'roundRect')).find((c) => c.op === 'stroke')!;
         expect([border.strokeStyle, border.alpha]).toEqual(['#f00', 1]);
+    });
+
+    // 形狀（三角形／箭頭／圓點／菱形）：外接範圍相同，只有路徑不同
+    const SHAPES: readonly FillMarkShape[] = ['triangle', 'arrow', 'circle', 'diamond'];
+    // groups 畫出來的三個錨點（由右到左：c、a、b；600 那根又買又賣，買右移、賣左移 FILL_SPLIT_PX）
+    const ANCHORS = [{ x: 250, y: 100, action: 'Buy' }, { x: 152, y: 80, action: 'Buy' }, { x: 148, y: 100, action: 'Sell' }] as const;
+    // 每個標記路徑在 fill／stroke 那一刻經過的點；圓（arc）取上下左右四個極點
+    function markPaths(calls: Call[], op: 'fill' | 'stroke') {
+        const out: number[][][] = [];
+        let path: number[][] = [];
+        for (const c of calls) {
+            if (c.op === 'beginPath') path = [];
+            else if (c.op === 'moveTo' || c.op === 'lineTo') path.push(c.args);
+            else if (c.op === 'arc') {
+                const [x, y, r] = c.args as [number, number, number];
+                path.push([x - r, y], [x, y - r], [x + r, y], [x, y + r]);
+            } else if (c.op === op && path.length) out.push(path);
+        }
+        return out;
+    }
+    const drawShape = (shape: FillMarkShape | undefined, style: FillMarkStyle) => {
+        const { layer, requestUpdate } = setup();
+        layer.setStyle(shape ? { style, shape } : { style });
+        layer.setGroups(groups);
+        const { ctx, calls, measured } = canvas();
+        draw(layer, ctx);
+        return { layer, requestUpdate, ctx, calls, measured };
+    };
+
+    it.each(SHAPES)('形狀 %s：路徑落在三角形的外接範圍內（寬 FILL_TRI_W、高 FILL_TRI_H）、上下頂滿，買的頂端與賣的底端都在成交價；外框描同一條路徑', (shape) => {
+        // 不標文字：畫布上的 fill／stroke 只有標記本身
+        const { calls } = drawShape(shape, 'dot');
+        const fills = markPaths(calls, 'fill');
+        expect(fills).toHaveLength(ANCHORS.length);
+        fills.forEach((pts, i) => {
+            const p = ANCHORS[i]!;
+            const xs = pts.map(([x]) => x!), ys = pts.map(([, y]) => y!);
+            const top = p.action === 'Buy' ? p.y : p.y - FILL_TRI_H; // 買往下長、賣往上長
+            expect(Math.min(...xs)).toBeGreaterThanOrEqual(p.x - FILL_TRI_W / 2);
+            expect(Math.max(...xs)).toBeLessThanOrEqual(p.x + FILL_TRI_W / 2);
+            expect(Math.min(...xs) + Math.max(...xs)).toBe(p.x * 2); // 左右對稱於那根 K 棒
+            expect([Math.min(...ys), Math.max(...ys)]).toEqual([top, top + FILL_TRI_H]);
+            // 含外框（描邊一半在外）也不超出版面與命中用的外接範圍
+            const b = box(p);
+            expect(Math.min(...xs) - FILL_TRI_RING).toBeGreaterThanOrEqual(b.x);
+            expect(Math.max(...xs) + FILL_TRI_RING).toBeLessThanOrEqual(b.x + b.w);
+            expect([Math.min(...ys) - FILL_TRI_RING, Math.max(...ys) + FILL_TRI_RING]).toEqual([b.y, b.y + b.h]);
+        });
+        // 外框：同一條路徑先用標籤底色描邊（線寬 = 外框 × 2、圓角接點），三個都描完才開始填色
+        const firstFill = calls.findIndex((c) => c.op === 'fill');
+        const rings = calls.slice(0, firstFill);
+        expect(markPaths(rings, 'stroke')).toEqual(fills);
+        expect(rings.filter((c) => c.op === 'stroke').map((c) => [c.strokeStyle, c.lineWidth, c.lineJoin])).toEqual(ANCHORS.map(() => ['#111', FILL_TRI_RING * 2, 'round']));
+    });
+
+    it.each(SHAPES)('形狀 %s 的填色：買一律實心；圓點與菱形沒有方向，賣畫空心（填標籤底色、再用賣色描 FILL_TRI_RING 寬的邊），三角形與箭頭的賣照舊實心', (shape) => {
+        const { calls } = drawShape(shape, 'dot');
+        const hollow = shape === 'circle' || shape === 'diamond';
+        // 由右到左：c、a（買）、b（賣）
+        const fills = calls.filter((c) => c.op === 'fill');
+        expect(fills.map((c) => [c.fillStyle, c.alpha])).toEqual([['#f00', 1], ['#f00', 1], [hollow ? '#111' : '#0f0', 1]]);
+        // 填色開始之後的描邊：只有空心的賣方那一筆，買方與有方向的形狀都沒有
+        const edges = calls.slice(calls.indexOf(fills[0]!)).filter((c) => c.op === 'stroke');
+        expect(edges.map((c) => [c.strokeStyle, c.lineWidth, c.alpha])).toEqual(hollow ? [['#0f0', FILL_TRI_RING, 1]] : []);
+        if (hollow) {
+            // 描的就是剛填的那條路徑：緊接在賣方的填色後面
+            expect(calls.indexOf(edges[0]!)).toBe(calls.indexOf(fills[2]!) + 1);
+            expect(markPaths(calls, 'stroke').at(-1)).toEqual(markPaths(calls, 'fill').at(-1));
+        }
+    });
+
+    it('空心的賣方在淡色分組（待確認時保留的上次分組）裡：外框、填色、描邊都是透明度 0.4；之後的標籤線寬回到 1', () => {
+        const { layer } = setup();
+        layer.setStyle({ shape: 'diamond' });
+        layer.setGroups([
+            { key: 'old', time: 600, price: 100, action: 'Sell', text: '賣', dimmed: true }, // (150, 100)
+            { key: 'new', time: 1200, price: 100, action: 'Sell', text: '賣' }, // (250, 100)
+        ]);
+        const { ctx, calls } = canvas();
+        draw(layer, ctx);
+        const label = calls.findIndex((c) => c.op === 'roundRect');
+        // 由右到左：new、old；外框兩趟 → 每個標記填底色再描賣色
+        expect(calls.slice(0, label).filter((c) => c.op === 'fill' || c.op === 'stroke').map((c) => [c.op, c.op === 'fill' ? c.fillStyle : c.strokeStyle, c.lineWidth, c.alpha])).toEqual([
+            ['stroke', '#111', FILL_TRI_RING * 2, 1], ['stroke', '#111', FILL_TRI_RING * 2, FILL_DIM_ALPHA],
+            ['fill', '#111', FILL_TRI_RING, 1], ['stroke', '#0f0', FILL_TRI_RING, 1],
+            ['fill', '#111', FILL_TRI_RING, FILL_DIM_ALPHA], ['stroke', '#0f0', FILL_TRI_RING, FILL_DIM_ALPHA],
+        ]);
+        // 只有沒淡化的那一組有標籤；標籤的框線不沿用空心描邊的線寬
+        const border = calls.slice(label).find((c) => c.op === 'stroke')!;
+        expect([border.strokeStyle, border.lineWidth, border.alpha]).toEqual(['#0f0', 1, 1]);
+        expect(calls.filter((c) => c.op === 'roundRect')).toHaveLength(1);
+    });
+
+    it('各形狀的路徑：圓點用 arc（圓心在高度中點、直徑 = FILL_TRI_H），三角形 3 點、菱形 4 點、箭頭 7 點都不用 arc；四種路徑互不相同', () => {
+        const drawn = Object.fromEntries(SHAPES.map((shape) => [shape, drawShape(shape, 'dot').calls])) as Record<FillMarkShape, Call[]>;
+        const points = (shape: FillMarkShape) => drawn[shape].filter((c) => c.op === 'moveTo' || c.op === 'lineTo').map((c) => c.args);
+        const arcs = (shape: FillMarkShape) => drawn[shape].filter((c) => c.op === 'arc').map((c) => c.args);
+        // 圓點：外框、填色各一趟，沒有折線
+        const circles = ANCHORS.map((p) => [p.x, p.y + (p.action === 'Buy' ? 1 : -1) * FILL_TRI_H / 2, FILL_TRI_H / 2, 0, Math.PI * 2]);
+        expect(arcs('circle')).toEqual([...circles, ...circles]);
+        expect(points('circle')).toEqual([]);
+        for (const [shape, corners] of [['triangle', 3], ['diamond', 4], ['arrow', 7]] as const) {
+            expect(arcs(shape)).toEqual([]);
+            expect(points(shape)).toHaveLength(corners * ANCHORS.length * 2);
+            // 起點（moveTo）就是成交價那一點：三角形與箭頭的尖端、菱形的頂點
+            expect(drawn[shape].filter((c) => c.op === 'moveTo').map((c) => c.args)).toEqual([...ANCHORS, ...ANCHORS].map((p) => [p.x, p.y]));
+        }
+        // 買的菱形（c）：成交價 → 右 → 底 → 左
+        expect(points('diamond').slice(0, 4)).toEqual([[250, 100], [254, 103.5], [250, 107], [246, 103.5]]);
+        // 買的箭頭（c）：箭頭高 4、箭身寬 3
+        expect(points('arrow').slice(0, 7)).toEqual([[250, 100], [254, 104], [251.5, 104], [251.5, 107], [248.5, 107], [248.5, 104], [246, 104]]);
+        const paths = SHAPES.map((shape) => JSON.stringify(markPaths(drawn[shape], 'fill')));
+        expect(new Set(paths).size).toBe(SHAPES.length);
+    });
+
+    it('沒指定形狀就是三角形：和 setStyle({ shape: \'triangle\' }) 畫出同一串繪圖呼叫', () => {
+        const calls = drawShape(undefined, 'price').calls;
+        expect(calls).toEqual(drawShape('triangle', 'price').calls);
+        expect(triangles(calls, 'fill')).toHaveLength(3);
+        expect(calls.filter((c) => c.op === 'arc')).toEqual([]);
+    });
+
+    it('換形狀不改變版面與命中：標籤位置、連接線、hitAt 結果四種形狀都一樣；換形狀要求重繪、不清字寬快取', () => {
+        const probe = (shape: FillMarkShape) => {
+            const { layer, calls } = drawShape(shape, 'side');
+            const hits: (string | null)[] = [];
+            // 掃過三個標記與標籤附近的每一點，再加同棒備援、價格在畫面外、外接範圍邊界
+            for (let x = 120; x <= 290; x += 2) for (let y = 65; y <= 120; y += 1) hits.push(layer.hitAt(x, y));
+            hits.push(layer.hitAt(150, 30, 600), layer.hitAt(150, 190, 600), layer.hitAt(350, 10, 1800), layer.hitAt(50, 30, 9999));
+            const edge = 107 + FILL_TRI_RING + FILL_HIT_MARK_PX; // c 的外接範圍（含外框）再外擴的下緣
+            hits.push(layer.hitAt(250, edge), layer.hitAt(250, edge + 0.5));
+            const labels = calls.filter((c) => c.op === 'fillText' || c.op === 'roundRect').map((c) => [c.op, ...c.args]);
+            return { hits, labels, edge: hits.slice(-2) };
+        };
+        const base = probe('triangle');
+        expect(new Set(base.hits)).toEqual(new Set(['a', 'b', 'c', 'd', null]));
+        expect(base.edge).toEqual(['c', null]);
+        expect(base.labels.filter(([op]) => op === 'fillText')).toHaveLength(3);
+        for (const shape of SHAPES.slice(1)) expect(probe(shape)).toEqual(base);
+        // 換形狀：要求重繪一次；字寬快取留著（重畫不重量）
+        const { layer, requestUpdate, measured } = drawShape('triangle', 'side');
+        const before = measured.length;
+        requestUpdate.mockClear();
+        layer.setStyle({ shape: 'circle' });
+        expect(requestUpdate).toHaveBeenCalledTimes(1);
+        const again = canvas();
+        draw(layer, again.ctx);
+        expect(again.calls.filter((c) => c.op === 'arc')).toHaveLength(ANCHORS.length * 2);
+        expect(again.measured).toEqual([]);
+        expect(before).toBeGreaterThan(0);
     });
 });

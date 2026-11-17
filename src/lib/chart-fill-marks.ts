@@ -46,6 +46,8 @@ const SIDE_STEPS = [0, -1, 1];
 export type FillAction = 'Buy' | 'Sell';
 /** dot：只畫三角形；side：三角形＋買／賣；price：三角形＋價格 */
 export type FillMarkStyle = 'dot' | 'side' | 'price';
+/** 標記形狀。外接範圍都一樣（寬 FILL_TRI_W、高 FILL_TRI_H；買在成交價下方、賣在上方），版面與命中不分形狀 */
+export type FillMarkShape = 'triangle' | 'arrow' | 'circle' | 'diamond';
 export interface FillRect { x: number; y: number; w: number; h: number }
 export interface FillMarkGroup {
     key: string;
@@ -178,20 +180,40 @@ interface DrawTarget {
     }) => T): T;
 }
 
-// 三角形路徑：買 ▲ 尖端在 (x, y)、往下長；賣 ▼ 尖端在 (x, y)、往上長
-function trianglePath(ctx: CanvasRenderingContext2D, m: FillMarkPoint): void {
-    const base = m.action === 'Buy' ? m.y + FILL_TRI_H : m.y - FILL_TRI_H;
+// 標記路徑：買的頂端在 (x, y)、往下長；賣的底端在 (x, y)、往上長。三角形與箭頭的尖端就是成交價，
+// 圓點與菱形貼著成交價（不分方向，靠位置與顏色分買賣）
+function markPath(ctx: CanvasRenderingContext2D, m: FillMarkPoint, shape: FillMarkShape): void {
+    const d = m.action === 'Buy' ? 1 : -1;
+    const w = FILL_TRI_W / 2, far = m.y + d * FILL_TRI_H, mid = m.y + d * FILL_TRI_H / 2;
     ctx.beginPath();
+    if (shape === 'circle') {
+        ctx.arc(m.x, mid, FILL_TRI_H / 2, 0, Math.PI * 2);
+        return;
+    }
     ctx.moveTo(m.x, m.y);
-    ctx.lineTo(m.x + FILL_TRI_W / 2, base);
-    ctx.lineTo(m.x - FILL_TRI_W / 2, base);
+    if (shape === 'diamond') {
+        ctx.lineTo(m.x + w, mid);
+        ctx.lineTo(m.x, far);
+        ctx.lineTo(m.x - w, mid);
+    } else if (shape === 'arrow') {
+        const neck = m.y + d * 4, shaft = 1.5; // 箭頭高 4、箭身寬 3
+        ctx.lineTo(m.x + w, neck);
+        ctx.lineTo(m.x + shaft, neck);
+        ctx.lineTo(m.x + shaft, far);
+        ctx.lineTo(m.x - shaft, far);
+        ctx.lineTo(m.x - shaft, neck);
+        ctx.lineTo(m.x - w, neck);
+    } else {
+        ctx.lineTo(m.x + w, far);
+        ctx.lineTo(m.x - w, far);
+    }
     ctx.closePath();
 }
 
 export class FillMarksLayer implements ISeriesPrimitive<Time> {
     private _groups: FillMarkGroup[] = [];
-    private _style: { up: string; down: string; labelBg: string; font: string; style: FillMarkStyle } =
-        { up: '', down: '', labelBg: '', font: FILL_FONT, style: 'price' };
+    private _style: { up: string; down: string; labelBg: string; font: string; style: FillMarkStyle; shape: FillMarkShape } =
+        { up: '', down: '', labelBg: '', font: FILL_FONT, style: 'price', shape: 'triangle' };
     private _avoid: (() => FillRect[]) | null = null;
     private _series: ISeriesApi<SeriesType> | null = null;
     private _chart: IChartApi | null = null;
@@ -235,8 +257,8 @@ export class FillMarksLayer implements ISeriesPrimitive<Time> {
         this._requestUpdate?.();
     }
 
-    /** 不要傳 undefined（會蓋掉現值）；style 預設 price、font 預設 FILL_FONT */
-    setStyle(patch: { up?: string; down?: string; labelBg?: string; font?: string; style?: FillMarkStyle }): void {
+    /** 不要傳 undefined（會蓋掉現值）；style 預設 price、shape 預設 triangle、font 預設 FILL_FONT */
+    setStyle(patch: { up?: string; down?: string; labelBg?: string; font?: string; style?: FillMarkStyle; shape?: FillMarkShape }): void {
         const next = { ...this._style, ...patch };
         if (next.font !== this._style.font || next.style !== this._style.style) this._textWidth.clear();
         this._style = next;
@@ -350,7 +372,7 @@ export class FillMarksLayer implements ISeriesPrimitive<Time> {
                 blocked: this._avoid?.() ?? [],
             });
             this._marks = marks;
-            const { up, down, labelBg } = this._style;
+            const { up, down, labelBg, shape } = this._style;
             const color = (a: FillAction) => (a === 'Buy' ? up : down);
             // 連接線（最底層）→ 區間線與刻度 → 三角形 → 標籤；標籤本來就不會蓋到錨點範圍
             ctx.lineWidth = 1;
@@ -394,14 +416,22 @@ export class FillMarksLayer implements ISeriesPrimitive<Time> {
             ctx.strokeStyle = labelBg;
             for (const m of marks) {
                 ctx.globalAlpha = m.dimmed ? FILL_DIM_ALPHA : 1;
-                trianglePath(ctx, m);
+                markPath(ctx, m, shape);
                 ctx.stroke();
             }
+            // 圓點、菱形沒有方向：賣畫空心（填標籤底色、描賣色），不看顏色也分得出買賣
+            const hollowSell = shape === 'circle' || shape === 'diamond';
+            ctx.lineWidth = FILL_TRI_RING;
             for (const m of marks) {
                 ctx.globalAlpha = m.dimmed ? FILL_DIM_ALPHA : 1;
-                trianglePath(ctx, m);
-                ctx.fillStyle = color(m.action);
+                markPath(ctx, m, shape);
+                const hollow = hollowSell && m.action === 'Sell';
+                ctx.fillStyle = hollow ? labelBg : color(m.action);
                 ctx.fill();
+                if (hollow) {
+                    ctx.strokeStyle = color(m.action);
+                    ctx.stroke();
+                }
             }
             ctx.lineWidth = 1;
             ctx.textBaseline = 'middle';

@@ -1,9 +1,11 @@
-// 成交標記整合：實際價格、分筆資料、帳戶隔離與顯示開關
-import { createElement } from 'react';
+// 成交標記整合：實際價格、分筆資料、帳戶隔離，以及圖例列（顯示／隱藏／移除）與設定面板
+import { createElement, useState, type ReactElement } from 'react';
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { created, crosshairHandlers, kbars, T as wall } from './chart-session.test-harness';
 
+// 「指標」對話框會 portal 到 body；測試沒有 DOM，就地渲染
+vi.mock('react-dom', () => ({ createPortal: (children: unknown) => children }));
 vi.hoisted(() => {
     const store = new Map<string, string>();
     const ls = { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => store.set(k, v), removeItem: (k: string) => store.delete(k), key: () => null, length: 0 };
@@ -58,8 +60,14 @@ vi.mock('../lib/chart-history', () => ({
 }));
 
 import { CandleChart } from './candle-chart';
+import * as chartStyles from './candle-chart.css';
+import * as fillStyles from './chart-fill-details.css';
+import { DRAWING_PALETTE } from '../lib/chart-drawings';
 import { priceKey } from '../lib/chart-fills';
-import { getChartFillScope, getChartFillStyle, setChartFillColor, setChartFillScope, setChartFillStyle } from '../lib/chart-fill-prefs';
+import {
+    getChartFillScope, getChartFillStyle, setChartFillBuy, setChartFillColor, setChartFillScope, setChartFillSell, setChartFillShape, setChartFillStyle,
+    type ChartFillsState,
+} from '../lib/chart-fill-prefs';
 import { getChartColors } from '../lib/theme-store';
 import { setPrivacyMode } from '../lib/privacy';
 import type { AccountedTrade } from '../lib/types/order';
@@ -84,40 +92,56 @@ const resizeCallbacks: ((entries: unknown[]) => void)[] = [];
 const resizeTo = (width: number) => act(() => { for (const cb of resizeCallbacks) cb([{ contentRect: { width } }]); });
 // CandleChart 預設把成交來源當成未確認；LiveCandleChart 確認後才傳 fillsReady。案例預設為已確認，要驗預設值時明傳 undefined。
 const chart = (props: any) => createElement(CandleChart, { fillsReady: true, ...props });
-function mount(props: any) {
+// 設定面板根節點的假 DOM 節點：只有焦點測試會給（要有 ownerDocument 與 querySelector），平常用下面那個通用的
+let settingsNode: unknown = null;
+function mountElement(element: ReactElement) {
     let r!: ReactTestRenderer;
     act(() => {
-        r = create(chart(props), {
-            createNodeMock: () => ({ clientWidth: 800, clientHeight: 400, getBoundingClientRect: () => ({ width: 800, height: 400, left: 0, top: 0 }), addEventListener() {}, removeEventListener() {}, style: {}, querySelector: () => null, focus() {} }),
+        r = create(element, {
+            createNodeMock: (el) => settingsNode && (el.props as { className?: string }).className === fillStyles.settings ? settingsNode : ({ clientWidth: 800, clientHeight: 400, getBoundingClientRect: () => ({ width: 800, height: 400, left: 0, top: 0 }), addEventListener() {}, removeEventListener() {}, style: {}, querySelector: () => null, focus() {} }),
         });
     });
     mounted.push(r);
     return r;
 }
+const mount = (props: any) => mountElement(chart(props));
+// 工作區的角色：fills／onFillsChange 是受控的，收到狀態就存起來再傳回圖表；log 記下每次交回的狀態
+function Workspace({ log, initial = 'on', ...props }: { log: ChartFillsState[]; initial?: ChartFillsState; [key: string]: unknown }) {
+    const [fills, setFills] = useState(initial);
+    return chart({ ...props, fills, onFillsChange: (state: ChartFillsState) => { log.push(state); setFills(state); } });
+}
+const mountWorkspace = (props: any, log: ChartFillsState[] = []) => mountElement(createElement(Workspace, { ...props, log }));
 const setNow = (s: string) => vi.setSystemTime(new Date(`${s}+08:00`));
 const text = (n: ReactTestInstance | undefined): string =>
     n ? n.children.map((c) => (typeof c === 'string' ? c : text(c))).join('') : '';
-// 工具列「成交」是這張圖的顯示開關；樣式、顏色、帳戶在工具列「圖表下單設定」的「成交標記」頁
-const toggle = (r: ReactTestRenderer) =>
-    r.root.findAll((n) => n.type === 'button' && n.props['aria-label'] === '顯示成交標記')[0]!;
-const settingsChip = (r: ReactTestRenderer) => r.root.findAll((n) => n.type === 'button' && String(n.props['aria-label'] ?? '').startsWith('圖表下單設定'))[0]!;
-const fillSheet = (r: ReactTestRenderer) => r.root.findAll((n) => n.props.role === 'group' && n.props['aria-label'] === '標記')[0];
-const sheetTabs = (r: ReactTestRenderer) => r.root.findAll((n) => n.props.role === 'group' && n.props['aria-label'] === '設定分頁')[0]?.findAll((n) => n.type === 'button') ?? [];
-async function openFillSheet(r: ReactTestRenderer) {
-    if (fillSheet(r)) return;
-    if (!sheetTabs(r).length) await act(async () => settingsChip(r).props.onClick());
-    await act(async () => sheetTabs(r).find((n) => text(n) === '成交標記')!.props.onClick());
+// 圖例列（圖表左上角，data-fills-legend）：名稱鈕「成交」與齒輪開關設定面板、眼睛顯示／隱藏、× 從這張圖移除（從「指標」加回）
+const legend = (r: ReactTestRenderer) => r.root.findAll((n) => typeof n.type === 'string' && n.props['data-fills-legend'])[0];
+// 圖例列的文字（示意字元、買賣、筆數），不管中間的空白
+const legendText = (r: ReactTestRenderer) => text(legend(r)).replace(/\s/g, '');
+// 可見名稱：aria-label，否則是去掉 aria-hidden 示意後的文字
+const named = (n: ReactTestInstance): string =>
+    n.props['aria-label'] ?? n.children.map((c) => (typeof c === 'string' ? c : c.props['aria-hidden'] ? '' : named(c))).join('').trim();
+const buttons = (root: ReactTestInstance | undefined) => root?.findAll((n) => n.type === 'button') ?? [];
+const classes = (n: ReactTestInstance) => String(n.props.className ?? '').split(' ');
+const legendNames = (r: ReactTestRenderer) => buttons(legend(r)).map(named);
+const legendBtn = (r: ReactTestRenderer, name: string) => buttons(legend(r)).find((b) => named(b) === name)!;
+const press = (r: ReactTestRenderer, name: string) => act(async () => legendBtn(r, name).props.onClick());
+// 設定面板（成交標記設定）：形狀、標籤、顏色、帳戶，點了就生效（全域偏好），沒有「完成」鈕
+const panel = (r: ReactTestRenderer) => r.root.findAll((n) => n.props.role === 'dialog' && n.props['aria-label'] === '成交標記設定')[0];
+const panelBtn = (r: ReactTestRenderer, name: string) => buttons(panel(r)).find((b) => named(b) === name)!;
+async function pick(r: ReactTestRenderer, name: string) {
+    if (!panel(r)) await press(r, '成交');
+    await act(async () => panelBtn(r, name).props.onClick());
 }
-const sheetRow = (r: ReactTestRenderer, row: '標記' | '顏色' | '帳戶') =>
-    r.root.find((n) => n.props.role === 'group' && n.props['aria-label'] === row).findAll((n) => n.type === 'button');
-async function pick(r: ReactTestRenderer, row: '標記' | '顏色' | '帳戶', label: string) {
-    await openFillSheet(r);
-    await act(async () => sheetRow(r, row).find((b) => text(b) === label)!.props.onClick());
-}
-async function marked(r: ReactTestRenderer) {
-    await openFillSheet(r);
-    return text(sheetRow(r, '標記').find((b) => b.props['aria-pressed'])!);
-}
+// 形狀／標籤那一組的按鈕：[名稱, 是否選中]
+const choices = (r: ReactTestRenderer, row: '形狀' | '標籤') =>
+    buttons(panel(r)!.find((n) => n.props.role === 'group' && n.props['aria-label'] === row)).map((b) => [named(b), b.props['aria-pressed']]);
+// 「跟 K 棒同色」是原生勾選框
+const candleBox = (r: ReactTestRenderer) => panel(r)!.find((n) => n.type === 'input' && n.props.type === 'checkbox');
+const toggleCandle = (r: ReactTestRenderer) => act(async () => {
+    const checked = !candleBox(r).props.checked;
+    candleBox(r).props.onChange({ target: { checked }, currentTarget: { checked } });
+});
 // 可見文字是「明細 N」，名稱要包含它（label in name）：「成交明細 N」
 const listButton = (r: ReactTestRenderer) => r.root.findAll((n) => n.type === 'button' && String(n.props['aria-label'] ?? '').startsWith('成交明細'))[0]!;
 const tooltips = (r: ReactTestRenderer) => r.root.findAll(n => n.props.role === 'tooltip');
@@ -160,6 +184,10 @@ beforeEach(() => {
     setChartFillStyle('price');
     setChartFillScope('active');
     setChartFillColor('distinct');
+    setChartFillShape('triangle');
+    setChartFillBuy('');
+    setChartFillSell('');
+    settingsNode = null;
 });
 afterEach(() => {
     for (const m of mounted.splice(0)) act(() => m.unmount());
@@ -184,22 +212,26 @@ describe('CandleChart 實際成交標記', () => {
     it('成交價不同於委託價；同棒同價一組圓點，明細保留部分成交與撤單前成交', async () => {
         setNow('2026-10-08T09:16:00'); fetchMock.mockResolvedValue(DATA);
         const r = mount({ contract: stk, trades: trades() }); await flush();
-        expect(toggle(r)).toBeDefined();
+        expect(legend(r)).toBeDefined();
         expect(captured.groups).toMatchObject([{ key: KEY('Buy', 20003), time: BAR, price: 20003, action: 'Buy', text: '20,003 2張' }]);
         expect(captured.groups).toHaveLength(1);
-        expect(captured.style).toEqual({ up: expect.any(String), down: expect.any(String), labelBg: expect.any(String), style: 'price' });
+        expect(captured.style).toEqual({ up: expect.any(String), down: expect.any(String), labelBg: expect.any(String), style: 'price', shape: 'triangle' });
         await act(async () => listButton(r).props.onClick());
         expect(filledRows(r)).toHaveLength(2);
         expect(text(filledRows(r)[0])).toContain('20,003');
         expect(text(filledRows(r)[0])).toContain('1 張');
     });
-    it('顯示開關可隱藏圓點與明細，並將設定交回工作區', async () => {
+    it('圖例列的眼睛可隱藏標記與明細，並將狀態交回工作區', async () => {
         setNow('2026-10-08T09:16:00'); fetchMock.mockResolvedValue(DATA);
-        const onShowFillsChange = vi.fn();
-        const r = mount({ contract: stk, trades: trades(), showFills: true, onShowFillsChange }); await flush();
-        await pick(r, '標記', '不畫');
-        expect(onShowFillsChange).toHaveBeenCalledWith(false);
-        await act(async () => r.update(chart({ contract: stk, trades: trades(), showFills: false, onShowFillsChange })));
+        const onFillsChange = vi.fn();
+        const r = mount({ contract: stk, trades: trades(), fills: 'on', onFillsChange }); await flush();
+        await act(async () => listButton(r).props.onClick());
+        expect(lists(r)).toHaveLength(1);
+        await press(r, '隱藏成交標記');
+        expect(onFillsChange.mock.calls).toEqual([['hidden']]);
+        // 狀態由工作區保管：還沒傳回來之前圖上不變
+        expect(captured.groups).toHaveLength(1);
+        await act(async () => r.update(chart({ contract: stk, trades: trades(), fills: 'hidden', onFillsChange })));
         expect(captured.groups).toEqual([]);
         expect(r.root.findAll(n => n.props['data-fill-details'])).toHaveLength(0);
     });
@@ -288,8 +320,9 @@ describe('CandleChart 實際成交標記', () => {
         const r = mount({ contract: stk, trades: rows }); await flush();
         await move(BAR);
         expect(tooltips(r)).toHaveLength(1);
+        expect(legend(r)).toBeDefined();
         await show(ind);
-        expect(toggle(r)).toBeUndefined();
+        expect(legend(r)).toBeUndefined();
         await move(BAR);
         expect(tooltips(r)).toHaveLength(0);
         expect(captured.groups).toEqual([]);
@@ -435,14 +468,19 @@ describe('CandleChart 實際成交標記', () => {
         expect(filledRows(r)).toHaveLength(0);
         expect(text(lists(r)[0])).toContain('載入 K 線中…');
     });
-    it('無障礙語意：成交開關 aria-pressed、明細 aria-expanded、清單 region 名稱與欄位 scope', async () => {
+    it('無障礙語意：圖例列名稱鈕與齒輪 aria-haspopup／aria-expanded、眼睛的名稱跟著狀態換、明細 aria-expanded、清單 region 名稱與欄位 scope', async () => {
         setNow('2026-10-08T09:16:00'); fetchMock.mockResolvedValue(DATA);
-        const onShowFillsChange = vi.fn();
-        const r = mount({ contract: stk, trades: trades(), showFills: true, onShowFillsChange }); await flush();
-        expect(toggle(r).props['aria-pressed']).toBe(true);
-        // 開關的說明指路到工具列上真的叫這個名字的那顆鈕
-        expect(toggle(r).props.title).toMatch(/；滑鼠移到成交 K 棒可看明細。樣式、顏色、帳戶在工具列「圖表下單設定」的「成交標記」分頁$/);
-        expect(settingsChip(r)).toBeDefined();
+        const onFillsChange = vi.fn();
+        const r = mount({ contract: stk, trades: trades(), fills: 'on', onFillsChange }); await flush();
+        expect(legendNames(r)).toEqual(['成交', '隱藏成交標記', '成交標記設定', '移除成交標記']);
+        expect(['成交', '成交標記設定'].map((name) => legendBtn(r, name).props['aria-haspopup'])).toEqual(['dialog', 'dialog']);
+        expect(['成交', '成交標記設定'].map((name) => legendBtn(r, name).props['aria-expanded'])).toEqual([false, false]);
+        // 名稱鈕的說明講的是點了會做的事（開設定面板）
+        expect(legendBtn(r, '成交').props.title).toContain('點一下設定形狀、標籤與顏色');
+        await press(r, '成交');
+        expect(panel(r)!.props.role).toBe('dialog');
+        expect(['成交', '成交標記設定'].map((name) => legendBtn(r, name).props['aria-expanded'])).toEqual([true, true]);
+        await press(r, '成交');
         expect(listButton(r).props['aria-expanded']).toBe(false);
         await act(async () => listButton(r).props.onClick());
         expect(listButton(r).props['aria-expanded']).toBe(true);
@@ -450,12 +488,11 @@ describe('CandleChart 實際成交標記', () => {
         expect(list.props.role).toBe('region');
         expect(list.props['aria-label']).toBe('已載入成交明細');
         expect(r.root.findAll((n) => n.type === 'th').map((n) => n.props.scope)).toEqual(['col', 'col', 'col', 'col']);
-        await act(async () => toggle(r).props.onClick());
-        expect(onShowFillsChange).toHaveBeenCalledWith(false);
-        await act(async () => r.update(chart({ contract: stk, trades: trades(), showFills: false, onShowFillsChange })));
-        expect(toggle(r).props['aria-pressed']).toBe(false);
-        expect(await marked(r)).toBe('不畫'); // 設定頁的「不畫」跟工具列開關是同一個
-        expect(r.root.findAll((n) => n.type === 'button' && String(n.props['aria-label'] ?? '').startsWith('成交明細'))).toHaveLength(0); // 關掉成交後明細鈕也收起
+        await press(r, '隱藏成交標記');
+        expect(onFillsChange).toHaveBeenCalledWith('hidden');
+        await act(async () => r.update(chart({ contract: stk, trades: trades(), fills: 'hidden', onFillsChange })));
+        expect(legendNames(r)).toEqual(['成交', '顯示成交標記', '成交標記設定', '移除成交標記']); // 眼睛的名稱說的是按下去會做的事
+        expect(r.root.findAll((n) => n.type === 'button' && String(n.props['aria-label'] ?? '').startsWith('成交明細'))).toHaveLength(0); // 隱藏後明細鈕也收起
     });
     // 同一根 K 棒（09:05）、不同價格的一筆委託，用來分辨顯示的是哪個帳戶／哪一批成交
     const tradeAt = (account: typeof A, price: number, id: string, action: 'Buy' | 'Sell' = 'Buy', date = '2026-10-08T09:02:30'): AccountedTrade => {
@@ -486,18 +523,27 @@ describe('CandleChart 實際成交標記', () => {
         expect(filledRows(r)).toHaveLength(0);
         expect(text(lists(r)[0])).toContain('請先選擇圖表帳戶以查看成交。');
     });
-    it('彈出視窗（沒有 showFills／onShowFillsChange）的成交開關用元件內狀態', async () => {
+    it('彈出視窗（沒傳 onFillsChange）的圖例列用元件內狀態，fills 只當起始值', async () => {
         setNow('2026-10-08T09:16:00'); fetchMock.mockResolvedValue(DATA);
         const r = mount({ contract: stk, trades: trades() }); await flush();
-        expect(toggle(r).props['aria-pressed']).toBe(true);
+        expect(legendNames(r)).toContain('隱藏成交標記');
         expect(captured.groups).toHaveLength(1);
-        await act(async () => toggle(r).props.onClick());
-        expect(toggle(r).props['aria-pressed']).toBe(false);
+        await press(r, '隱藏成交標記');
+        expect(legendNames(r)).toContain('顯示成交標記'); // 隱藏中：列還在
         expect(captured.groups).toEqual([]);
-        await pick(r, '標記', '價格'); // 設定頁選樣式也會打開
-        expect(await marked(r)).toBe('價格');
-        expect(toggle(r).props['aria-pressed']).toBe(true);
+        await press(r, '顯示成交標記');
+        expect(legendNames(r)).toContain('隱藏成交標記');
         expect(captured.groups).toHaveLength(1);
+        await press(r, '移除成交標記');
+        expect(legend(r)).toBeUndefined();
+        expect(captured.groups).toEqual([]);
+        // 沒有 onFillsChange 時 fills 只在掛載時讀一次，之後照樣能自己切換
+        const hidden = mount({ contract: stk, trades: trades(), fills: 'hidden' }); await flush();
+        expect(legendNames(hidden)).toContain('顯示成交標記');
+        await press(hidden, '顯示成交標記');
+        expect(legendNames(hidden)).toContain('隱藏成交標記');
+        const off = mount({ contract: stk, trades: trades(), fills: 'off' }); await flush();
+        expect(legend(off)).toBeUndefined();
     });
     it('僅日盤＋日 K：夜盤成交不上日盤那根 K 棒（dayOnly 一路傳到成交投影）', async () => {
         setNow('2026-10-08T09:16:00'); fetchMock.mockResolvedValue(DATA);
@@ -532,7 +578,7 @@ describe('CandleChart 實際成交標記', () => {
         expect(text(tooltips(r)[0])).toContain('帳戶 •••••21');
         expect(text(tooltips(r)[0])).not.toContain('1111121');
     });
-    it('更新歷史（同組重載）期間明細數維持，不閃成「…」；組合商品與關掉成交時沒有成交控制', async () => {
+    it('更新歷史（同組重載）期間明細數維持，不閃成「…」；組合商品沒有成交控制（圖例列、明細鈕）', async () => {
         setNow('2026-10-08T09:16:00'); fetchMock.mockResolvedValue(DATA);
         const r = mount({ contract: stk, trades: trades() }); await flush();
         expect(text(listButton(r))).toBe('明細 2');
@@ -540,8 +586,9 @@ describe('CandleChart 實際成交標記', () => {
         await act(async () => r.root.findAll((n) => n.type === 'button' && n.props['aria-label'] === '更新歷史')[0]!.props.onClick());
         await flush();
         expect(text(listButton(r))).toBe('明細 2');
+        expect(legend(r)).toBeDefined();
         const combo = mount({ contract: { ...stk, combo: { legs: [] } }, trades: trades() }); await flush();
-        expect(toggle(combo)).toBeUndefined();
+        expect(legend(combo)).toBeUndefined();
         expect(combo.root.findAll((n) => n.type === 'button' && String(n.props['aria-label'] ?? '').startsWith('成交明細'))).toHaveLength(0);
     });
     it('權證圖（WRT，或代號在權證區間的 STK）沒有成交控制，也不畫', async () => {
@@ -549,7 +596,7 @@ describe('CandleChart 實際成交標記', () => {
         for (const contract of [{ ...stk, code: '030001', security_type: 'WRT' }, { ...stk, code: '030001' }]) {
             // 委託和圖表是同一個合約：拿掉權證條件就會畫出來
             const r = mount({ contract, trades: trades().map(t => ({ ...t, contract })) }); await flush();
-            expect(toggle(r)).toBeUndefined();
+            expect(legend(r)).toBeUndefined();
             expect(r.root.findAll((n) => n.type === 'button' && String(n.props['aria-label'] ?? '').startsWith('成交明細'))).toHaveLength(0);
             await move(BAR);
             expect(tooltips(r)).toHaveLength(0);
@@ -583,47 +630,6 @@ describe('CandleChart 實際成交標記', () => {
         act(() => setChartFillStyle('dot'));
         expect(captured.style.style).toBe('dot');
         expect(captured.groups.map((g) => g.text)).toEqual([null, null]);
-    });
-    it('圖表設定的「成交標記」頁：標記四選一（不畫只關這張圖、樣式全域）、顏色、帳戶，點選即生效', async () => {
-        setNow('2026-10-08T09:16:00'); fetchMock.mockResolvedValue(DATA);
-        const onShowFillsChange = vi.fn();
-        const props = { contract: stk, trades: trades(), showFills: true, onShowFillsChange };
-        const r = mount(props); await flush();
-        expect(fillSheet(r)).toBeUndefined();
-        await act(async () => settingsChip(r).props.onClick());
-        expect(sheetTabs(r).map((t) => [text(t), t.props['aria-pressed']])).toEqual([['下單', true], ['成交標記', false]]);
-        await openFillSheet(r);
-        expect(sheetRow(r, '標記').map((b) => [text(b), b.props['aria-pressed']])).toEqual([['不畫', false], ['三角形', false], ['買賣', false], ['價格', true]]);
-        expect(sheetRow(r, '顏色').map((b) => [text(b), b.props['aria-pressed']])).toEqual([['藍買橘賣', true], ['同 K 棒', false]]);
-        expect(sheetRow(r, '帳戶').map((b) => [text(b), b.props['aria-pressed']])).toEqual([['目前帳戶', true], ['全部帳戶', false]]);
-        // 換樣式：寫入全域偏好、圖層跟著換；不動這張圖的顯示設定
-        await pick(r, '標記', '三角形');
-        expect([getChartFillStyle(), captured.style.style, await marked(r)]).toEqual(['dot', 'dot', '三角形']);
-        expect(onShowFillsChange).not.toHaveBeenCalled();
-        // 不畫：只關這張圖（交回工作區），全域樣式不變
-        await pick(r, '標記', '不畫');
-        expect(onShowFillsChange).toHaveBeenLastCalledWith(false);
-        expect(getChartFillStyle()).toBe('dot');
-        await act(async () => r.update(chart({ ...props, showFills: false })));
-        expect(captured.groups).toEqual([]);
-        expect(await marked(r)).toBe('不畫');
-        // 不畫時選樣式：打開這張圖並換樣式
-        await pick(r, '標記', '買賣');
-        expect(onShowFillsChange).toHaveBeenLastCalledWith(true);
-        expect(getChartFillStyle()).toBe('side');
-        await pick(r, '帳戶', '全部帳戶');
-        expect(getChartFillScope()).toBe('all');
-        // 顏色：預設藍買橘賣（和 K 棒的紅綠不同），改成同 K 棒就用漲跌色
-        const candle = getChartColors({ mode: 'dark', convention: 'tw', fontScale: 1 });
-        expect([captured.style.up, captured.style.down]).toEqual(['#38bdf8', '#fb923c']);
-        expect([candle.up, candle.down]).not.toContain(captured.style.up);
-        await pick(r, '顏色', '同 K 棒');
-        expect([captured.style.up, captured.style.down]).toEqual([candle.up, candle.down]);
-        await pick(r, '顏色', '藍買橘賣');
-        expect(captured.style.up).toBe('#38bdf8');
-        // 完成關閉
-        await act(async () => r.root.findAll((n) => n.type === 'button' && text(n) === '完成')[0]!.props.onClick());
-        expect(fillSheet(r)).toBeUndefined();
     });
     it('全部帳戶：同市場所有可交易帳戶的成交合併成點，明細與 tooltip 逐筆列出帳戶（套隱私遮罩），不收其他市場的帳戶', async () => {
         setNow('2026-10-08T09:16:00'); fetchMock.mockResolvedValue(DATA);
@@ -965,5 +971,303 @@ describe('CandleChart 實際成交標記', () => {
         expect(Object.keys(after)).toEqual(Object.keys(before));
         for (const key of Object.keys(before)) expect(after[key], key).toBe(before[key]);
         expect(focusLine(r)).toBeDefined();
+    });
+
+    // ── 圖例列與設定面板 ──
+    // [形狀, 名稱, 買的示意字元, 賣的示意字元]：圓點與菱形不分方向，賣方用空心
+    const GLYPHS = [['triangle', '三角形', '▲', '▼'], ['arrow', '箭頭', '↑', '↓'], ['circle', '圓點', '●', '○'], ['diamond', '菱形', '◆', '◇']] as const;
+    // 圖例列的示意字元（各自上色，後面的「買」「賣」兩字用前景色）：[字元, 顏色]
+    const glyphs = (r: ReactTestRenderer) => legend(r)!.findAll((n) => n.type === 'span' && n.props.style?.color).map((n) => [text(n), n.props.style.color]);
+
+    it('圖例列三種狀態：on 有示意與筆數；hidden 只剩名稱（轉灰）與三顆鈕，不畫、沒有明細與提示框；off 整列消失', async () => {
+        setNow('2026-10-08T09:16:00'); fetchMock.mockResolvedValue(DATA);
+        const props = { contract: stk, trades: trades(), onFillsChange: vi.fn() };
+        const r = mount(props); await flush(); // 沒傳 fills：預設 on
+        // 這列在圖表區裡：標成畫圖的浮動層，按在上面不會被委託線拖曳或畫圖工具接走
+        expect(legend(r)!.props['data-drawing-overlay']).toBe('');
+        const show = async (fills: ChartFillsState | undefined) => { await act(async () => r.update(chart({ ...props, fills }))); await flush(); };
+        const countClasses = () => classes(legend(r)!.findAll((n) => n.type === 'span' && /筆$/.test(text(n))).at(-1)!);
+        for (const fills of [undefined, 'on'] as const) {
+            await show(fills);
+            expect(legend(r)!.props.className).toBe(chartStyles.legendItem.normal);
+            expect(legendText(r)).toBe('成交▲買▼賣2筆');
+            expect(legendNames(r)).toEqual(['成交', '隱藏成交標記', '成交標記設定', '移除成交標記']);
+            expect(classes(legendBtn(r, '成交'))).not.toContain(fillStyles.muted);
+            expect(countClasses()).toContain(fillStyles.muted); // 筆數是次要資訊
+            expect(captured.groups).toHaveLength(1);
+            expect(text(listButton(r))).toBe('明細 2');
+        }
+        // 隱藏中：列留著、不整列變淡（控制鈕要看得清楚），只有名稱轉灰，眼睛換成「顯示」
+        await show('hidden');
+        expect(legend(r)!.props.className).toBe(chartStyles.legendItem.normal);
+        expect(classes(legendBtn(r, '成交'))).toContain(fillStyles.muted);
+        expect(legendText(r)).toBe('成交');
+        expect(legendNames(r)).toEqual(['成交', '顯示成交標記', '成交標記設定', '移除成交標記']);
+        expect(captured.groups).toEqual([]);
+        expect(listButton(r)).toBeUndefined();
+        await move(BAR);
+        expect(tooltips(r)).toHaveLength(0);
+        // 已移除：整列消失（從「指標」加回）
+        await show('off');
+        expect(legend(r)).toBeUndefined();
+        expect(captured.groups).toEqual([]);
+        expect(listButton(r)).toBeUndefined();
+        await move(undefined); await move(BAR);
+        expect(tooltips(r)).toHaveLength(0);
+        await show('on');
+        expect(legendText(r)).toBe('成交▲買▼賣2筆');
+        expect(captured.groups).toHaveLength(1);
+    });
+    it('眼睛在顯示與隱藏之間切換、× 從這張圖移除：交回工作區的狀態依序是 hidden、on、off；隱藏中按 × 也是 off', async () => {
+        setNow('2026-10-08T09:16:00'); fetchMock.mockResolvedValue(DATA);
+        const log: ChartFillsState[] = [];
+        const r = mountWorkspace({ contract: stk, trades: trades() }, log); await flush();
+        await press(r, '隱藏成交標記');
+        expect(log).toEqual(['hidden']);
+        expect(captured.groups).toEqual([]);
+        await press(r, '顯示成交標記');
+        expect(log).toEqual(['hidden', 'on']);
+        expect(captured.groups).toHaveLength(1);
+        await press(r, '移除成交標記');
+        expect(log).toEqual(['hidden', 'on', 'off']);
+        expect(legend(r)).toBeUndefined();
+        expect(captured.groups).toEqual([]);
+        const hiddenLog: ChartFillsState[] = [];
+        const hidden = mountWorkspace({ contract: stk, trades: trades(), initial: 'hidden' }, hiddenLog); await flush();
+        await press(hidden, '移除成交標記');
+        expect(hiddenLog).toEqual(['off']);
+        expect(legend(hidden)).toBeUndefined();
+    });
+    it('圖例列的筆數和工具列明細數相同（K 線載入中、成交待確認是「…」）；示意字元跟著形狀偏好換、顏色和圖層相同', async () => {
+        setNow('2026-10-08T09:16:00');
+        let resolve!: (v: unknown) => void;
+        fetchMock.mockReturnValue(new Promise((ok) => { resolve = ok; }));
+        const r = mount({ contract: stk, trades: trades() }); await flush();
+        const counts = () => [legendText(r).replace(/^.*賣/, ''), text(listButton(r))];
+        expect(counts()).toEqual(['…筆', '明細 …']); // K 線載入中
+        await act(async () => resolve(DATA)); await flush();
+        expect(counts()).toEqual(['2筆', '明細 2']);
+        await act(async () => r.update(chart({ contract: stk, trades: trades(), fillsReady: false })));
+        expect(counts()).toEqual(['…筆', '明細 …']); // 成交來源待確認
+        await act(async () => r.update(chart({ contract: stk, trades: trades() })));
+        for (const [shape, , buy, sell] of GLYPHS) {
+            act(() => setChartFillShape(shape));
+            expect(captured.style.shape).toBe(shape);
+            expect(glyphs(r)).toEqual([[buy, captured.style.up], [sell, captured.style.down]]);
+            expect(legendText(r)).toBe(`成交${buy}買${sell}賣2筆`);
+        }
+    });
+    it.each(['成交', '成交標記設定'] as const)('按圖例列的「%s」打開設定面板，再按一次或按另一顆都會收起；顯示中開關面板不動這張圖的狀態', async (name) => {
+        setNow('2026-10-08T09:16:00'); fetchMock.mockResolvedValue(DATA);
+        const log: ChartFillsState[] = [];
+        const r = mountWorkspace({ contract: stk, trades: trades() }, log); await flush();
+        const other = name === '成交' ? '成交標記設定' : '成交';
+        expect(panel(r)).toBeUndefined();
+        await press(r, name);
+        expect(panel(r)).toBeDefined();
+        expect(text(panel(r))).toContain('所有 K 線圖共用');
+        expect(buttons(panel(r)).map(named)).not.toContain('完成'); // 點了就生效，沒有「完成」鈕
+        await press(r, name);
+        expect(panel(r)).toBeUndefined();
+        await press(r, name);
+        expect(panel(r)).toBeDefined();
+        await press(r, other); // 名稱鈕和齒輪是同一個開關
+        expect(panel(r)).toBeUndefined();
+        expect([name, other].map((n) => legendBtn(r, n).props['aria-expanded'])).toEqual([false, false]);
+        expect(log).toEqual([]);
+    });
+    it('設定面板的形狀、標籤、帳戶：點了就生效（寫全域偏好，圖層與圖例跟著換），面板不關、不動這張圖的狀態', async () => {
+        setNow('2026-10-08T09:16:00'); fetchMock.mockResolvedValue(DATA);
+        const log: ChartFillsState[] = [];
+        const r = mountWorkspace({ contract: stk, trades: trades() }, log); await flush();
+        await press(r, '成交');
+        expect(choices(r, '形狀')).toEqual([['三角形', true], ['箭頭', false], ['圓點', false], ['菱形', false]]);
+        expect(choices(r, '標籤')).toEqual([['不標', false], ['買賣', false], ['價格', true]]);
+        for (const [shape, name, buy, sell] of [...GLYPHS.slice(1), GLYPHS[0]]) {
+            await pick(r, name);
+            expect(captured.style.shape).toBe(shape);
+            expect(choices(r, '形狀').filter(([, on]) => on)).toEqual([[name, true]]);
+            expect(legendText(r)).toBe(`成交${buy}買${sell}賣2筆`);
+        }
+        for (const [name, style, label] of [['不標', 'dot', null], ['買賣', 'side', '買 2張'], ['價格', 'price', '20,003 2張']] as const) {
+            await pick(r, name);
+            expect([getChartFillStyle(), captured.style.style]).toEqual([style, style]);
+            expect(choices(r, '標籤').filter(([, on]) => on)).toEqual([[name, true]]);
+            expect(captured.groups.map((g) => g.text)).toEqual([label]);
+        }
+        // 帳戶：預設是這張圖的帳戶，可改成同一市場的全部帳戶
+        expect(text(panel(r))).toContain('帳戶：');
+        expect(text(panel(r))).toContain('1111121');
+        await pick(r, '改成全部帳戶');
+        expect(getChartFillScope()).toBe('all');
+        expect(text(panel(r))).toContain('帳戶：全部帳戶');
+        await pick(r, '改成目前帳戶');
+        expect(getChartFillScope()).toBe('active');
+        expect(text(panel(r))).not.toContain('帳戶：全部帳戶');
+        expect(panel(r)).toBeDefined();
+        expect(log).toEqual([]);
+    });
+    it('顏色：預設藍買橘賣；勾「跟 K 棒同色」改用漲跌色、取消就換回；買、賣各自展開色盤換色（跟 K 棒同色時換色會切回自己的買賣色）、「預設色」還原；圖層、圖例示意與提示框一起換', async () => {
+        setNow('2026-10-08T09:16:00'); fetchMock.mockResolvedValue(DATA);
+        const r = mount({ contract: stk, trades: [tradeAt(A, 20010, 'a'), tradeAt(A, 20011, 'b', 'Sell')] }); await flush();
+        const candle = getChartColors({ mode: 'dark', convention: 'tw', fontScale: 1 });
+        const used = () => [captured.style.up, captured.style.down];
+        const palette = (side: '買' | '賣') => panel(r)!.findAll((n) => n.props.role === 'group' && n.props['aria-label'] === `${side}的顏色`)[0];
+        const expanded = () => ['買的顏色', '賣的顏色'].map((name) => panelBtn(r, name).props['aria-expanded']);
+        // 色盤裡選中的那一顆（色塊或「預設色」）
+        const chosen = (side: '買' | '賣') => buttons(palette(side)).filter((b) => b.props['aria-pressed']).map(named);
+        await press(r, '成交');
+        // 預設藍買橘賣，和 K 棒的紅綠不同
+        expect(used()).toEqual(['#38bdf8', '#fb923c']);
+        expect([candle.up, candle.down]).not.toContain(captured.style.up);
+        expect(text(panel(r))).toContain('跟 K 棒同色');
+        expect(candleBox(r).props.checked).toBe(false);
+        await toggleCandle(r);
+        expect(candleBox(r).props.checked).toBe(true);
+        expect(used()).toEqual([candle.up, candle.down]);
+        await toggleCandle(r);
+        expect(candleBox(r).props.checked).toBe(false);
+        expect(used()).toEqual(['#38bdf8', '#fb923c']);
+        // 買、賣各一顆鈕，點了在下面展開色盤（一次只開一邊）
+        expect(expanded()).toEqual([false, false]);
+        expect([palette('買'), palette('賣')]).toEqual([undefined, undefined]);
+        const [buy, sell, other] = [DRAWING_PALETTE[7]!, DRAWING_PALETTE[2]!, DRAWING_PALETTE[4]!];
+        await pick(r, '買的顏色');
+        expect(expanded()).toEqual([true, false]);
+        expect(chosen('買')).toEqual(['預設色']); // 還沒自選
+        await pick(r, `顏色 ${buy}`);
+        expect(used()).toEqual([buy, '#fb923c']);
+        expect(chosen('買')).toEqual([`顏色 ${buy}`]);
+        await pick(r, '賣的顏色');
+        expect(expanded()).toEqual([false, true]);
+        expect(palette('買')).toBeUndefined();
+        await pick(r, `顏色 ${sell}`);
+        expect(used()).toEqual([buy, sell]);
+        expect(chosen('賣')).toEqual([`顏色 ${sell}`]);
+        // 圖例示意與提示框和圖層同色
+        expect(glyphs(r).map(([, color]) => color)).toEqual([buy, sell]);
+        await move(BAR);
+        expect(tooltips(r)[0]!.findAll((n) => n.type === 'td' && n.props.style?.color).map((n) => n.props.style.color)).toEqual([buy, sell]);
+        // 跟 K 棒同色時再選色：切回自己的買賣色，另一邊的自選色還在
+        await toggleCandle(r);
+        expect(used()).toEqual([candle.up, candle.down]);
+        if (!palette('買')) await pick(r, '買的顏色');
+        expect(chosen('買')).toEqual([]); // 用的是 K 棒的顏色：色盤裡沒有選中的
+        await pick(r, `顏色 ${other}`);
+        expect(candleBox(r).props.checked).toBe(false);
+        expect(used()).toEqual([other, sell]);
+        // 「預設色」只還原正在換的那一邊
+        await pick(r, '預設色');
+        expect(used()).toEqual(['#38bdf8', sell]);
+        expect(chosen('買')).toEqual(['預設色']);
+    });
+    it('面板打開後下一幀把焦點移到選中的形狀鈕；關閉時焦點若跟著面板消失就還給打開前的地方，已經移到別處就不搶', async () => {
+        setNow('2026-10-08T09:16:00'); fetchMock.mockResolvedValue(DATA);
+        // 這個案例自己排幀：rAF 回呼只在 runFrame() 時執行（共用的 setTimeout 版會在 act 的等待裡提早跑，結果時好時壞）
+        const queued: (() => void)[] = [];
+        vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => queued.push(() => cb(0)));
+        vi.stubGlobal('cancelAnimationFrame', (id: number) => { queued[id - 1] = () => {}; });
+        const frame = () => act(async () => { queued.splice(0).forEach((run) => run()); });
+        const selected = { focus: vi.fn() };
+        const opener = { focus: vi.fn() };
+        const doc = { body: {}, activeElement: opener as unknown };
+        settingsNode = { ownerDocument: doc, querySelector: (selector: string) => (selector === '[aria-pressed="true"]' ? selected : null) };
+        const r = mount({ contract: stk, trades: trades() }); await flush();
+        await press(r, '成交');
+        expect(selected.focus).not.toHaveBeenCalled(); // 彈出層第一次渲染還沒定位（隱藏），等一幀
+        await frame();
+        expect(selected.focus.mock.calls).toEqual([[{ preventScroll: true }]]);
+        // 關閉後焦點落到 body（原本在面板裡）：還給打開前的地方
+        doc.activeElement = doc.body;
+        await press(r, '成交');
+        expect(opener.focus.mock.calls).toEqual([[{ preventScroll: true }]]);
+        // 關閉時焦點已經在別處（例如點了圖表）：留在那裡
+        doc.activeElement = opener;
+        await press(r, '成交'); await frame();
+        doc.activeElement = { focus: vi.fn() };
+        await press(r, '成交');
+        expect(opener.focus).toHaveBeenCalledTimes(1);
+        // 還沒到下一幀就關掉：不再移焦點
+        selected.focus.mockClear();
+        await press(r, '成交');
+        await press(r, '成交');
+        await frame();
+        expect(selected.focus).not.toHaveBeenCalled();
+    });
+    it.each(['成交', '成交標記設定'] as const)('隱藏中按「%s」：先恢復顯示（交回 on）再打開設定面板', async (name) => {
+        setNow('2026-10-08T09:16:00'); fetchMock.mockResolvedValue(DATA);
+        const log: ChartFillsState[] = [];
+        const r = mountWorkspace({ contract: stk, trades: trades(), initial: 'hidden' }, log); await flush();
+        expect(captured.groups).toEqual([]);
+        await press(r, name);
+        expect(log).toEqual(['on']);
+        expect(panel(r)).toBeDefined();
+        expect(legendNames(r)).toContain('隱藏成交標記');
+        expect(captured.groups).toHaveLength(1);
+    });
+    it.each([['隱藏成交標記', 'hidden'], ['移除成交標記', 'off']] as const)('面板開著時按「%s」：交回 %s 並關掉面板，之後恢復顯示也不會自己打開', async (name, state) => {
+        setNow('2026-10-08T09:16:00'); fetchMock.mockResolvedValue(DATA);
+        const onFillsChange = vi.fn();
+        const props = { contract: stk, trades: trades(), onFillsChange };
+        const r = mount({ ...props, fills: 'on' }); await flush();
+        await press(r, '成交');
+        expect(panel(r)).toBeDefined();
+        await press(r, name);
+        expect(onFillsChange.mock.calls).toEqual([[state]]);
+        // 工作區還沒把狀態傳回來（這張圖仍是 on）：面板已經關了
+        expect(panel(r)).toBeUndefined();
+        expect(legendBtn(r, '成交').props['aria-expanded']).toBe(false);
+        await act(async () => r.update(chart({ ...props, fills: state })));
+        await act(async () => r.update(chart({ ...props, fills: 'on' })));
+        expect(legend(r)).toBeDefined();
+        expect(panel(r)).toBeUndefined();
+    });
+    it.each([['工作區改成隱藏', { fills: 'hidden' }], ['工作區移除', { fills: 'off' }], ['換成指數', { contract: ind }]] as const)('面板開著時%s：面板收起、aria-expanded 回到 false，恢復後不會自己彈出來', async (_label, change) => {
+        setNow('2026-10-08T09:16:00'); fetchMock.mockResolvedValue(DATA);
+        const props = { contract: stk, trades: trades(), fills: 'on', onFillsChange: vi.fn() };
+        const r = mount(props); await flush();
+        await press(r, '成交');
+        expect(panel(r)).toBeDefined();
+        await act(async () => r.update(chart({ ...props, ...change }))); await flush();
+        expect(panel(r)).toBeUndefined();
+        await act(async () => r.update(chart(props))); await flush();
+        expect([panel(r), legendBtn(r, '成交').props['aria-expanded'], legendBtn(r, '成交標記設定').props['aria-expanded']]).toEqual([undefined, false, false]);
+        expect(props.onFillsChange).not.toHaveBeenCalled();
+    });
+    it('從「指標」對話框：成交標記那一列是「已加入」，按移除後圖例列消失、對話框還開著；再點那一列就加回這張圖、關對話框並打開設定面板', async () => {
+        setNow('2026-10-08T09:16:00'); fetchMock.mockResolvedValue(DATA);
+        const log: ChartFillsState[] = [];
+        const r = mountWorkspace({ contract: stk, trades: trades() }, log); await flush();
+        // 對話框裡整列是一顆 <button>（名稱「成交標記」）；「移除」是列裡的 role=button
+        const row = (of = r) => of.root.findAll((n) => n.type === 'button' && text(n).startsWith('成交標記'))[0];
+        const remove = () => r.root.findAll((n) => n.props.role === 'button' && n.props['aria-label'] === '移除成交標記')[0];
+        expect(row()).toBeUndefined();
+        await click(r, '指標');
+        expect(text(row())).toContain('已加入');
+        await act(async () => remove()!.props.onClick({ stopPropagation() {} }));
+        expect(log).toEqual(['off']);
+        expect(legend(r)).toBeUndefined();
+        expect(captured.groups).toEqual([]);
+        // 對話框還開著，這一列變成可以加回
+        expect(row()).toBeDefined();
+        expect(text(row())).not.toContain('已加入');
+        expect(remove()).toBeUndefined();
+        await act(async () => row()!.props.onClick());
+        expect(log).toEqual(['off', 'on']);
+        expect(row()).toBeUndefined(); // 對話框關了
+        expect(legendText(r)).toBe('成交▲買▼賣2筆');
+        expect(panel(r)).toBeDefined(); // 剛加回來的圖例列掛上後，面板才有地方定位
+        expect(captured.groups).toHaveLength(1);
+        // 已經在圖上時點那一列：關對話框、開設定面板，狀態不變
+        await press(r, '成交');
+        expect(panel(r)).toBeUndefined();
+        await click(r, '指標');
+        await act(async () => row()!.props.onClick());
+        expect([row(), !!panel(r), log]).toEqual([undefined, true, ['off', 'on']]);
+        // 不能畫成交的圖（指數）：對話框沒有這一列
+        const index = mount({ contract: ind, trades: trades() }); await flush();
+        await click(index, '指標');
+        expect(text(index.root)).toContain('技術指標');
+        expect(row(index)).toBeUndefined();
     });
 });

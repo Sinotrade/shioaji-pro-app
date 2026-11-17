@@ -19,7 +19,7 @@ vi.mock('../lib/contracts-cache', () => ({
 }));
 
 import { priceKey } from '../lib/chart-fills';
-import { FillMarksLayer, type FillMarkStyle } from '../lib/chart-fill-marks';
+import { FillMarksLayer, type FillMarkShape, type FillMarkStyle } from '../lib/chart-fill-marks';
 import { useChartFills } from './use-chart-fills';
 import { ChartFillDetails } from '../components/chart-fill-details';
 
@@ -49,15 +49,15 @@ const NO_DECIMALS = () => 0;
 let view!: ReturnType<typeof useChartFills>;
 let renders = 0;
 function Probe({ refs, visible = true, version = 0, trades = TRADES, account = ACCOUNT, accounts, dayOnly = false, colors = ['#f00', '#0f0', '#111'], contract = CONTRACT,
-    ready = true, retain = true, env = SIM, style = 'price', minutes = 5, decimals = NO_DECIMALS }: {
+    ready = true, retain = true, env = SIM, style = 'price', shape, minutes = 5, decimals = NO_DECIMALS }: {
     refs: ReturnType<typeof fakes>; visible?: boolean; version?: number; trades?: never[]; account?: unknown; accounts?: unknown[]; dayOnly?: boolean; colors?: string[]; contract?: unknown;
-    ready?: boolean; retain?: boolean; env?: string | null; style?: FillMarkStyle; minutes?: number; decimals?: (price: number) => number;
+    ready?: boolean; retain?: boolean; env?: string | null; style?: FillMarkStyle; shape?: FillMarkShape; minutes?: number; decimals?: (price: number) => number;
 }) {
     renders++;
     view = useChartFills({
         chartRef: refs.chartRef, seriesRef: refs.seriesRef, trades, contract: contract as any, account: account as any, accounts: accounts as any,
         bars: BARS, dataVersion: version, minutes, dayOnly, visible, ready, retain, env,
-        context: 'ctx', style, priceDecimals: decimals, up: colors[0]!, down: colors[1]!, labelBg: colors[2]!,
+        context: 'ctx', style, shape, priceDecimals: decimals, up: colors[0]!, down: colors[1]!, labelBg: colors[2]!,
     });
     return null;
 }
@@ -204,9 +204,27 @@ it('換主題色時圖層用新的顏色重新上色', () => {
     const setStyle = vi.spyOn(FillMarksLayer.prototype, 'setStyle');
     const refs = fakes();
     const r = mount(createElement(Probe, { refs }));
-    expect(setStyle.mock.lastCall![0]).toEqual({ up: '#f00', down: '#0f0', labelBg: '#111', style: 'price' });
+    expect(setStyle.mock.lastCall![0]).toEqual({ up: '#f00', down: '#0f0', labelBg: '#111', style: 'price', shape: 'triangle' });
     act(() => r.update(createElement(Probe, { refs, colors: ['#00f', '#ff0', '#eee'] })));
-    expect(setStyle.mock.lastCall![0]).toEqual({ up: '#00f', down: '#ff0', labelBg: '#eee', style: 'price' });
+    expect(setStyle.mock.lastCall![0]).toEqual({ up: '#00f', down: '#ff0', labelBg: '#eee', style: 'price', shape: 'triangle' });
+});
+
+it('形狀交給圖層：沒傳就是三角形；換形狀時圖層收到新的 shape，分組（位置與字串）不重算', () => {
+    const setStyle = vi.spyOn(FillMarksLayer.prototype, 'setStyle');
+    const setGroups = vi.spyOn(FillMarksLayer.prototype, 'setGroups');
+    m.fills = [fill('1', 600, 100, 'Buy'), fill('2', 900, 101, 'Sell')];
+    const refs = fakes();
+    const r = mount(createElement(Probe, { refs }));
+    expect(setStyle.mock.lastCall![0]).toMatchObject({ shape: 'triangle' });
+    const groupCalls = setGroups.mock.calls.length;
+    const projections = m.calls.length;
+    for (const shape of ['arrow', 'circle', 'diamond', 'triangle'] as const) {
+        act(() => r.update(createElement(Probe, { refs, shape })));
+        expect(setStyle.mock.lastCall![0]).toEqual({ up: '#f00', down: '#0f0', labelBg: '#111', style: 'price', shape });
+    }
+    // 形狀只影響怎麼畫：不重新投影成交，也不重送分組
+    expect(m.calls.length).toBe(projections);
+    expect(setGroups.mock.calls.length).toBe(groupCalls);
 });
 
 it('游標停在同一組上不會重繪；換到另一組才會', () => {

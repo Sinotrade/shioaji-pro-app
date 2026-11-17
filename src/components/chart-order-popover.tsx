@@ -5,7 +5,7 @@
 // 「500 股」＝盤中零股、「1 張」＝整股、「2 口」＝期貨）。
 
 import { Ban, Settings2 } from 'lucide-react';
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type MutableRefObject, type ReactNode, type RefObject, type SyntheticEvent } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type MutableRefObject, type ReactNode, type RefObject } from 'react';
 import {
     chartOrderChipLabel,
     chartOrderRows,
@@ -19,7 +19,6 @@ import {
     type ChartOrderMarket,
     type ChartOrderSettings,
 } from '../lib/chart-order-settings';
-import { pushEscHandler } from '../hooks/use-esc-close';
 import { CASH_CREDIT, flashAccountKey, type FlashCond } from '../lib/flash-account';
 import { ODD_LOT_MAX_SHARES } from '../lib/odd-lot';
 import { clipAncestors, fitPopover, visibleClipRect, type PopoverFit } from '../lib/popover-fit';
@@ -79,16 +78,6 @@ export interface OrderSettingsLayout {
     rememberQty?: { on: boolean; text: string; note: string; onToggle: (on: boolean) => void };
 }
 
-/** 設定彈出層的其他分頁（例如 K 線圖的「成交標記」）：有分頁時頂端多一排「下單｜…」 */
-export interface OrderSettingsSheet {
-    key: string;
-    label: string;
-    render: (close: () => void) => ReactNode;
-    /** 操作這個分頁先做的事（分頁鈕與分頁內容都在捕獲階段先跑，重開停在這頁也算），例如 K 線圖解除點價武裝 */
-    onInteraction?: (event: SyntheticEvent) => void;
-}
-const ORDER_SHEET = 'order';
-
 export function OrderSettingsButton({
     market,
     settings,
@@ -104,7 +93,6 @@ export function OrderSettingsButton({
     align = 'start',
     hideTrigger = false,
     openRef,
-    sheets,
 }: {
     market: ChartOrderMarket;
     settings: ChartOrderSettings;
@@ -127,12 +115,8 @@ export function OrderSettingsButton({
     hideTrigger?: boolean;
     /** receives a function that opens the popover (optionally at `top`) */
     openRef?: MutableRefObject<((top?: number) => void) | null>;
-    /** 下單之外的分頁；沒有就跟以前一樣只有下單設定 */
-    sheets?: readonly OrderSettingsSheet[];
 }) {
     const [open, setOpenState] = useState(false);
-    // 上次看的分頁：再打開時停在同一頁
-    const [sheet, setSheet] = useState(ORDER_SHEET);
     const buttonRef = useRef<HTMLButtonElement>(null);
     const [panelTop, setPanelTop] = useState<number | undefined>(undefined);
     const setOpen = (next: boolean | ((v: boolean) => boolean)) => setOpenState(prev => {
@@ -182,22 +166,14 @@ export function OrderSettingsButton({
     }, [open, align]);
     // Esc closes the popover and nothing else (a panel's own Esc hotkey must
     // not also fire); nothing is listened to while closed
-    // 有其他分頁（K 線圖：下單＋成交標記）時也進 modal 的 Esc 堆疊：畫圖工具看到堆疊不是空的就讓出，
-    // 這一下 Esc 不會順便取消畫到一半的線（閃電下單沒有分頁，行為不變）
-    const stacked = !!sheets?.length;
-    const closeInside = () => { setOpen(false); if (stacked) buttonRef.current?.focus?.({ preventScroll: true }); };
     useEffect(() => {
         if (!open) return;
         const onKey = (e: KeyboardEvent) => {
-            if (e.key === 'Escape') { e.stopImmediatePropagation(); e.preventDefault(); closeInside(); }
+            if (e.key === 'Escape') { e.stopImmediatePropagation(); e.preventDefault(); setOpen(false); }
         };
         window.addEventListener('keydown', onKey, true);
-        const unstack = stacked ? pushEscHandler(closeInside) : undefined;
-        return () => {
-            window.removeEventListener('keydown', onKey, true);
-            unstack?.();
-        };
-    }, [open, stacked]);
+        return () => window.removeEventListener('keydown', onKey, true);
+    }, [open]);
     return (
         <span className={`${styles.anchor}${align === 'panel' ? ` ${styles.anchorStatic}` : ''}${className ? ` ${className}` : ''}`}>
             <button
@@ -211,11 +187,9 @@ export function OrderSettingsButton({
                 hidden={hideTrigger}
                 // the chip class sets display, which would override [hidden]
                 style={hideTrigger ? { display: 'none' } : undefined}
-                onClick={(e) => {
+                onClick={() => {
                     const b = buttonRef.current;
                     if (align === 'panel' && b && Number.isFinite(b.offsetTop)) setPanelTop(b.offsetTop + b.offsetHeight + 4);
-                    // 再打開會停在上次的分頁：停在成交標記頁時，跟點那個分頁鈕一樣先解除點價武裝
-                    if (!open) sheets?.find(x => x.key === sheet)?.onInteraction?.(e);
                     setOpen(v => !v);
                 }}
             >
@@ -230,7 +204,7 @@ export function OrderSettingsButton({
                         settings={settings}
                         onChange={onChange}
                         onSaveDefault={onSaveDefault}
-                        onClose={closeInside}
+                        onClose={() => setOpen(false)}
                         align={align}
                         top={panelTop}
                         popRef={popRef}
@@ -238,9 +212,6 @@ export function OrderSettingsButton({
                         layout={layout}
                         contractLabel={contractLabel}
                         summary={summary}
-                        sheets={sheets}
-                        sheet={sheet}
-                        onSheet={setSheet}
                     />
                 </>
             )}
@@ -257,7 +228,6 @@ export function ChartOrderButton({
     contractLabel,
     credit,
     disabled,
-    sheets,
 }: {
     market: ChartOrderMarket;
     settings: ChartOrderSettings;
@@ -268,8 +238,6 @@ export function ChartOrderButton({
     credit?: OrderSettingsLayout['credit'];
     /** chip flagged when a condition currently blocks a side */
     disabled?: boolean;
-    /** 圖表設定的其他分頁（成交標記） */
-    sheets?: readonly OrderSettingsSheet[];
 }) {
     const rows = chartOrderRows(market, settings.lot);
     const label = chartOrderChipLabel(settings, market);
@@ -283,7 +251,6 @@ export function ChartOrderButton({
             summary={chartOrderSummary(settings, market, chartAccountLabel(account))}
             chip={disabled ? <>{label}<Ban size={10} aria-hidden /></> : label}
             ariaLabel={`圖表下單設定：${label}`}
-            sheets={sheets}
             layout={{
                 title: '圖表下單設定',
                 scope: '只影響這張圖',
@@ -322,19 +289,12 @@ export function OrderSettingsPanel({
     top,
     popRef,
     fit,
-    sheets,
-    sheet = ORDER_SHEET,
-    onSheet,
 }: {
     market: ChartOrderMarket;
     settings: ChartOrderSettings;
     onChange: (next: ChartOrderSettings) => void;
     onSaveDefault: () => void;
     onClose: () => void;
-    sheets?: readonly OrderSettingsSheet[];
-    /** 目前的分頁（ORDER_SHEET＝下單） */
-    sheet?: string;
-    onSheet?: (key: string) => void;
     align?: 'start' | 'panel';
     top?: number;
     popRef?: RefObject<HTMLDivElement | null>;
@@ -351,27 +311,10 @@ export function OrderSettingsPanel({
     useEffect(() => setQtyText(String(settings.qty)), [settings.qty]);
     const max = odd ? ODD_LOT_MAX_SHARES : 9999;
     const account = layout.account;
-    // 指定的分頁不存在（例如這張圖不能畫成交）就回到下單
-    const extra = sheets?.find(x => x.key === sheet);
     return (
         <div ref={popRef} className={align === 'panel' ? `${styles.pop} ${styles.popPanel}` : styles.pop}
             style={align === 'panel' ? (top !== undefined ? { top } : undefined) : fitStyle(fit)}
-            role='dialog' aria-label={extra ? `圖表設定：${extra.label}` : layout.title}>
-            {sheets && sheets.length > 0 && (
-                <div className={styles.seg} role='group' aria-label='設定分頁'>
-                    {[{ key: ORDER_SHEET, label: '下單' } as Partial<OrderSettingsSheet> & { key: string; label: string }, ...sheets].map(t => {
-                        const on = (extra?.key ?? ORDER_SHEET) === t.key;
-                        return (
-                            <button key={t.key} type='button' aria-pressed={on} className={styles.segBtn[on ? 'on' : 'off']}
-                                onPointerDownCapture={t.onInteraction} onKeyDownCapture={t.onInteraction}
-                                onClick={() => { if (!on) onSheet?.(t.key); }}>
-                                {t.label}
-                            </button>
-                        );
-                    })}
-                </div>
-            )}
-            {extra ? <div className={styles.sheet} onPointerDownCapture={extra.onInteraction} onKeyDownCapture={extra.onInteraction}>{extra.render(onClose)}</div> : <>
+            role='dialog' aria-label={layout.title}>
             <div className={styles.head}>
                 <span className={styles.headTitle}>{layout.title}</span>
                 <span className={styles.headNote} title={contractLabel}>{contractLabel} · {layout.scope}</span>
@@ -499,7 +442,6 @@ export function OrderSettingsPanel({
                 </button>
                 <button type='button' className={styles.footBtn.primary} onClick={onClose}>完成</button>
             </div>
-            </>}
         </div>
     );
 }

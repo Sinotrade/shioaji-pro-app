@@ -364,9 +364,9 @@ function BlockBody({
                         onShowHighLowChange={(show) =>
                             onSessionConfigChange(block.id, { chartHighLow: show ? undefined : false })
                         }
-                        showFills={block.chartFills !== false}
-                        onShowFillsChange={(show) =>
-                            onSessionConfigChange(block.id, { chartFills: show ? undefined : false })
+                        fills={block.chartFills === 'off' ? 'off' : block.chartFills === false ? 'hidden' : 'on'}
+                        onFillsChange={(state) =>
+                            onSessionConfigChange(block.id, { chartFills: state === 'on' ? undefined : state === 'off' ? 'off' : false })
                         }
                     />
                 </>

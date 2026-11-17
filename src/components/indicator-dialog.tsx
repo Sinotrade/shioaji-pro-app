@@ -91,11 +91,23 @@ export function IndicatorDialog({
     onAdd,
     onClose,
     onSaveDefaults,
+    fills,
 }: {
     instances: IndicatorInstance[];
     onAdd: (type: string) => void;
     onClose: () => void;
     onSaveDefaults?: () => void;
+    /** 內建的成交標記（不是指標，但在這裡也能打開設定、移除與加回）；沒傳就沒有這一列（指數、組合、權證圖） */
+    fills?: {
+        /** 這張圖上有沒有（隱藏中也算有） */
+        added: boolean;
+        /** 圖上現在的買／賣色，色塊用 */
+        colors: { buy: string; sell: string };
+        /** 打開設定（還沒加入就先加入）；對話框由呼叫端關閉 */
+        onOpen: () => void;
+        /** 從這張圖移除 */
+        onRemove: () => void;
+    };
 }) {
     const [query, setQuery] = useState('');
     const [category, setCategory] = useState<Category>('all');
@@ -156,6 +168,13 @@ export function IndicatorDialog({
     const filtered = allDefs.filter((d) => matches(d) && inCategory(d));
     const overlays = filtered.filter((d) => d.category === 'overlay');
     const panes = filtered.filter((d) => d.category === 'pane');
+    // 內建的成交標記：只在「全部指標」，沒搜尋字或搜尋字對得上才顯示
+    const fillsRow =
+        fills &&
+        category === 'all' &&
+        (!q || '成交標記 實際成交 fills'.includes(q))
+            ? fills
+            : null;
 
     const renderRow = (d: IndicatorDef) => {
         const added = counts.get(d.type) ?? 0;
@@ -307,7 +326,64 @@ export function IndicatorDialog({
                         </button>
                     </div>
                     <div className={styles.list}>
-                        {filtered.length === 0 &&
+                        {fillsRow && (
+                            <>
+                                <div className={styles.listHeader}>內建</div>
+                                <button
+                                    className={styles.row}
+                                    onClick={() => fillsRow.onOpen()}
+                                >
+                                    <span
+                                        className={styles.rowSwatch}
+                                        style={{
+                                            background: `linear-gradient(135deg, ${fillsRow.colors.buy} 50%, ${fillsRow.colors.sell} 50%)`,
+                                        }}
+                                    />
+                                    <span className={styles.rowMain}>
+                                        <span className={styles.rowName}>
+                                            成交標記
+                                        </span>
+                                        <span className={styles.rowDesc}>
+                                            {fillsRow.added
+                                                ? 'K 線上的實際成交點；點一下設定形狀、標籤與顏色'
+                                                : 'K 線上的實際成交點；點一下加回這張圖'}
+                                        </span>
+                                    </span>
+                                    {fillsRow.added && (
+                                        <>
+                                            <span className={styles.rowAdded}>
+                                                已加入
+                                            </span>
+                                            <span
+                                                role='button'
+                                                tabIndex={0}
+                                                className={styles.dangerBtn}
+                                                aria-label='移除成交標記'
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    fillsRow.onRemove();
+                                                }}
+                                                onKeyDown={(e) => {
+                                                    if (
+                                                        e.key === 'Enter' ||
+                                                        e.key === ' '
+                                                    ) {
+                                                        // 擋掉預設行為：不然外層整列的 <button> 會跟著被按下，剛移除又被加回
+                                                        e.preventDefault();
+                                                        e.stopPropagation();
+                                                        fillsRow.onRemove();
+                                                    }
+                                                }}
+                                            >
+                                                移除
+                                            </span>
+                                        </>
+                                    )}
+                                </button>
+                            </>
+                        )}
+                        {!fillsRow &&
+                            filtered.length === 0 &&
                             (category === 'custom' && !q ? (
                                 <div className={styles.empty}>
                                     還沒有自訂指標 —

@@ -112,12 +112,12 @@ it('持倉或帳戶資金待對帳不影響成交：只看委託這一類的來�
     expect(chartProps().fillsReady).toBe(true);
 });
 
-it('交給 CandleChart 的其餘 props 原樣轉傳（showFills、onShowFillsChange、面板代號）', () => {
-    const onShowFillsChange = vi.fn();
+it('交給 CandleChart 的其餘 props 原樣轉傳（fills、onFillsChange、面板代號）', () => {
+    const onFillsChange = vi.fn();
     let r!: ReturnType<typeof create>;
-    act(() => { r = create(createElement(LiveCandleChart, { contract: { code: '2330' } as any, panelId: 'p1', showFills: false, onShowFillsChange })); });
-    expect(m.props).toMatchObject({ panelId: 'p1', showFills: false, contract: { code: '2330' } });
-    expect(m.props.onShowFillsChange).toBe(onShowFillsChange);
+    act(() => { r = create(createElement(LiveCandleChart, { contract: { code: '2330' } as any, panelId: 'p1', fills: 'hidden', onFillsChange })); });
+    expect(m.props).toMatchObject({ panelId: 'p1', fills: 'hidden', contract: { code: '2330' } });
+    expect(m.props.onFillsChange).toBe(onFillsChange);
     act(() => r.unmount());
 });
 

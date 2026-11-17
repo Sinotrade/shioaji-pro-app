@@ -1,4 +1,4 @@
-import { style } from '@vanilla-extract/css';
+import { globalStyle, style } from '@vanilla-extract/css';
 import { vars } from '../theme.css';
 
 export const tooltip = style({
@@ -47,4 +47,37 @@ export const empty = style({ padding: '5px 0', color: vars.color.mutedForeground
 export const pendingNote = style({
     display: 'inline-flex', alignItems: 'center', padding: '0 6px', whiteSpace: 'nowrap',
     fontSize: '0.68rem', color: vars.color.amber,
+});
+
+// ── 圖例列與設定面板（圖例列「成交」或「指標」裡的「成交標記」打開） ──
+// 圖例列的控制鈕一直顯示（指標列是滑鼠移上去才出現）：第一次用的人要看得到設定在哪
+export const legendCtrls = style({ display: 'inline-flex', gap: '1px' });
+// 點擊範圍放大到約 21×21（macOS 最小 20），負邊距讓列高不變
+globalStyle(`${legendCtrls} > button`, { padding: '5px', margin: '-4px 0' });
+export const legendName = style({ color: vars.color.foreground });
+// 彈出層（畫圖工具的 Popover）內容不換行、寬度跟內容；這裡固定寬、窄視窗縮到放得下
+export const settings = style({
+    display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: '8px', padding: '4px',
+    width: 'min(19rem, calc(100vw - 32px))', whiteSpace: 'normal',
+});
+// 分段鈕外框 overflow: hidden 會裁掉預設焦點框：一律畫在元素內側
+globalStyle(`${settings} :focus-visible`, { outline: `2px solid ${vars.color.accent}`, outlineOffset: '-2px' });
+// 樣式鈕裡的示意標籤（「買」「962」）
+export const sample = style({
+    display: 'inline-block', marginLeft: '2px', padding: '0 3px', border: '1px solid currentColor', borderRadius: '3px',
+    fontFamily: vars.font.mono, fontSize: '0.64rem', lineHeight: 1.3,
+});
+// 「買 ■」「賣 ■」的色塊
+export const chip = style({
+    display: 'inline-block', width: '10px', height: '10px', marginLeft: '4px', borderRadius: '3px', verticalAlign: '-1px',
+    border: `1px solid ${vars.color.border}`,
+});
+export const caret = style({ marginLeft: '4px', fontSize: '0.72rem', fontWeight: 400, color: vars.color.mutedForeground });
+export const picker = style({ gridColumn: '2', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' });
+export const check = style({ display: 'inline-flex', alignItems: 'center', gap: '4px', cursor: 'pointer', whiteSpace: 'nowrap' });
+// 帳戶範圍那一行：說明在左、切換在右，放不下就換行
+export const scopeLine = style({ display: 'flex', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap' });
+export const link = style({
+    padding: '2px 0', border: 'none', background: 'transparent', cursor: 'pointer',
+    font: 'inherit', color: vars.color.foreground, textDecoration: 'underline',
 });
