@@ -303,6 +303,16 @@ export const PANEL_PREVIEWS: Record<BlockType, ReactNode> = {
             <rect x='62' y='52' width='50' height='14' rx='2' fill={down} fillOpacity='0.85' />
         </Frame>
     ),
+    usorder: (
+        <Frame>
+            <rect x='8' y='8' width='26' height='9' rx='2' fill={accent} fillOpacity='0.35' />
+            {[22, 34].map((y) => (
+                <rect key={y} x='8' y={y} width='104' height='8' rx='2' fill={muted} fillOpacity='0.18' />
+            ))}
+            <rect x='8' y='52' width='50' height='14' rx='2' fill={up} fillOpacity='0.85' />
+            <rect x='62' y='52' width='50' height='14' rx='2' fill={down} fillOpacity='0.85' />
+        </Frame>
+    ),
     tape: <Frame>{rowList([up, up, down, up, down], 8, 12, 13)}</Frame>,
     flash: (
         <Frame>

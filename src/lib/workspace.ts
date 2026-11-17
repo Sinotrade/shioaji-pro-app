@@ -52,6 +52,7 @@ export type BlockType =
     | 'intradaywall'
     | 'depth'
     | 'ticket'
+    | 'usorder'
     | 'tape'
     | 'flash'
     | 'oddspread'
@@ -402,6 +403,14 @@ export const BLOCK_META: Record<
         pinnable: true,
         singleton: false,
         defaultSize: { w: 5, h: 11, minW: 4, minH: 10 },
+    },
+    usorder: {
+        label: '美股下單',
+        description: '美股複委託（H 帳戶）下單：代碼搜尋、前一日參考價、DAY／ATC',
+        category: 'trading',
+        pinnable: false,
+        singleton: false,
+        defaultSize: { w: 5, h: 13, minW: 4, minH: 10 },
     },
     tape: {
         label: '成交明細',

@@ -40,6 +40,7 @@ import {
     MarketSignalPanel,
 } from './components/market-pulse-panel';
 import { NoticeCenter } from './components/notice-center';
+import { UsOrderPanel } from './components/us-order-panel';
 import { OptPayoff } from './components/opt-payoff';
 import { OptionChain } from './components/option-chain';
 import { OrderConfirmHost } from './components/order-confirm-dialog';
@@ -89,7 +90,8 @@ import {
 } from './lib/option-pick';
 import { reportDailyPnl } from './lib/risk';
 import {
-    fetchSnapshots
+    fetchSnapshots,
+    isUsContract,
 } from './lib/shioaji';
 import { isTauri, openPopout } from './lib/tauri';
 import { notify } from './lib/trade';
@@ -278,6 +280,9 @@ function BlockBody({
 }) {
     if (contract?.security_type === 'IND' && indexBlockMessage(block.type)) {
         return <IndexBlockUnavailable type={block.type} />;
+    }
+    if (isUsContract(contract) && usBlockMessage(block.type)) {
+        return <div className={styles.blockPlaceholder}>{usBlockMessage(block.type)}</div>;
     }
     const quickOrderMessage = quickOrderBlockMessage(contract?.security_type, block.type);
     if (quickOrderMessage) {
@@ -488,6 +493,8 @@ function BlockBody({
             );
         case 'notices':
             return <NoticeCenter />;
+        case 'usorder':
+            return <UsOrderPanel />;
         case 'debug':
             return <DebugPanel />;
         case 'grid':
@@ -626,6 +633,16 @@ function IndexBlockUnavailable({ type }: { type: BlockType }) {
             {indexBlockMessage(type)}
         </div>
     );
+}
+
+// 美股（beta）沒有即時行情，也不走台股下單、grid、括號單與觸價：
+// 只留美股下單面板。美股商品不會進全域選股，這裡是防呆。
+function usBlockMessage(type: BlockType): string | null {
+    if (type === 'usorder' || type === 'dock' || type === 'watchlist' || type === 'movers' || type === 'notices' || type === 'debug') return null;
+    if (type === 'ticket' || type === 'grid' || type === 'flash' || type === 'oddspread' || type === 'conditional' || type === 'combo') {
+        return '美股請使用「美股下單」面板';
+    }
+    return '美股這個版本沒有即時行情（只有前一日參考價）';
 }
 
 // 組合商品是行情/圖表身分 — 下單類面板要導向組合單（整體 action ×

@@ -44,7 +44,13 @@ type ListState =
 let listBase = '';
 let list: ListState = { status: 'idle' };
 const listeners = new Set<() => void>();
-const emit = () => listeners.forEach(l => l());
+let version = 0;
+const emit = () => { version++; listeners.forEach(l => l()); };
+
+/** 清單或 info 快取每次變動遞增（React useSyncExternalStore 用） */
+export function usContractsVersion(): number {
+    return version;
+}
 
 export function subscribeUsContracts(listener: () => void): () => void {
     listeners.add(listener);
