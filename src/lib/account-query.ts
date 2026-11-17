@@ -19,7 +19,7 @@ export function createAccountQuery() {
     }
     function account(type: AccountTypeName, selector?: Selector): Account {
         assertMode();
-        const ref = selector ?? accountFor(type as 'S' | 'F');
+        const ref = selector ?? accountFor(type);
         const current = ref && getAccountState().accounts.find(a => a.account_type === type
             && a.broker_id === ref.broker_id && a.account_id === ref.account_id);
         if (!current || !canTrade(current)) throw new Error('查詢帳戶已不可用，已丟棄回應；請重新更新');

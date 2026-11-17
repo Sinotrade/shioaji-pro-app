@@ -19,6 +19,8 @@ interface AccountState {
     accounts: Account[];
     selectedStock: Account | null;
     selectedFutures: Account | null;
+    /** 複委託（美股）帳戶 H；H 和 S 可能共用 broker／account id */
+    selectedIntl: Account | null;
     loaded: boolean;
     loadError: boolean;
 }
@@ -27,6 +29,7 @@ let state: AccountState = {
     accounts: [],
     selectedStock: null,
     selectedFutures: null,
+    selectedIntl: null,
     loaded: false,
     loadError: false,
 };
@@ -40,7 +43,7 @@ function keyOf(a: Account) {
     return `${a.broker_id}-${a.account_id}`;
 }
 
-function loadSelection(): { stock?: string; futures?: string } {
+function loadSelection(): { stock?: string; futures?: string; intl?: string } {
     try {
         return JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}');
     } catch {
@@ -56,6 +59,7 @@ function persistSelection() {
             futures: state.selectedFutures
                 ? keyOf(state.selectedFutures)
                 : undefined,
+            intl: state.selectedIntl ? keyOf(state.selectedIntl) : undefined,
         }),
     );
 }
@@ -81,6 +85,7 @@ function apply(all: Account[]) {
     const tradable = all.filter(canTrade);
     const stocks = tradable.filter((a) => a.account_type === 'S');
     const futures = tradable.filter((a) => a.account_type === 'F');
+    const intl = tradable.filter((a) => a.account_type === 'H');
     // Keep the current usable pick; otherwise apply the saved choice, then
     // the first tradable account. This also handles late server mode info.
     const current = (picked: Account | null, pool: Account[]) =>
@@ -98,13 +103,18 @@ function apply(all: Account[]) {
             futures.find((a) => keyOf(a) === saved.futures) ??
             futures[0] ??
             null,
+        selectedIntl:
+            current(state.selectedIntl, intl) ??
+            intl.find((a) => keyOf(a) === saved.intl) ??
+            intl[0] ??
+            null,
         loaded: true,
         loadError: false,
     };
 }
 
 let simulation = knownServerInfo()?.simulation === true;
-let simulationSelection: { stock?: string; futures?: string } | undefined;
+let simulationSelection: { stock?: string; futures?: string; intl?: string } | undefined;
 const stopServerInfo = subscribeServerInfo(() => {
     const next = knownServerInfo()?.simulation === true;
     if (next === simulation) return;
@@ -112,6 +122,7 @@ const stopServerInfo = subscribeServerInfo(() => {
         simulationSelection = {
             stock: state.selectedStock ? keyOf(state.selectedStock) : undefined,
             futures: state.selectedFutures ? keyOf(state.selectedFutures) : undefined,
+            intl: state.selectedIntl ? keyOf(state.selectedIntl) : undefined,
         };
     }
     simulation = next;
@@ -122,6 +133,7 @@ const stopServerInfo = subscribeServerInfo(() => {
                 ...state,
                 selectedStock: state.accounts.find(a => a.account_type === 'S' && keyOf(a) === simulationSelection!.stock) ?? state.selectedStock,
                 selectedFutures: state.accounts.find(a => a.account_type === 'F' && keyOf(a) === simulationSelection!.futures) ?? state.selectedFutures,
+                selectedIntl: state.accounts.find(a => a.account_type === 'H' && keyOf(a) === simulationSelection!.intl) ?? state.selectedIntl,
             };
         }
         apply(state.accounts);
@@ -183,6 +195,8 @@ export function selectAccount(account: Account) {
         state = { ...state, selectedStock: account };
     } else if (account.account_type === 'F') {
         state = { ...state, selectedFutures: account };
+    } else if (account.account_type === 'H') {
+        state = { ...state, selectedIntl: account };
     }
     persistSelection();
     emit();
@@ -194,8 +208,8 @@ export function getAccountState(): AccountState {
 
 // the account to use for a contract/account type — undefined means
 // "let the server pick its default". Only returns a tradable account.
-export function accountFor(type: 'S' | 'F'): Account | undefined {
-    const acc = type === 'S' ? state.selectedStock : state.selectedFutures;
+export function accountFor(type: 'S' | 'F' | 'H'): Account | undefined {
+    const acc = type === 'S' ? state.selectedStock : type === 'F' ? state.selectedFutures : state.selectedIntl;
     return acc && canTrade(acc) ? acc : undefined;
 }
 
