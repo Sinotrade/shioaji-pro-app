@@ -191,3 +191,36 @@ it('working orders of this account show on their rows; clicking the marker cance
     await act(async () => { chip.props.onClick(); });
     expect(mocks.notify).toHaveBeenLastCalledWith(expect.objectContaining({ kind: 'err', body: expect.stringContaining('剛送出的委託稍後再刪') }));
 });
+
+it('a double click on the same price sends only one order while the first is in flight', async () => {
+    await render();
+    let resolve!: (v: unknown) => void;
+    mocks.place.mockImplementation(() => new Promise(r => { resolve = r; }));
+    await arm();
+    await act(async () => {
+        cell('187.5', 'buy').props.onClick();
+        cell('187.5', 'buy').props.onClick();
+    });
+    expect(mocks.place).toHaveBeenCalledTimes(1);
+    await act(async () => { resolve({ order: { id: 'n' }, status: { status: 'Submitted' } }); });
+    await act(async () => { cell('187.5', 'buy').props.onClick(); });
+    expect(mocks.place).toHaveBeenCalledTimes(2);
+});
+
+it('re-locks on symbol change (also after switching back) and on disconnect', async () => {
+    const msft = { ...aapl, code: 'MSFT', name: 'Microsoft', us_reference: '410', reference: 410 } as unknown as ContractInfo;
+    await render();
+    await arm();
+    expect(text(view.root)).not.toContain('啟用閃電下單');
+    await act(async () => { view.update(createElement(FlashOrder, { contract: msft } as never)); });
+    await act(async () => { view.update(createElement(FlashOrder, { contract: aapl } as never)); });
+    expect(text(view.root)).toContain('啟用閃電下單');
+    await arm();
+    mocks.live = false;
+    await act(async () => { view.update(createElement(FlashOrder, { contract: aapl } as never)); });
+    mocks.live = true;
+    await act(async () => { view.update(createElement(FlashOrder, { contract: aapl } as never)); });
+    expect(text(view.root)).toContain('啟用閃電下單');
+    await act(async () => { cell('187.5', 'buy').props.onClick(); });
+    expect(mocks.place).not.toHaveBeenCalled();
+});

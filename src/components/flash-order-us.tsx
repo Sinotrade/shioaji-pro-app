@@ -80,6 +80,9 @@ export function UsFlashOrder({ contract, linkKey = '', symbolExtra, paused }: Us
     const armed = armedFor === armKey && !paused;
     const armKeyRef = useRef(armKey);
     armKeyRef.current = armKey;
+    // 換商品、換帳戶、換連動或交易連線中斷：一律重新上鎖（之後換回來也不會自動恢復）
+    useEffect(() => { setArmedFor(null); }, [armKey]);
+    useEffect(() => { if (!live) setArmedFor(null); }, [live]);
 
     useEffect(() => {
         if (!armed) return;
@@ -181,8 +184,19 @@ export function UsFlashOrder({ contract, linkKey = '', symbolExtra, paused }: Us
         : !account ? '沒有可交易的複委託（H）帳戶'
         : !contract.exchange ? '缺少美股交易所，無法下單' : null);
 
+    // 同一價位同一方向送單中：擋連點（確認視窗關閉時雙擊會送兩筆）
+    const inflightRef = useRef(new Set<string>());
     const send = useCallback(async (action: Action, price: string) => {
         if (!armed || blockReason || !account) return;
+        const flightKey = `${action}:${price}`;
+        if (inflightRef.current.has(flightKey)) return;
+        inflightRef.current.add(flightKey);
+        try { await sendOnce(action, price); } finally { inflightRef.current.delete(flightKey); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [armed, blockReason, account, qty, contract.code, contract.name, contract.exchange]);
+
+    const sendOnce = async (action: Action, price: string) => {
+        if (!account) return;
         const startKey = armKeyRef.current;
         const sameServerMode = captureServerMode();
         const orderAccount = account;
@@ -222,7 +236,7 @@ export function UsFlashOrder({ contract, linkKey = '', symbolExtra, paused }: Us
         } catch (e) {
             notify({ kind: 'err', title: `⚡ 美股委託失敗 ${contract.code}`, body: usErrorText(e) });
         }
-    }, [armed, blockReason, account, qty, contract.code, contract.name, contract.exchange]);
+    };
 
     const cancelAt = useCallback(async (side: 'buy' | 'sell', price: string) => {
         const w = working.get(price);
