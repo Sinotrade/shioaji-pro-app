@@ -26,7 +26,7 @@ interface ChipsData {
     errors: string[];
 }
 
-async function fetchChips(contract: ContractInfo): Promise<ChipsData> {
+export async function fetchChips(contract: ContractInfo): Promise<ChipsData> {
     const key = {
         security_type: contract.security_type,
         exchange: contract.exchange,
@@ -41,14 +41,16 @@ async function fetchChips(contract: ContractInfo): Promise<ChipsData> {
         }),
         apiGet<{ code: string[] }>('/api/v1/data/regulatory_punish'),
     ]);
+    // 處置清單格式不對（沒有 code 陣列）當成查詢失敗，不讓整張卡丟例外
+    const punishCodes = punish.status === 'fulfilled' && Array.isArray(punish.value?.code) ? punish.value.code : null;
     return {
-        errors: [credit.status === 'rejected' ? '融資券查詢失敗' : '', short.status === 'rejected' ? '券源查詢失敗' : '', punish.status === 'rejected' ? '處置查詢失敗' : ''].filter(Boolean),
+        errors: [credit.status === 'rejected' ? '融資券查詢失敗' : '', short.status === 'rejected' ? '券源查詢失敗' : '', punishCodes === null ? '處置查詢失敗' : ''].filter(Boolean),
         credit:
             credit.status === 'fulfilled' ? credit.value[0] : undefined,
         shortSource:
             short.status === 'fulfilled' ? short.value[0] : undefined,
         punished:
-            punish.status === 'fulfilled' ? punish.value.code.includes(contract.code) : null,
+            punishCodes ? punishCodes.includes(contract.code) : null,
     };
 }
 
