@@ -7,14 +7,17 @@ const m = vi.hoisted(() => ({
     marks: [] as [string, string | undefined][], child: false, autoOwn: true,
     forget: vi.fn(),
     claim: null as null | (() => void), release: null as null | (() => void),
+    wants: new Map<string, boolean>(),
+    remote: null as null | ((keys: ReadonlySet<string>) => void),
 }));
 vi.mock('./shared-stream', () => ({
-    createSharedStream: (options: { onOwn: () => void; onRelease: () => void }) => {
+    createSharedStream: (options: { onOwn: () => void; onRelease: () => void; onRemoteWants?: (keys: ReadonlySet<string>) => void }) => {
         let owner = false;
+        m.remote = (keys) => options.onRemoteWants?.(keys);
         m.claim = () => { owner = true; options.onOwn(); };
         m.release = () => { owner = false; options.onRelease(); };
         if (m.autoOwn) m.claim();
-        return { isOwner: () => owner, publish: vi.fn() };
+        return { isOwner: () => owner, publish: vi.fn(), want: (key: string, on: boolean) => { m.wants.set(key, on); } };
     },
 }));
 vi.mock('./runtime', () => ({ getApiBase: () => 'http://fixture.invalid', getStreamBase: () => 'http://fixture.invalid' }));
@@ -46,6 +49,8 @@ beforeEach(() => {
     m.autoOwn = true;
     m.claim = null;
     m.release = null;
+    m.wants.clear();
+    m.remote = null;
     vi.stubGlobal('EventSource', FakeEventSource);
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false })));
 });
@@ -88,4 +93,45 @@ it('taking ownership without US holds opens no US SSE', async () => {
     stream.ensureStream();
     m.claim!();
     expect(usSources()).toHaveLength(0);
+});
+
+it('owner opens US SSEs for a popout-only US hold and closes them when the popout goes away', async () => {
+    const stream = await import('./stream');
+    stream.ensureStream();
+    expect(usSources()).toHaveLength(0);
+    // 主視窗自己沒有美股訂閱；只有彈出視窗有
+    m.remote!(new Set(['us-quotes']));
+    expect(openUs()).toHaveLength(2);
+    m.remote!(new Set());
+    expect(openUs()).toHaveLength(0);
+});
+
+it('a local release keeps the US SSEs open while a popout still wants them', async () => {
+    const stream = await import('./stream');
+    stream.ensureStream();
+    const release = stream.retainUsQuoteStreams();
+    m.remote!(new Set(['us-quotes']));
+    release();
+    expect(openUs()).toHaveLength(2);
+    m.remote!(new Set());
+    expect(openUs()).toHaveLength(0);
+});
+
+it('a follower announces its US hold to the owner and withdraws it on release', async () => {
+    m.autoOwn = false;
+    const stream = await import('./stream');
+    stream.ensureStream();
+    const release = stream.retainUsQuoteStreams();
+    expect(m.wants.get('us-quotes')).toBe(true);
+    release();
+    expect(m.wants.get('us-quotes')).toBe(false);
+});
+
+it('a hold taken before the shared stream exists is announced once it is created', async () => {
+    m.autoOwn = false;
+    const stream = await import('./stream');
+    stream.retainUsQuoteStreams();
+    expect(m.wants.size).toBe(0);
+    stream.ensureStream();
+    expect(m.wants.get('us-quotes')).toBe(true);
 });

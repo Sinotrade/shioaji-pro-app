@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { createSharedStream } from './shared-stream';
+import { createSharedStream, REMOTE_WANT_TTL_MS } from './shared-stream';
 
 class Channel {
     static all = new Set<Channel>();
@@ -36,9 +36,11 @@ const make = (main: boolean) => {
     const own = vi.fn();
     const release = vi.fn();
     const wire = vi.fn();
-    const stream = createSharedStream({ name: 'fixture', main, onOwn: own, onRelease: release, onWire: wire, onMissing: vi.fn(), snapshot: () => ({ kind: 'status', status: 'live', heartbeat: 1 }) });
-    return { stream, own, release, wire };
+    const remote = vi.fn<(keys: ReadonlySet<string>) => void>();
+    const stream = createSharedStream({ name: 'fixture', main, onOwn: own, onRelease: release, onWire: wire, onMissing: vi.fn(), onRemoteWants: remote, snapshot: () => ({ kind: 'status', status: 'live', heartbeat: 1 }) });
+    return { stream, own, release, wire, remote };
 };
+const lastWants = (w: { remote: { mock: { calls: [ReadonlySet<string>][] } } }) => [...(w.remote.mock.calls.at(-1)?.[0] ?? [])];
 
 it('keeps one owner across nine windows and transfers within seconds on close', async () => {
     const main = make(true);
@@ -76,4 +78,48 @@ it('does not open a browser SSE when cross-window coordination is unavailable', 
     expect(child.own).not.toHaveBeenCalled();
     expect(child.stream.isOwner()).toBe(false);
     child.stream.close();
+});
+
+it('routes a popout-only want to the owner, and drops it when the popout closes', async () => {
+    const main = make(true);
+    const child = make(false);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(main.stream.isOwner()).toBe(true);
+    child.stream.want('us-quotes', true);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(lastWants(main)).toEqual(['us-quotes']);
+    child.stream.close();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(lastWants(main)).toEqual([]);
+    main.stream.close();
+});
+
+it('expires a want from a popout that vanished without saying goodbye', async () => {
+    const main = make(true);
+    make(false).stream.want('us-quotes', true);
+    const childChannel = [...Channel.all][1]!;
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(lastWants(main)).toEqual(['us-quotes']);
+    // 模擬崩潰：這個視窗不再送任何訊息（也沒有撤回）
+    childChannel.postMessage = () => undefined;
+    await vi.advanceTimersByTimeAsync(REMOTE_WANT_TTL_MS - 1000);
+    expect(lastWants(main)).toEqual(['us-quotes']);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(lastWants(main)).toEqual([]);
+    main.stream.close();
+});
+
+it('a new owner learns existing popout wants after a handover', async () => {
+    const main = make(true);
+    const a = make(false);
+    const b = make(false);
+    await vi.advanceTimersByTimeAsync(1000);
+    a.stream.want('us-quotes', true);
+    b.stream.want('us-quotes', true);
+    main.stream.close();
+    await vi.advanceTimersByTimeAsync(2500);
+    const owner = [a, b].find(w => w.stream.isOwner())!;
+    // 新擁有者自己的訂閱由本地 refs 處理；另一個彈出視窗的需要要轉告到它
+    expect(lastWants(owner)).toEqual(['us-quotes']);
+    a.stream.close(); b.stream.close();
 });

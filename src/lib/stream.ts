@@ -200,11 +200,15 @@ function handleUsBidAsk(raw: string) {
 // 美股行情走獨立 SSE（/stream/data/us_tick、/us_bidask），只在有美股訂閱時
 // 由串流擁有者開啟；收到的事件照樣轉給彈出視窗（shared publish）。
 let usStreamRefs = 0;
+/** 其他（非擁有者）視窗有美股訂閱：擁有者要替它們開美股 SSE 並轉送事件 */
+let remoteUsWanted = false;
+const US_WANT_KEY = 'us-quotes';
+const usWanted = () => usStreamRefs > 0 || remoteUsWanted;
 const usSources = new Map<string, EventSource>();
 let usReopenTimer: ReturnType<typeof setTimeout> | null = null;
 
 function openUsStreams() {
-    if (usStreamRefs <= 0 || typeof EventSource === 'undefined') return;
+    if (!usWanted() || typeof EventSource === 'undefined') return;
     if (shared && !shared.isOwner()) return;
     if (serverUrlBlocked(getStreamBase()) !== null) { scheduleUsReopen(); return; }
     for (const [name, path] of Object.entries(US_STREAM_PATHS)) {
@@ -225,13 +229,14 @@ function openUsStreams() {
 }
 
 function scheduleUsReopen() {
-    if (usReopenTimer || usStreamRefs <= 0) return;
+    if (usReopenTimer || !usWanted()) return;
     usReopenTimer = setTimeout(() => { usReopenTimer = null; openUsStreams(); }, 3000);
 }
 
 /** 有美股行情訂閱時保持美股 SSE 開著；回傳釋放函式 */
 export function retainUsQuoteStreams(): () => void {
     usStreamRefs++;
+    if (usStreamRefs === 1) shared?.want(US_WANT_KEY, true);
     openUsStreams();
     let released = false;
     return () => {
@@ -239,7 +244,8 @@ export function retainUsQuoteStreams(): () => void {
         released = true;
         usStreamRefs--;
         if (usStreamRefs > 0) return;
-        closeUsStreams();
+        shared?.want(US_WANT_KEY, false);
+        if (!remoteUsWanted) closeUsStreams();
     };
 }
 
@@ -924,6 +930,7 @@ export function ensureStream() {
                 es?.close();
                 es = null;
                 // 交出擁有權：美股 SSE 跟著關，由新的擁有者開
+                remoteUsWanted = false;
                 closeUsStreams();
                 if (retryTimer) clearTimeout(retryTimer);
                 retryTimer = null;
@@ -931,8 +938,14 @@ export function ensureStream() {
             },
             onWire: dispatchWire,
             onMissing: () => { if (status === 'live') setStatus('down'); },
+            onRemoteWants: (keys) => {
+                remoteUsWanted = keys.has(US_WANT_KEY);
+                if (usWanted()) openUsStreams(); else closeUsStreams();
+            },
             snapshot: () => ({ kind: 'status', status, heartbeat: lastHeartbeat }),
         });
+        // 串流建立前就有的美股訂閱：同樣告訴擁有者
+        if (usStreamRefs > 0) shared.want(US_WANT_KEY, true);
         lastCheckAt = Date.now();
         watchdogTimer = setInterval(checkWatchdog, WATCHDOG_TICK_MS);
         setInterval(watchMaintenance, 60000);
