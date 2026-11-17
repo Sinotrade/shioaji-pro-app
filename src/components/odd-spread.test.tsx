@@ -15,7 +15,9 @@ const mocks = vi.hoisted(() => ({
     addLock: vi.fn((..._a: unknown[]) => 'lk-1'), updateLock: vi.fn(), clearLock: vi.fn(),
     accept: vi.fn((..._a: unknown[]) => true), env: { base: 'http://127.0.0.1:21322', simulation: true as boolean | undefined }, envOk: { value: true },
     risk: { confirmManualOrders: false },
+    locked: { value: false },
 }));
+vi.mock('../lib/app-lock', () => ({ isAppAccessBlocked: () => mocks.locked.value, APP_LOCKED_MESSAGE: '應用程式已鎖定，這筆沒有送出' }));
 vi.mock('../lib/account-store', () => ({ ensureAccounts: () => undefined, useAccounts: () => ({ loaded: true, accounts: [], selectedStock: undefined }) }));
 vi.mock('../hooks/use-stream', () => ({ useTradingLive: () => true, useQuote: () => undefined }));
 vi.mock('../hooks/use-display-book', () => ({ useDisplayBook: () => ({ quote: undefined, snapshot: undefined, book: undefined }) }));
@@ -81,6 +83,7 @@ beforeEach(() => {
     vi.clearAllMocks();
     mocks.risk.confirmManualOrders = false;
     mocks.envOk.value = true;
+    mocks.locked.value = false;
     mocks.env = { base: 'http://127.0.0.1:21322', simulation: true };
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     vi.stubGlobal('localStorage', { getItem: () => JSON.stringify({ discount: 0.6, taxRate: null }), setItem: vi.fn() });
@@ -581,6 +584,25 @@ it('點價拆單整批固定環境：每一筆送出前檢查，切換後不送'
     for (const h of hooks) expect(() => h()).not.toThrow();
     mocks.envOk.value = false;
     for (const h of hooks) expect(() => h()).toThrow('環境已切換');
+});
+
+it('零股拆單確認後被應用程式鎖住：每一筆送出前都擋下（拆單是 source:auto，trade.ts 不查鎖）', async () => {
+    mocks.risk.confirmManualOrders = true;
+    mocks.confirm.mockImplementation(async () => { mocks.locked.value = true; return true; });
+    const sent = vi.fn();
+    // 真的 placeQuickOrder 在送出前最後一刻呼叫 beforeSend
+    mocks.place.mockImplementation(async (...args: unknown[]) => {
+        (args[4] as { beforeSend: () => void }).beforeSend();
+        sent();
+        return { order: { id: 'X' }, status: { status: 'Submitted' } };
+    });
+    await render();
+    await act(async () => { button('啟用點價').props.onClick(); });
+    const cell = view.root.findAll(n => n.type === 'span' && String(n.props.title ?? '').startsWith('零股限價買'))[0]!;
+    await act(async () => { cell.props.onClick(); });
+    expect(mocks.confirm).toHaveBeenCalledOnce();
+    expect(mocks.place).toHaveBeenCalled();
+    expect(sent).not.toHaveBeenCalled();
 });
 
 it('補單確認：以確認當下的數量與價格送；缺口已變則不送並請重新確認', async () => {

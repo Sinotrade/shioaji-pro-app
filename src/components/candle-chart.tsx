@@ -97,6 +97,7 @@ import { setHoverPickedPrice, setPickedPrice } from '../lib/price-sync';
 import { cancelOrder, updateOrderPrice } from '../lib/shioaji';
 import { canUpdateOrderPrice } from '../lib/odd-lot';
 import { resetEscCancelArm } from '../lib/esc-cancel-arm';
+import { isAppAccessBlocked } from '../lib/app-lock';
 import { baseMode, getChartColors, useThemeSettings, themeKey as themeKeyOf } from '../lib/theme-store';
 import {
     bandColors,
@@ -1710,8 +1711,10 @@ export function CandleChart({
             return true;
         };
         cancelOrderDragRef.current = cancel;
+        // 拖到一半被 App Lock 鎖住也算失效：還原原價，放開不改價
         const current = (d: NonNullable<typeof dragging>) => dragging === d && d.sequence === sequence &&
-            d.drawingSequence === drawingsRef.current?.interactionSequence() && d.context === orderDragContextRef.current;
+            d.drawingSequence === drawingsRef.current?.interactionSequence() && d.context === orderDragContextRef.current &&
+            !isAppAccessBlocked();
         const escape = (e: KeyboardEvent) => {
             if (e.key !== 'Escape' || !dragging) return;
             drawingsRef.current?.onInteraction();

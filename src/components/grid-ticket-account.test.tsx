@@ -8,7 +8,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { Account } from '../lib/types/portfolio';
 import type { Trade } from '../lib/types/order';
 import type { ContractInfo } from '../lib/types/contract';
-const m = vi.hoisted(() => ({ selected: 'A', dropped: false, confirm: vi.fn(), future: vi.fn(), cancel: vi.fn(), notify: vi.fn(), blocked: null as string | null, confirmOn: true }));
+const m = vi.hoisted(() => ({ selected: 'A', dropped: false, confirm: vi.fn(), future: vi.fn(), cancel: vi.fn(), notify: vi.fn(), blocked: null as string | null, confirmOn: true, locked: false }));
 const h = vi.hoisted(() => ({ accounts: ['A', 'B'].map(id => ({ account_type: 'F', broker_id: 'BR', account_id: id, signed: true, person_id: '', username: '' })) }));
 const accounts = h.accounts as Account[];
 vi.mock('../lib/account-store', () => ({ getAccountState: () => ({ accounts: m.dropped ? h.accounts.filter(a => a.account_id !== 'A') : h.accounts, selectedStock: null, selectedFutures: h.accounts.find(a => a.account_id === m.selected) ?? null, loaded: true }), useAccounts: () => ({}) }));
@@ -16,6 +16,7 @@ vi.mock('../lib/order-confirm', () => ({ requestOrderConfirm: m.confirm, account
 vi.mock('../lib/risk', () => ({ checkOrderAllowed: () => m.blocked, getRiskSettings: () => ({ confirmManualOrders: m.confirmOn }) }));
 vi.mock('../lib/shioaji', () => ({ cancelOrder: m.cancel, cancelOrders: vi.fn(), placeFuturesOrder: m.future, placeStockOrder: vi.fn() }));
 vi.mock('../lib/trade', () => ({ notify: m.notify, isFuturesContract: () => true }));
+vi.mock('../lib/app-lock', () => ({ isAppAccessBlocked: () => m.locked, APP_LOCKED_MESSAGE: '應用程式已鎖定，這筆沒有送出' }));
 vi.mock('../lib/stream', () => ({ getAliasFor: () => undefined }));
 vi.mock('../hooks/use-stream', () => ({ useQuote: () => ({ tick: { close: '100' } }), useTradingLive: () => true }));
 vi.mock('../lib/utils/ticksize', () => ({ stepPrice: (_c: unknown, p: number, step: number) => p + step }));
@@ -34,7 +35,7 @@ beforeEach(() => {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     forgetServerInfo('');
     h.accounts.forEach(a => { a.signed = true; });
-    m.selected = 'A'; m.dropped = false; m.blocked = null; m.confirmOn = true;
+    m.selected = 'A'; m.dropped = false; m.blocked = null; m.confirmOn = true; m.locked = false;
     m.confirm.mockResolvedValue(true);
     m.future.mockResolvedValue({});
     m.cancel.mockResolvedValue({});
@@ -63,6 +64,19 @@ it.each([true, false, undefined])('grid accepts an unsigned account only when si
         expect(m.future.mock.calls.every(c => c[2] === accounts[0])).toBe(true);
         expect(accounts[0]!.signed).toBe(false);
     } else expect(m.future).not.toHaveBeenCalled();
+});
+
+it('手動鋪單確認後被應用程式鎖住：一筆都不送；送出一筆後才鎖住，剩下的不送', async () => {
+    m.confirm.mockImplementation(async () => { m.locked = true; return true; });
+    await render();
+    await act(async () => { await btn('鋪 ').props.onClick(); });
+    expect(m.confirm).toHaveBeenCalledOnce();
+    expect(m.future).not.toHaveBeenCalled();
+    m.locked = false;
+    m.confirm.mockResolvedValue(true);
+    m.future.mockImplementationOnce(async () => { m.locked = true; return {}; });
+    await act(async () => { await btn('鋪 ').props.onClick(); });
+    expect(m.future).toHaveBeenCalledOnce();
 });
 
 it('lay-out aborts when the selection changes during confirmation', async () => {

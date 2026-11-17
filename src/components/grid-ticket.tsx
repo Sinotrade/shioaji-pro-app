@@ -12,6 +12,7 @@ import { RefreshCw, Zap } from 'lucide-react';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useQuote, useTradingLive } from '../hooks/use-stream';
 import { ORDER_CONTEXT_CHANGED_MESSAGE, useOrderContext } from '../hooks/use-order-context';
+import { APP_LOCKED_MESSAGE, isAppAccessBlocked } from '../lib/app-lock';
 import { accountConfirmLabel, requestOrderConfirm } from '../lib/order-confirm';
 import {
     ACCOUNT_CHANGED_MESSAGE,
@@ -271,6 +272,8 @@ export function GridTicket({
         // 整批一次確認：每一筆送出前都比對確認時的伺服器與模式，變了就停止後續
         const serverMode = captureServerMode();
         const batch = { qtyPer, odd, side, contract, serverMode, beforeDispatch: () => {
+            // 手動鋪單確認後才鎖住：剩下的不送（動態跟隨是自動的，不擋）
+            if (isAppAccessBlocked()) throw Object.assign(new Error(APP_LOCKED_MESSAGE), { tradingGateRejected: true });
             if (!isContextCurrent()) throw Object.assign(new Error(ORDER_CONTEXT_CHANGED_MESSAGE), { tradingGateRejected: true });
             if (!serverMode()) throw Object.assign(new Error(`${SERVER_MODE_CHANGED_MESSAGE}；已停止後續鋪單`), { tradingGateRejected: true });
         } };

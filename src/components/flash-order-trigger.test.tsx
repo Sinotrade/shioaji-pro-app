@@ -12,7 +12,7 @@ import type { ContractInfo } from '../lib/types/contract';
 import type { LadderMark } from '../lib/flash-trigger';
 import type { FlashOrderOpts } from '../lib/flash-account';
 
-const m = vi.hoisted(() => ({ readClose: vi.fn(), watch: vi.fn(), readHeld: vi.fn(), restoreProt: vi.fn(), stop: vi.fn(), cancel: vi.fn(), place: vi.fn(), notify: vi.fn(), add: vi.fn(), modify: vi.fn(), remove: vi.fn(), bracket: vi.fn(),
+const m = vi.hoisted(() => ({ appLocked: false, readClose: vi.fn(), watch: vi.fn(), readHeld: vi.fn(), restoreProt: vi.fn(), stop: vi.fn(), cancel: vi.fn(), place: vi.fn(), notify: vi.fn(), add: vi.fn(), modify: vi.fn(), remove: vi.fn(), bracket: vi.fn(),
     marks: new Map<string, { buy: LadderMark[]; sell: LadderMark[] }>(), background: false, protectedQty: 0 }));
 const accounts: Account[] = [{ account_type: 'F', broker_id: 'BR', account_id: 'F5678', signed: true, person_id: '', username: '' }];
 vi.mock('../lib/account-store', () => ({ ensureAccounts: () => undefined, useAccounts: () => ({ loaded: true, accounts, selectedStock: undefined, selectedFutures: accounts[0] }) }));
@@ -23,6 +23,7 @@ vi.mock('../lib/flash-conditional', () => ({ flashAddTrigger: m.add, flashModify
     flashReadHeld: m.readHeld, flashRestoreProtection: m.restoreProt, flashReadClose: m.readClose, flashLastPrice: async () => 100, flashEnvIs: async () => true }));
 vi.mock('../lib/flash-flatten-restore', async orig => ({ ...(await orig<typeof import('../lib/flash-flatten-restore')>()), restoreAfterUnfilledClose: m.watch }));
 vi.mock('../lib/shioaji', () => ({ cancelOrders: m.cancel }));
+vi.mock('../lib/app-lock', async orig => ({ ...(await orig<typeof import('../lib/app-lock')>()), isAppAccessBlocked: () => m.appLocked }));
 vi.mock('../lib/trade', () => ({ notify: m.notify, placeQuickOrder: m.place, placeStockExitByShares: vi.fn() }));
 vi.mock('../lib/stream', () => ({ getAliasFor: () => undefined }));
 vi.mock('../lib/tick-bands', () => ({ useTickBandsVersion: () => 0 }));
@@ -162,6 +163,13 @@ it('a pending trigger on the ladder: click deletes it, drag moves it, never acro
     expect(m.add).not.toHaveBeenCalled();
     // drag needs the ladder armed
     await arm(r);
+    // App Lock locks mid-drag: releasing moves nothing (the very same move goes out below once unlocked)
+    await act(async () => { chip().props.onPointerDown(ev(5 * 22 + 5)); });
+    await act(async () => { fire('pointermove', ev(2 * 22 + 5)); });
+    m.appLocked = true;
+    await act(async () => { fire('pointerup', ev(2 * 22 + 5)); });
+    m.appLocked = false;
+    expect(m.modify).not.toHaveBeenCalled();
     await act(async () => { chip().props.onPointerDown(ev(5 * 22 + 5)); });
     await act(async () => { fire('pointermove', ev(2 * 22 + 5)); });
     await act(async () => { fire('pointerup', ev(2 * 22 + 5)); }); // row 2 = 108

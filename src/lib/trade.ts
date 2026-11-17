@@ -13,6 +13,7 @@ import { accountConfirmLabel, requestOrderConfirm } from './order-confirm';
 import { creditLabel, isOddLot, lotLabel, ODD_LOT_TEXT, orderQtyUnit, stockOrderProblem, type CreditLabel } from './odd-lot';
 import { futuresOrderProblem, quickOrderNote } from './order-conditions';
 import { checkOrderAllowed, getRiskSettings } from './risk';
+import { APP_LOCKED_MESSAGE, isAppAccessBlocked } from './app-lock';
 import {
     cancelOrders,
     fetchTrades,
@@ -296,6 +297,8 @@ export async function placeQuickOrder(
     if (!opts?.bypassRisk) { const blocked = checkOrderAllowed(quantity, odd ? opts?.orderLot : undefined); if (blocked) throw mutationNotStartedError(blocked); }
     const beforeDispatch = () => {
         if (!sameServerMode()) throw mutationNotStartedError(SERVER_MODE_CHANGED_MESSAGE);
+        // 按下確認後、送出前被應用程式鎖鎖住：手動單不送（自動的停損停利、觸價照送）
+        if ((opts?.source ?? 'manual') === 'manual' && isAppAccessBlocked()) throw mutationNotStartedError(APP_LOCKED_MESSAGE);
         try {
             opts?.beforeSend?.();
         } catch (e) {
@@ -415,6 +418,8 @@ export async function placeStockExitByShares(
     );
     assertTradingLive();
     if (getApiBase() !== base) throw mutationNotStartedError('確認期間伺服器已切換');
+    // 內層兩腳是 source:'auto'，手動的鎖定檢查在這裡
+    if (isAppAccessBlocked()) throw mutationNotStartedError(APP_LOCKED_MESSAGE);
     if (!serverMode()) throw mutationNotStartedError(SERVER_MODE_CHANGED_MESSAGE);
     if (opts?.isAccountCurrent && !opts.isAccountCurrent()) throw mutationNotStartedError('確認期間帳戶已變更，請重新確認');
     const out: Trade[] = [];

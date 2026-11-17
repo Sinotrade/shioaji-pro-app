@@ -32,6 +32,7 @@ import {
     selectAccount,
     useAccounts,
 } from '../lib/account-store';
+import { APP_LOCKED_MESSAGE, isAppAccessBlocked } from '../lib/app-lock';
 import { accountConfirmLabel, requestOrderConfirm } from '../lib/order-confirm';
 import {
     ACCOUNT_CHANGED_MESSAGE,
@@ -379,6 +380,8 @@ export function OrderTicket({
             // the entry under this time's trading session
             let entrySentAt = 0;
             const dispatch = { beforeDispatch: () => {
+                // 確認後、送出前被應用程式鎖鎖住（下方還會等 backgroundOwnerForNew）
+                if (isAppAccessBlocked()) throw Object.assign(new Error(APP_LOCKED_MESSAGE), { tradingGateRejected: true });
                 if (!isContextCurrent()) throw Object.assign(new Error(ORDER_CONTEXT_CHANGED_MESSAGE), { tradingGateRejected: true });
                 if (!sameServerMode()) throw Object.assign(new Error(SERVER_MODE_CHANGED_MESSAGE), { tradingGateRejected: true });
                 assertDayTradeStillAllowed();
@@ -599,6 +602,7 @@ export function OrderTicket({
         const isContextCurrent = captureContext();
         const sameServerMode = captureServerMode();
         const beforeDispatch = () => {
+            if (isAppAccessBlocked()) throw Object.assign(new Error(APP_LOCKED_MESSAGE), { tradingGateRejected: true });
             if (!isContextCurrent()) throw Object.assign(new Error(ORDER_CONTEXT_CHANGED_MESSAGE), { tradingGateRejected: true });
             if (!sameServerMode()) throw Object.assign(new Error(SERVER_MODE_CHANGED_MESSAGE), { tradingGateRejected: true });
             assertDayTradeStillAllowed();

@@ -1,5 +1,5 @@
 // src/lib/header-items.ts — 頂欄項目自訂：哪些 header 項目要顯示。
-// 可開關項＝行情列各 chip、銀行水位、LIVE、時鐘、全開、版面。
+// 可開關項＝行情列各 chip、銀行水位、LIVE、時鐘、全開、版面、螢幕鎖。
 // 固定不可關（不在此列）＝logo、模擬/正式徽章、伺服器、風控、
 // ＋新增面板、設定。Persisted（缺省全開）。
 
@@ -14,6 +14,7 @@ export type HeaderItemKey =
     | 'liveStatus'
     | 'layoutLibrary'
     | 'flashAll'
+    | 'screenLock'
     | 'clock';
 
 export const HEADER_ITEMS: { key: HeaderItemKey; label: string }[] = [
@@ -23,6 +24,7 @@ export const HEADER_ITEMS: { key: HeaderItemKey; label: string }[] = [
     { key: 'liveStatus', label: 'LIVE 連線狀態' },
     { key: 'layoutLibrary', label: '版面（版面庫）' },
     { key: 'flashAll', label: '全開（閃電下單）' },
+    { key: 'screenLock', label: '螢幕鎖（應用程式鎖啟用時）' },
     { key: 'clock', label: '時鐘' },
 ];
 
@@ -35,6 +37,7 @@ const DEFAULTS: HeaderItemsState = {
     liveStatus: true,
     layoutLibrary: true,
     flashAll: true,
+    screenLock: true,
     clock: true,
 };
 

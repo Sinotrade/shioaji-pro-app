@@ -6,7 +6,7 @@ import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'rea
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { Account } from '../lib/types/portfolio';
 import type { ContractInfo } from '../lib/types/contract';
-const m = vi.hoisted(() => ({ selected: 'A', confirm: vi.fn(), future: vi.fn(), stock: vi.fn(), confirmOn: true, dropped: false }));
+const m = vi.hoisted(() => ({ selected: 'A', confirm: vi.fn(), future: vi.fn(), stock: vi.fn(), confirmOn: true, dropped: false, locked: false }));
 const h = vi.hoisted(() => {
     const accounts = ['A', 'B'].map(id => ({ account_type: 'F', broker_id: 'BR', account_id: `99887766${id}`, signed: true, person_id: '', username: '' }));
     return { accounts };
@@ -20,6 +20,7 @@ vi.mock('../lib/order-confirm', () => ({ requestOrderConfirm: m.confirm, account
 vi.mock('../lib/risk', () => ({ checkOrderAllowed: () => null, getRiskSettings: () => ({ confirmManualOrders: m.confirmOn }) }));
 vi.mock('../lib/shioaji', () => ({ fetchInfo: () => new Promise(() => undefined), placeFuturesOrder: m.future, placeStockOrder: m.stock }));
 vi.mock('../lib/trade', () => ({ notify: vi.fn() }));
+vi.mock('../lib/app-lock', () => ({ isAppAccessBlocked: () => m.locked, APP_LOCKED_MESSAGE: '應用程式已鎖定，這筆沒有送出' }));
 vi.mock('../lib/bracket', () => ({ ensureBracketHost: vi.fn(), registerBracket: vi.fn(), registrationFailureText: String, validateBracketRequest: () => null }));
 vi.mock('./bracket-status', () => ({ BracketStatusList: () => null }));
 vi.mock('../lib/protection-env', () => ({ currentProtectionEnv: () => 'sim' }));
@@ -40,7 +41,7 @@ beforeEach(() => {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn() });
     vi.stubGlobal('document', { addEventListener: vi.fn(), removeEventListener: vi.fn() });
-    m.selected = 'A'; m.confirmOn = true; m.dropped = false;
+    m.selected = 'A'; m.confirmOn = true; m.dropped = false; m.locked = false;
     forgetServerInfo('');
     h.accounts.forEach(a => { a.signed = true; });
     m.confirm.mockResolvedValue(true);
@@ -152,6 +153,38 @@ it.each(['confirmation', 'first order', 'dispatch', 'unmount', 'switch back'])(
         expect(dispatched).toHaveBeenCalledTimes(phase === 'confirmation' || phase === 'dispatch' ? 0 : 1);
     },
 );
+
+it('確認後、送出前被應用程式鎖住：不送', async () => {
+    m.confirm.mockImplementation(async () => { m.locked = true; return true; });
+    await armAndSend();
+    expect(m.confirm).toHaveBeenCalledOnce();
+    expect(m.future).not.toHaveBeenCalled();
+    expect(feedback()).toContain('應用程式已鎖定');
+});
+
+it('分倉：確認後被鎖住一戶都不送；送出第一戶後才被鎖住，後面的帳戶不送', async () => {
+    const sent = vi.fn();
+    m.future.mockImplementation(async (_c, _o, account, opts) => {
+        opts.beforeDispatch(); // 真的送單層在送出前最後一刻呼叫
+        sent(account);
+        m.locked = true;
+        return { status: { status: 'Submitted' }, order: { id: 'o1', seqno: '1' } };
+    });
+    await act(async () => { view = create(createElement(OrderTicket, { contract, onPlaced: vi.fn() })); });
+    const button = (label: string) => view.root.findAllByType('button').find(b => text(b).includes(label))!;
+    await act(async () => { button('多帳戶分倉').props.onClick(); });
+    await act(async () => { await button('分倉買進').props.onClick(); });
+    await act(async () => { await button('確認分倉').props.onClick(); });
+    expect(sent.mock.calls).toEqual([[accounts[0]]]);
+    expect(feedback()).toContain('應用程式已鎖定');
+    sent.mockClear();
+    m.locked = false;
+    m.confirm.mockImplementation(async () => { m.locked = true; return true; });
+    await act(async () => { await button('分倉買進').props.onClick(); });
+    await act(async () => { await button('確認分倉').props.onClick(); });
+    expect(m.confirm).toHaveBeenCalledTimes(2);
+    expect(sent).not.toHaveBeenCalled();
+});
 
 it('does not send when the server mode changes while the confirmation is open (sim sidecar restarted as production)', async () => {
     observeServerInfo(beginServerInfoRequest(), { simulation: true } as never);
