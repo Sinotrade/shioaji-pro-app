@@ -2,6 +2,7 @@
 // Pick a list, add symbols (type auto-detected), hover a row to remove,
 // drag rows to reorder (persisted to the server).
 
+import { usHaltLabel, useUsHalt } from '../lib/us/us-halts';
 import {
     ArrowDown,
     ArrowDownUp,
@@ -130,6 +131,7 @@ const WatchRow = memo(function WatchRow({
     // 連動 key：台股裸代碼、美股 `US:CODE`（美股 T 不會和任何台股代碼撞名）
     const rowKey = contractLinkKey(item.contract);
     const us = isUs(item.contract);
+    const halt = useUsHalt(us ? item.contract : null);
     const quote = useQuote(rowKey);
     const tick = quote?.tick;
     const index = quote?.index;
@@ -246,6 +248,11 @@ const WatchRow = memo(function WatchRow({
                 {us && (
                     <span className={styles.usBadge} title='美股，以美元報價'>
                         美股
+                    </span>
+                )}
+                {halt && (
+                    <span className={styles.usHalt} title={usHaltLabel(halt)}>
+                        停牌
                     </span>
                 )}
             </span>

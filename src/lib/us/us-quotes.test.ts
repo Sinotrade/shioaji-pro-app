@@ -20,7 +20,7 @@ describe('US quote adapter', () => {
         expect(b).toMatchObject({ code: 'US:T', bid_price: ['25.01'], bid_volume: [300], ask_price: ['25.02'], ask_volume: [200] });
     });
     it('builds the flat subscribe body with the real exchange', () => {
-        expect(usSubscriptionBody({ code: 'aapl', exchange: 'NASDAQ' }, 'Tick')).toEqual({ security_type: 'STK', region: 'US', exchange: 'NASDAQ', code: 'AAPL', target_code: null, quote_type: 'Tick', intraday_odd: false });
+        expect(usSubscriptionBody({ code: 'aapl', exchange: 'NASDAQ' }, 'Tick')).toEqual({ security_type: 'STK', exchange: 'NASDAQ', code: 'AAPL', quote_type: 'Tick' });
     });
     it('keeps only the current session for the intraday line', () => {
         const meta = (session: 'PreMarket' | 'Regular', s: number) => ({ key: 'US:AAPL', price: '1', session, freshness: null, ts: T / 1000 + s * 1000, volume: 1 });

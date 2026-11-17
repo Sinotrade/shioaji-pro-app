@@ -482,3 +482,8 @@ export const limitSolid = styleVariants({
 });
 globalStyle(`${limitSolidBase} span`, { color: '#fff' });
 globalStyle(`${limitSolidBase} ${name}`, { color: 'rgba(255, 255, 255, 0.85)' });
+
+export const usHalt = style([usBadge, {
+    color: vars.color.danger,
+    borderColor: vars.color.danger,
+}]);

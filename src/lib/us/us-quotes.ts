@@ -5,15 +5,15 @@
 // session、freshness；UsBidAsk：只有最佳一檔。沒有 snapshot、沒有歷史 K 線／
 // ticks。
 //
-// TODO(us-quotes)：sidecar 的 HTTP／SSE 介面還沒合進 beta。下面的端點與事件
-// 名稱照 shioaji feat/198-us-quotes-v3（a1d6b7b0）：
-//   - 訂閱：POST /api/v1/stream/subscribe，與台股同一個 flat body，exchange 是
-//     美股交易所（NASDAQ／NYSE／BATS／TXSE），sidecar 依 exchange 判斷 region；
-//     quote_type 只收 Tick／BidAsk。
-//   - 推送：同一條 /api/v1/stream/data 聚合 SSE 的 `us_tick`／`us_bidask` 事件
-//     （也有獨立的 /api/v1/stream/data/us_tick、/us_bidask）。
-//   - Decimal 欄位是字串（rust_decimal str_option）；datetime 是 epoch µs UTC。
-// 合併後若名稱或欄位不同，只需要改這個檔案。
+// HTTP（SDK beta MR !507；欄位依 shioaji 原始碼 UsTick／UsBidAsk）：
+//   - 訂閱：POST /api/v1/stream/subscribe，body 為
+//     {security_type:'STK', exchange:'NASDAQ', code:'AAPL', quote_type:'Tick'|'BidAsk'}，
+//     exchange 是美股交易所（NASDAQ／NYSE／BATS／TXSE），不帶 intraday_odd。
+//   - 推送：獨立 SSE GET /api/v1/stream/data/us_tick、/api/v1/stream/data/us_bidask
+//     （事件名稱 us_tick／us_bidask）；美股事件不會出現在台股 tick／bidask 串流。
+//   - Decimal 欄位是字串；datetime 是 epoch µs UTC。
+//   - 停牌另見 us-halts.ts。
+// 美股行情只有正式環境（BC）有；IDC／模擬環境訂閱成功也不會有資料。
 //
 // 轉成既有的 SseTick／SseBidAsk 形狀、code 用連動 key `US:CODE`，放進同一個
 // 行情 store：自選、報價板、閃電、下單面板都用 useQuote('US:CODE') 讀。
@@ -22,9 +22,13 @@
 import { usLinkKey } from '../contract-key';
 import type { SseBidAsk, SseTick } from '../types/market';
 
-/** TODO(us-quotes)：feat/198-us-quotes-v3 的 SSE 事件名稱 */
+/** SSE 事件名稱與獨立串流路徑 */
 export const US_TICK_EVENT = 'us_tick';
 export const US_BIDASK_EVENT = 'us_bidask';
+export const US_STREAM_PATHS: Record<string, string> = {
+    [US_TICK_EVENT]: '/api/v1/stream/data/us_tick',
+    [US_BIDASK_EVENT]: '/api/v1/stream/data/us_bidask',
+};
 /** 美股可訂閱的 quote_type（沒有 Quote） */
 export const US_QUOTE_TYPES = ['Tick', 'BidAsk'] as const;
 
@@ -158,19 +162,16 @@ export function normalizeUsBidAsk(raw: RawUsBidAsk): SseBidAsk | null {
     };
 }
 
-/** TODO(us-quotes)：訂閱 body（與台股同一個 flat 形狀，exchange 決定 region） */
+/** 訂閱 body：與台股同一個 flat 形狀，exchange 決定 region；不帶 intraday_odd */
 export function usSubscriptionBody(
     contract: { code: string; exchange: string | null },
     quoteType: (typeof US_QUOTE_TYPES)[number],
 ) {
     return {
         security_type: 'STK',
-        region: 'US',
         exchange: contract.exchange,
         code: contract.code.toUpperCase(),
-        target_code: null,
         quote_type: quoteType,
-        intraday_odd: false,
     };
 }
 

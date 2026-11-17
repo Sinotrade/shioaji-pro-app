@@ -23,6 +23,7 @@ import {
     registerCapabilitySubscription,
     registerSubscription,
     registerSubscriptionRaw,
+    retainUsQuoteStreams,
     unregisterCapabilitySubscription,
     unregisterSubscription,
 } from './stream';
@@ -481,6 +482,9 @@ export interface QuoteSubscribeOptions {
     oddLot?: boolean;
 }
 
+// 美股訂閱期間保持獨立的美股 SSE（key：US:CODE:quoteType）
+const usStreamHolds = new Map<string, () => void>();
+
 export function subscribeQuote(
     contract: ContractBase,
     quoteType: QuoteTypeName,
@@ -493,7 +497,9 @@ export function subscribeQuote(
         const body = usSubscriptionBody(contract, quoteType);
         return apiPost<SubscriptionResponse>('/api/v1/stream/subscribe', body).then((response) => {
             if (!response.success) throw new Error(response.message || '美股行情訂閱失敗');
+            const holdKey = `${usLinkKey(contract.code)}:${quoteType}`;
             registerSubscriptionRaw(usLinkKey(contract.code), quoteType, body);
+            if (!usStreamHolds.has(holdKey)) usStreamHolds.set(holdKey, retainUsQuoteStreams());
             return response;
         });
     }
@@ -534,7 +540,10 @@ export function unsubscribeQuote(
         if (oddLot || quoteType === 'Quote') return Promise.resolve({ success: true, message: '' } as SubscriptionResponse);
         return apiPost<SubscriptionResponse>('/api/v1/stream/unsubscribe', usSubscriptionBody(contract, quoteType)).then((response) => {
             if (!response.success) throw new Error(response.message || '取消行情訂閱失敗');
+            const holdKey = `${usLinkKey(contract.code)}:${quoteType}`;
             unregisterSubscription(usLinkKey(contract.code), quoteType);
+            usStreamHolds.get(holdKey)?.();
+            usStreamHolds.delete(holdKey);
             return response;
         });
     }

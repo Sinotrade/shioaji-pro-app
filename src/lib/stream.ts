@@ -18,7 +18,7 @@ import { forgetServerInfo, knownServerInfo } from './server-info-store';
 import { createSharedStream, type StreamWire } from './shared-stream';
 import { invalidateTradingMirror } from './trading-mirror-lease';
 import { invalidateProductCatalog } from './product-catalog-version';
-import { normalizeUsBidAsk, normalizeUsTick, recordUsTick, US_BIDASK_EVENT, US_TICK_EVENT, type RawUsBidAsk, type RawUsTick } from './us/us-quotes';
+import { normalizeUsBidAsk, normalizeUsTick, recordUsTick, US_BIDASK_EVENT, US_STREAM_PATHS, US_TICK_EVENT, type RawUsBidAsk, type RawUsTick } from './us/us-quotes';
 
 /** `stale`: the EventSource still looks open but no heartbeat or event
  *  arrived within the watchdog window (e.g. the sidecar behind a proxy was
@@ -195,6 +195,54 @@ function handleUsBidAsk(raw: string) {
     let bidask: SseBidAsk | null;
     try { bidask = normalizeUsBidAsk(JSON.parse(raw) as RawUsBidAsk); } catch { return; }
     if (bidask) ingestBidAsk(bidask);
+}
+
+// 美股行情走獨立 SSE（/stream/data/us_tick、/us_bidask），只在有美股訂閱時
+// 由串流擁有者開啟；收到的事件照樣轉給彈出視窗（shared publish）。
+let usStreamRefs = 0;
+const usSources = new Map<string, EventSource>();
+let usReopenTimer: ReturnType<typeof setTimeout> | null = null;
+
+function openUsStreams() {
+    if (usStreamRefs <= 0 || typeof EventSource === 'undefined') return;
+    if (shared && !shared.isOwner()) return;
+    if (serverUrlBlocked(getStreamBase()) !== null) { scheduleUsReopen(); return; }
+    for (const [name, path] of Object.entries(US_STREAM_PATHS)) {
+        if (usSources.has(name)) continue;
+        const source = new EventSource(`${getStreamBase()}${path}`);
+        source.addEventListener(name, (event) => {
+            const raw = (event as MessageEvent).data as string;
+            shared?.publish({ kind: 'event', name, raw });
+            if (name === US_TICK_EVENT) handleUsTick(raw); else handleUsBidAsk(raw);
+        });
+        source.onerror = () => {
+            source.close();
+            usSources.delete(name);
+            scheduleUsReopen();
+        };
+        usSources.set(name, source);
+    }
+}
+
+function scheduleUsReopen() {
+    if (usReopenTimer || usStreamRefs <= 0) return;
+    usReopenTimer = setTimeout(() => { usReopenTimer = null; openUsStreams(); }, 3000);
+}
+
+/** 有美股行情訂閱時保持美股 SSE 開著；回傳釋放函式 */
+export function retainUsQuoteStreams(): () => void {
+    usStreamRefs++;
+    openUsStreams();
+    let released = false;
+    return () => {
+        if (released) return;
+        released = true;
+        usStreamRefs--;
+        if (usStreamRefs > 0) return;
+        usSources.forEach(source => source.close());
+        usSources.clear();
+        if (usReopenTimer) { clearTimeout(usReopenTimer); usReopenTimer = null; }
+    };
 }
 
 function nextTickState(prev: QuoteState | undefined, tick: SseTick): QuoteState {
@@ -773,8 +821,6 @@ function connect() {
     for (const ev of ['bidask_stk', 'bidask_fop']) {
         listen(es, ev, (e) => handleBidAsk((e as MessageEvent).data));
     }
-    listen(es, US_TICK_EVENT, (e) => handleUsTick((e as MessageEvent).data));
-    listen(es, US_BIDASK_EVENT, (e) => handleUsBidAsk((e as MessageEvent).data));
     listen(es, 'quote_idx', (e) =>
         handleIndexQuote((e as MessageEvent).data),
     );

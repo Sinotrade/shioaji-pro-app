@@ -6,6 +6,7 @@
 // 不碰台股的 placeStockOrder／checkOrderAllowed／零股／信用／當沖。
 // 送單規則見 lib/us/us-order-rules.ts；Kill Switch 是美股唯一的風控檢查。
 
+import { usHaltLabel, useUsHalt } from '../lib/us/us-halts';
 import { AlertTriangle, Globe, Info } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { useQuote, useTradingLive } from '../hooks/use-stream';
@@ -114,6 +115,7 @@ export function UsTicketBody({
     const reference = contract.us_reference ?? null;
     const fillPrice = last ?? (reference ? decNormalize(reference) : null);
     const suspended = !!contract.trading_suspended;
+    const halt = useUsHalt(contract);
 
     const draft = { action, quantity: qty, priceType, timeInForce: tif, price };
     const problem = usOrderProblem(draft);
@@ -173,7 +175,7 @@ export function UsTicketBody({
             <span className={styles.infoName}>{code}{contract.name && contract.name !== code ? ` ${contract.name}` : ''}</span>
             <span className={styles.header}><UsBadge /></span>
             <span className={styles.infoMeta}>{[exchange, contract.currency || 'USD'].filter(Boolean).join(' · ')}</span>
-            {suspended ? <span className={`${styles.infoMeta} ${styles.warn}`} style={{ textAlign: 'right' }}>暫停交易</span> : <span />}
+            {suspended || halt ? <span className={`${styles.infoMeta} ${styles.warn}`} style={{ textAlign: 'right' }} data-testid='us-halt'>{halt ? usHaltLabel(halt) : '暫停交易'}</span> : <span />}
             <div className={styles.priceLine} aria-label='美股報價'>
                 {last ? (
                     <>

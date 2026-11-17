@@ -7,6 +7,7 @@
 // - 行情只有成交價與最佳一檔買賣（SDK 1.8.0b1）；第一筆行情前以前一日參考價置中。
 // - 風控只看 Kill Switch（checkUsOrderAllowed），送單前與送出前一刻各查一次。
 
+import { usHaltLabel, useUsHalt } from '../lib/us/us-halts';
 import { ChevronDown, Locate, LocateFixed, Zap } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useQuote, useTradingLive } from '../hooks/use-stream';
@@ -172,6 +173,8 @@ export function UsFlashOrder({ contract, linkKey = '', symbolExtra, paused }: Us
         return map;
     }, [trades, contract.code, contract.exchange, account]);
 
+    const halt = useUsHalt(contract);
+
     // ---- 送單 ----
     const blockReason = paused ?? (!live ? '行情或交易狀態未連線'
         : contract.trading_suspended ? `${contract.code} 暫停交易`
@@ -268,6 +271,7 @@ export function UsFlashOrder({ contract, linkKey = '', symbolExtra, paused }: Us
                 </div>
             )}
             {!paused && contract.trading_suspended && <div className={`${us.refNote} ${us.warn}`}>{contract.code} 暫停交易</div>}
+            {!paused && halt && <div className={`${us.refNote} ${us.warn}`} data-testid='flash-us-halt'>{contract.code} {usHaltLabel(halt)}</div>}
             <div className={styles.controls}>
                 <label className={styles.accountPick}>
                     <span className={styles.accountText}>{account ? `${account.broker_id}-${maskAccountId(account.account_id, priv)}` : '無複委託帳戶'}</span>
