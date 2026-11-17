@@ -3,6 +3,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { watchUsTradingState } from './lib/us/us-trading-state';
+import { usBlockRoute } from './lib/us-block-route';
 import GridLayout, {
     useContainerWidth,
     type LayoutItem,
@@ -287,7 +288,8 @@ function BlockBody({
         return <IndexBlockUnavailable type={block.type} />;
     }
     // 美股：已整合的面板照常顯示；其他跟著商品走的面板統一在這裡擋
-    if (contract && isUsContract(contract) && US_UNSUPPORTED.has(block.type)) {
+    const usRoute = usBlockRoute(block.type, contract);
+    if (usRoute?.kind === 'unsupported') {
         return <UsUnsupported />;
     }
     const quickOrderMessage = quickOrderBlockMessage(contract?.security_type, block.type);
@@ -310,7 +312,7 @@ function BlockBody({
             return <BottomDock {...dockProps} />;
         case 'chart':
             // 美股沒有歷史 K 線：只顯示報價板
-            if (contract && isUsContract(contract)) return (
+            if (contract && usRoute?.kind === 'chart-quote') return (
                 <>
                     <QuoteBoard
                         contract={contract}
@@ -361,7 +363,7 @@ function BlockBody({
                 <BlockPlaceholder phase={missingContractPhase} />
             );
         case 'intraday':
-            if (contract && isUsContract(contract)) return <UsIntraday contract={contract} />;
+            if (contract && usRoute?.kind === 'intraday') return <UsIntraday contract={contract} />;
             return contract ? (
                 <IntradayChart
                     contract={contract}
@@ -652,15 +654,7 @@ function IndexBlockUnavailable({ type }: { type: BlockType }) {
     );
 }
 
-// 美股（SDK 1.8.0b1）只有最佳一檔與逐筆、沒有歷史資料：這些跟著商品走的
-// 面板對美股商品顯示「美股暫不支援」。自選、dock、下單、閃電、報價板、
-// 走勢（只畫訂閱後的逐筆）已整合；不跟商品走的面板（排行、熱力圖…）不受影響。
-const US_UNSUPPORTED: ReadonlySet<BlockType> = new Set<BlockType>([
-    'depth', 'depthmap', 'tape', 'volprofile', 'replay', 'chips', 'company',
-    'oddspread', 'stockfutures', 'warrants', 'optchain', 'combo', 'combolist',
-    'grid', 'conditional', 'backtest', 'chainmap', 'optpnl',
-]);
-
+// 美股面板走向見 lib/us-block-route.ts（主視窗與彈出視窗共用）
 function UsUnsupported({ detail }: { detail?: string }) {
     return (
         <div className={styles.blockPlaceholder} data-testid='us-unsupported'>
@@ -846,7 +840,18 @@ function PopoutView({
     const quickOrderMessage = quickOrderBlockMessage(contract?.security_type, type);
 
     let body: React.ReactNode = <BlockPlaceholder />;
-    if (type === 'pnl') body = <PnlPanel />;
+    // 美股：和主視窗 BlockBody 同一套分流與「美股暫不支援」防護
+    const usRoute = usBlockRoute(type, contract);
+    if (usRoute?.kind === 'unsupported') body = <UsUnsupported />;
+    else if (contract && usRoute?.kind === 'chart-quote')
+        body = (
+            <>
+                <QuoteBoard contract={contract} sessionMode={chartSession} fields={popoutSession.quoteBoard} />
+                <UsUnsupported detail='美股沒有歷史 K 線' />
+            </>
+        );
+    else if (contract && usRoute?.kind === 'intraday') body = <UsIntraday contract={contract} />;
+    else if (type === 'pnl') body = <PnlPanel />;
     else if (type === 'holdingmap')
         // popout 點持股 → 切換主視窗的選取商品；呈現／分組從面板帶入，之後只在這個視窗內切換
         body = (
