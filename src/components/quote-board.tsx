@@ -2,6 +2,7 @@
 
 import { Fragment, useCallback, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { Settings2 } from 'lucide-react';
+import { UsQuoteBoard } from './us-quote-board';
 import { useBoardTier } from '../hooks/use-board-tier';
 import { useSnapshotBaseline } from '../hooks/use-display-book';
 import { useQuote } from '../hooks/use-stream';
@@ -137,7 +138,14 @@ function BreadthBar({ className, breadth, title }: { className: string; breadth:
 // 牆鐘秒換成 kbars 查詢用的日期（YYYY-MM-DD）
 const wallDate = (t: number) => new Date(t * 1000).toISOString().slice(0, 10);
 
-export function QuoteBoard({
+type QuoteBoardProps = React.ComponentProps<typeof QuoteBoardTw>;
+
+/** 美股走自己的報價板（沒有快照與歷史 K 線） */
+export function QuoteBoard(props: QuoteBoardProps) {
+    return props.contract.region === 'US' ? <UsQuoteBoard contract={props.contract} /> : <QuoteBoardTw {...props} />;
+}
+
+function QuoteBoardTw({
     contract,
     snapshot: suppliedSnapshot,
     sessionMode,
