@@ -61,6 +61,8 @@ import type {
 import type { HistoryTicks } from './types/tick';
 import { contractMarket } from './contract-market';
 import { todayStr } from './utils/date';
+import { usLinkKey } from './contract-key';
+import { usSubscriptionBody } from './us/us-quotes';
 
 export interface ServerInfo {
     name: string;
@@ -79,7 +81,7 @@ export function isUsContract(c: Pick<ContractBase, 'region'> | null | undefined)
 }
 
 const US_NO_QUOTES = '美股這個版本沒有即時行情';
-const US_TW_ORDER_PATH = '美股請使用「美股下單」面板；這個下單路徑只支援台股';
+const US_TW_ORDER_PATH = '美股請用下單或閃電面板下單；這個下單路徑只支援台股';
 
 function contractKey(c: ContractBase) {
     return {
@@ -483,9 +485,17 @@ export function subscribeQuote(
     quoteType: QuoteTypeName,
     options?: QuoteSubscribeOptions,
 ) {
-    // 美股 beta 沒有報價（訂閱不會收到資料），一律不訂閱
-    if (isUsContract(contract)) return Promise.reject(new Error(US_NO_QUOTES));
     const oddLot = options?.oddLot === true;
+    // 美股（SDK 1.8.0b1）：只有 Tick／BidAsk，沒有零股分流
+    if (isUsContract(contract)) {
+        if (oddLot || quoteType === 'Quote') return Promise.reject(new Error(US_NO_QUOTES));
+        const body = usSubscriptionBody(contract, quoteType);
+        return apiPost<SubscriptionResponse>('/api/v1/stream/subscribe', body).then((response) => {
+            if (!response.success) throw new Error(response.message || '美股行情訂閱失敗');
+            registerSubscriptionRaw(usLinkKey(contract.code), quoteType, body);
+            return response;
+        });
+    }
     // 組合商品走巢狀腳訂閱（flat code 如 TXFI6/J6 server 不認）
     const comboMeta = (contract as { combo?: unknown }).combo;
     if (comboMeta) {
@@ -519,6 +529,14 @@ export function unsubscribeQuote(
     options?: QuoteSubscribeOptions,
 ) {
     const oddLot = options?.oddLot === true;
+    if (isUsContract(contract)) {
+        if (oddLot || quoteType === 'Quote') return Promise.resolve({ success: true, message: '' } as SubscriptionResponse);
+        return apiPost<SubscriptionResponse>('/api/v1/stream/unsubscribe', usSubscriptionBody(contract, quoteType)).then((response) => {
+            if (!response.success) throw new Error(response.message || '取消行情訂閱失敗');
+            unregisterSubscription(usLinkKey(contract.code), quoteType);
+            return response;
+        });
+    }
     const comboMeta = (contract as { combo?: unknown }).combo;
     if (comboMeta && !oddLot) {
         return unsubscribeComboQuote(

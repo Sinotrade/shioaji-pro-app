@@ -1,7 +1,10 @@
 // src/lib/types/contract.ts
 
 export type Region = 'TW' | 'US' | 'HK' | 'JP';
-export type Exchange = 'TSE' | 'OTC' | 'OES' | 'TAIFEX' | null;
+export type TwExchange = 'TSE' | 'OTC' | 'OES' | 'TAIFEX';
+/** 美股合約的實際交易所（sw 自選與 SDK 1.8 watchlist 都存這個） */
+export type UsExchangeCode = 'NASDAQ' | 'NYSE' | 'BATS' | 'TXSE';
+export type Exchange = TwExchange | UsExchangeCode | null;
 export type SecurityType = 'IND' | 'STK' | 'FUT' | 'OPT' | 'WRT' | null;
 export type Currency = 'TWD' | 'USD' | 'CNY';
 export type DayTrade = 'Yes' | 'OnlyBuy' | 'No' | '';
@@ -74,6 +77,12 @@ export interface ContractInfo extends Contract {
     // 組合商品的合成合約（見 ContractComboMeta）— 有此欄位的合約
     // 走組合行情路徑，且不可用一般下單面板下單
     combo?: ContractComboMeta;
+    /** 美股：前一日參考價（decimal 字串，原值；reference 是它的 Number） */
+    us_reference?: string;
+    /** 美股：參考價日期 */
+    reference_date?: string;
+    /** 美股：暫停交易 */
+    trading_suspended?: boolean;
 }
 
 // FUT/OPT 跳動級距（server tick-bands API）；max=null 為最上層 band

@@ -18,6 +18,7 @@ import { forgetServerInfo, knownServerInfo } from './server-info-store';
 import { createSharedStream, type StreamWire } from './shared-stream';
 import { invalidateTradingMirror } from './trading-mirror-lease';
 import { invalidateProductCatalog } from './product-catalog-version';
+import { normalizeUsBidAsk, normalizeUsTick, recordUsTick, US_BIDASK_EVENT, US_TICK_EVENT, type RawUsBidAsk, type RawUsTick } from './us/us-quotes';
 
 /** `stale`: the EventSource still looks open but no heartbeat or event
  *  arrived within the watchdog window (e.g. the sidecar behind a proxy was
@@ -179,6 +180,21 @@ function handleTick(raw: string) {
     ingestTick(tick);
     const alias = codeAlias.get(tick.code);
     if (alias) ingestTick({ ...tick, code: alias });
+}
+
+// 美股（#198）：轉成 SseTick／SseBidAsk，code 是 `US:CODE`，與台股同一個 store
+function handleUsTick(raw: string) {
+    let parsed: ReturnType<typeof normalizeUsTick>;
+    try { parsed = normalizeUsTick(JSON.parse(raw) as RawUsTick); } catch { return; }
+    if (!parsed) return;
+    ingestTick(parsed.tick);
+    recordUsTick(parsed.meta);
+}
+
+function handleUsBidAsk(raw: string) {
+    let bidask: SseBidAsk | null;
+    try { bidask = normalizeUsBidAsk(JSON.parse(raw) as RawUsBidAsk); } catch { return; }
+    if (bidask) ingestBidAsk(bidask);
 }
 
 function nextTickState(prev: QuoteState | undefined, tick: SseTick): QuoteState {
@@ -660,6 +676,8 @@ function dispatchWire(wire: StreamWire) {
     if (name === 'tick_stk' || name === 'tick_fop') handleTick(raw);
     else if (name === 'bidask_stk' || name === 'bidask_fop') handleBidAsk(raw);
     else if (name === 'quote_idx') handleIndexQuote(raw);
+    else if (name === US_TICK_EVENT) handleUsTick(raw);
+    else if (name === US_BIDASK_EVENT) handleUsBidAsk(raw);
     else if (name === 'order_event') handleOrderEvent(raw);
     else if (name === 'contract_event') {
         const change = JSON.parse(raw) as ContractChangeEvent;
@@ -755,6 +773,8 @@ function connect() {
     for (const ev of ['bidask_stk', 'bidask_fop']) {
         listen(es, ev, (e) => handleBidAsk((e as MessageEvent).data));
     }
+    listen(es, US_TICK_EVENT, (e) => handleUsTick((e as MessageEvent).data));
+    listen(es, US_BIDASK_EVENT, (e) => handleUsBidAsk((e as MessageEvent).data));
     listen(es, 'quote_idx', (e) =>
         handleIndexQuote((e as MessageEvent).data),
     );

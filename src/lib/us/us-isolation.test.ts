@@ -32,11 +32,15 @@ describe('Taiwan order and quote paths refuse US contracts', () => {
         expect(m.post).not.toHaveBeenCalled();
     });
 
-    it('does not subscribe, snapshot or fetch K bars for US', async () => {
+    it('does not snapshot or fetch K bars for US; quotes go through the US subscribe body', async () => {
         const { subscribeQuote, fetchSnapshots, fetchKbars } = await import('../shioaji');
-        await expect(subscribeQuote(aapl, 'Tick')).rejects.toThrow('美股');
+        await expect(subscribeQuote(aapl, 'Quote')).rejects.toThrow('美股');
+        await expect(subscribeQuote(aapl, 'Tick', { oddLot: true })).rejects.toThrow('美股');
         await expect(fetchSnapshots([aapl])).rejects.toThrow('美股');
         await expect(fetchKbars(aapl, '2026-11-01', '2026-11-18')).rejects.toThrow('美股');
         expect(m.post).not.toHaveBeenCalled();
+        m.post.mockResolvedValue({ success: true, message: '' });
+        await subscribeQuote({ ...aapl, exchange: 'NASDAQ' }, 'Tick');
+        expect(m.post).toHaveBeenCalledWith('/api/v1/stream/subscribe', expect.objectContaining({ region: 'US', exchange: 'NASDAQ', code: 'AAPL', quote_type: 'Tick', intraday_odd: false }));
     });
 });

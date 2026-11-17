@@ -14,6 +14,7 @@ import { todayStr } from '../utils/date';
 import { decNormalize } from './decimal';
 import { fetchUsContractInfo, fetchUsContractList } from './us-api';
 import type { UsContractInfo, UsContractRecord } from '../types/us';
+import type { ContractInfo, UsExchangeCode } from '../types/contract';
 
 export const US_INFO_CONCURRENCY = 4;
 const INFO_STORAGE_KEY = 'sj-pro-us-contract-info:v1';
@@ -264,4 +265,65 @@ export function loadUsInfo(code: string, opts: { force?: boolean } = {}): Promis
 /** 目前排隊與進行中的 info 請求數（測試用） */
 export function usInfoLoadStats() {
     return { active, queued: queue.length };
+}
+
+// ---- 轉成共用的 ContractInfo（給自選、連動、下單、閃電等既有面板） ----
+
+const US_EXCHANGES = new Set(['NASDAQ', 'NYSE', 'BATS', 'TXSE']);
+
+function usExchange(value: string | null | undefined): UsExchangeCode | null {
+    const v = (value ?? '').toUpperCase();
+    return US_EXCHANGES.has(v) ? v as UsExchangeCode : null;
+}
+
+/**
+ * 美股合約的 ContractInfo：region US、實際交易所、USD。沒有漲跌停（limit_up／
+ * limit_down 為 0，使用前一律以 isUsContract 分流，不可當台股漲跌停夾價）。
+ * reference 是前一日參考價的 Number（只給顯示與梯形置中），原值在 us_reference。
+ */
+export function toUsContractInfo(
+    code: string,
+    info?: UsContractSummary,
+    record?: Pick<UsContractRecord, 'exchange'> | null,
+): ContractInfo {
+    const c = code.trim().toUpperCase();
+    const ref = info?.reference;
+    const refNum = ref ? Number(ref) : 0;
+    return {
+        region: 'US',
+        exchange: usExchange(info?.exchange) ?? usExchange(record?.exchange) ?? null,
+        code: c,
+        security_type: 'STK',
+        target_code: null,
+        name: info?.shortName || info?.name || usContractName(c) || c,
+        currency: 'USD',
+        limit_up: 0,
+        limit_down: 0,
+        reference: Number.isFinite(refNum) ? refNum : 0,
+        day_trade: '',
+        update_date: info?.fetchedOn ?? '',
+        category: '',
+        margin_trading_balance: 0,
+        short_selling_balance: 0,
+        ...(ref ? { us_reference: ref } : {}),
+        ...(info?.referenceDate ? { reference_date: info.referenceDate } : {}),
+        ...(info?.tradingSuspended ? { trading_suspended: true } : {}),
+    };
+}
+
+/** 依代碼解析美股合約（交易所以 info 為準，清單墊底）；查不到代碼就拒絕 */
+export async function resolveUsContract(code: string): Promise<ContractInfo> {
+    const c = code.trim().toUpperCase();
+    if (!c) throw new Error('美股代碼是空的');
+    await ensureUsContracts().catch(() => undefined);
+    const record = getUsContractRecord(c);
+    let info: UsContractSummary | undefined;
+    try {
+        info = await loadUsInfo(c);
+    } catch (error) {
+        if (!record) throw error;
+    }
+    const contract = toUsContractInfo(c, info, record);
+    if (!contract.exchange) throw new Error(`查不到美股 ${c} 的交易所`);
+    return contract;
 }
