@@ -36,9 +36,10 @@ import type {
 } from '../lib/types/portfolio';
 import { fmtMoney, fmtSigned } from '../lib/utils/format';
 import { vars } from '../theme.css';
-import { AccountPane, type AccountRefreshControls } from './bottom-dock-account';
+import { AccountPane, UsAccountSection, type AccountRefreshControls } from './bottom-dock-account';
 import { OrdersPane } from './bottom-dock-orders';
-import { UsOrdersSection, UsPositionsSection, useUsDockSummary } from './us-dock';
+import { useUsDockSummary } from './bottom-dock-us';
+import { refreshUsPositions, refreshUsTrades } from '../lib/us/us-trading-state';
 import { decIsPositive as decIsPositiveText, fmtDec } from '../lib/us/decimal';
 import { PositionsPane } from './bottom-dock-positions';
 import {
@@ -93,6 +94,9 @@ export function BottomDock({
     const refreshTab = () => {
         void refreshTradingState(tab);
         if (tab === 'account') void accountRefresh?.refresh();
+        // 美股列併在同一張表：同一顆更新按鈕也更新美股
+        if (us.shown && tab === 'orders') void refreshUsTrades();
+        if (us.shown && tab === 'positions') void refreshUsPositions();
     };
     const { accounts, selectedStock, selectedFutures } = useAccounts();
     useEffect(ensureAccounts, []);
@@ -150,8 +154,12 @@ export function BottomDock({
         remainingWorkingOrderQuantity(t) > 0,
     ).length;
 
-    // 美股（H 帳戶）計數併入分頁標籤；損益不併：台幣與美元分開顯示
+    // 美股（H 帳戶）列併入委託／持倉表、計數併入分頁標籤；損益不併：台幣與美元分開顯示
     const us = useUsDockSummary(market !== 'F' && !scope);
+    // 切到持倉分頁時查一次美股庫存（原本由獨立區段掛載時觸發）
+    useEffect(() => {
+        if (tab === 'positions' && us.has) void refreshUsPositions();
+    }, [tab, us.has]);
     const usPositions = us.shown ? us.positions ?? 0 : 0;
     const usPending = us.shown && us.positions === null;
     const posCount = positions.length + usPositions;
@@ -376,10 +384,10 @@ export function BottomDock({
                     fallback={fallback}
                     onChanged={onTradesChanged}
                     onSelectCode={onSelectCode}
+                    // 美股列由 pane 依市場／帳戶範圍篩選（只篩期貨或選單一台股帳戶時不顯示）
+                    us={us.has ? { positions: us.state.positions, status: us.state.positionsStatus, error: us.state.positionsError } : null}
                 />
             )}
-            {/* 美股（H 帳戶）另列區段；只篩期貨或選了單一台股帳戶時不顯示 */}
-            {tab === 'positions' && market !== 'F' && !scope && <UsPositionsSection />}
             {tab === 'orders' && (
                 <OrdersPane
                     trades={trades}
@@ -396,9 +404,9 @@ export function BottomDock({
                     }}
                     showAllRequest={showAllOrders}
                     onShowAllRequestHandled={() => setShowAllOrders(0)}
+                    us={us.has ? { trades: us.state.trades, hint: us.state.hint, error: us.state.error } : null}
                 />
             )}
-            {tab === 'orders' && market !== 'F' && !scope && <UsOrdersSection />}
             {tab === 'account' && (
                 <div className={panel.panelBody}>
                     <AccountPane
@@ -422,6 +430,7 @@ export function BottomDock({
                         scopeAccount={scopeAccount}
                         onRefreshControls={setAccountRefresh}
                     />
+                    {us.shown && <UsAccountSection funds={portfolio.funds} />}
                 </div>
             )}
         </div>

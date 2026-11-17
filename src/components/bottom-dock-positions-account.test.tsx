@@ -8,7 +8,7 @@ const mocks = vi.hoisted(() => ({ place: vi.fn(), stock: vi.fn(), notify: vi.fn(
 vi.mock('../lib/trade', () => ({ placeQuickOrder: mocks.place, placeStockExitByShares: mocks.stock, notify: mocks.notify }));
 vi.mock('../hooks/use-stream', () => ({ useTradingLive: () => true }));
 vi.mock('../lib/contracts-cache', () => ({ ensureContract: async (code: string) => ({ code, name: code, security_type: code === '2330' ? 'STK' : code === '030392' ? 'WRT' : 'FUT' }) }));
-vi.mock('../lib/server-info-store', () => ({ useServerInfo: () => null, yesterdayQuantityNotice: () => null, knownServerInfo: () => ({ simulation: mocks.simulation }) }));
+vi.mock('../lib/server-info-store', () => ({ useServerInfo: () => null, yesterdayQuantityNotice: () => null, knownServerInfo: () => ({ simulation: mocks.simulation }), subscribeServerInfo: () => () => undefined }));
 vi.mock('./bottom-dock-shared', async original => ({ ...await original<object>(), useMeasuredWidth: () => ({ ref: { current: null }, width: 1400 }) }));
 import { PositionsPane } from './bottom-dock-positions';
 import { ArmLockButton } from './bottom-dock-shared';

@@ -4,6 +4,9 @@ import { afterEach, expect, it, vi } from 'vitest';
 import type { Trade } from '../lib/types/order';
 const mocks = vi.hoisted(() => ({ qty: vi.fn(async () => ({})), notify: vi.fn() }));
 vi.mock('../lib/shioaji', () => ({ updateOrderQty: mocks.qty, updateOrderPrice: vi.fn(), cancelOrder: vi.fn() }));
+// 委託表併入美股列：美股操作模組在 import 時碰 window，測試裡換成空殼
+vi.mock('./bottom-dock-us', () => ({ usAccountGroupKey: () => '', UsOrderActions: () => null, usOrderPriceText: () => '', usOrderRowKey: () => '', usStatusBucket: () => 'dead', UsTag: () => null }));
+vi.mock('../lib/us/us-trading-state', () => ({ usRemaining: () => '0' }));
 vi.mock('../lib/trade', () => ({ notify: mocks.notify }));
 import { OrderEditor } from './bottom-dock-orders';
 let view: ReactTestRenderer | undefined;

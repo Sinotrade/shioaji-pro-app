@@ -896,3 +896,31 @@ function AccountPaneContent({ positions, balance, margin, funds, market, scopeAc
         </div>
     );
 }
+
+// ---- 美股（H 帳戶）帳務：USD 另列，不和台幣相加 ----
+
+export const US_ACCOUNT_LATER = '美股帳務後續提供';
+
+/** 帳務分頁的美股區塊：交易狀態裡有 H 帳戶餘額就以 USD 列出，否則顯示後續提供 */
+export function UsAccountSection({ funds }: { funds?: AccountFunds[] }) {
+    const privMoney = usePrivacyMoney();
+    const privacy = usePrivacyMode();
+    const rows = (funds ?? []).filter(f => f.account.account_type === 'H' && f.balance && Number.isFinite(f.balance.acc_balance));
+    return (
+        <section aria-label='美股帳務'>
+            <div className={styles.usNote}>
+                <span className={styles.usTag}>美股</span>
+                <span>美股帳務（USD）</span>
+            </div>
+            {rows.length === 0 ? (
+                <div className={styles.usNote} role='status'>{US_ACCOUNT_LATER}</div>
+            ) : rows.map(f => (
+                <Row
+                    key={`H:${f.account.broker_id}-${f.account.account_id}`}
+                    label={`[美] ${f.account.broker_id}-${maskAccountId(f.account.account_id, privacy)} 餘額`}
+                    value={`${maskMoney(f.balance!.acc_balance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }), privMoney)} USD`}
+                />
+            ))}
+        </section>
+    );
+}
