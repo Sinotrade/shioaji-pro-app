@@ -119,6 +119,16 @@ it('keeps busy per order: cancelling one row leaves the others usable', async ()
     await act(async () => { release({ confirmed: true, cancelled: '8' }); });
 });
 
+it.each([
+    ['Failed', { status: 'Failed' }],
+    ['Cancelled', { status: 'Cancelled', cancel_quantity: '8' }],
+    ['Filled', { status: 'Filled', deal_quantity: '10' }],
+    ['remaining 0', { status: 'PartFilled', deal_quantity: '4', cancel_quantity: '6' }],
+])('offers no 減量 for a %s order (reduce-only, working orders only)', async (_name, over) => {
+    await mount({ ...trade, status: { ...trade.status, ...over } });
+    expect(btn(/^減量$/)).toBeUndefined();
+});
+
 it('shows no actions for a finished order', async () => {
     await mount({ ...trade, status: { ...trade.status, status: 'Filled', deal_quantity: '10' } });
     expect(btn(/^刪單$/)).toBeUndefined();

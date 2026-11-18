@@ -151,6 +151,16 @@ describe('reduceUsTrade', () => {
         expect(m.reduce).toHaveBeenCalledWith('t1', 4, H);
         await expect(reduceUsTrade(row(), 11)).rejects.toThrow('1 到 10');
     });
+
+    it('maps the HTTP 400 -2054 rejection to the retry-later message', async () => {
+        m.reduce.mockRejectedValue(Object.assign(new Error('400 此委託不存在 (-2054)'), { status: 400 }));
+        await expect(reduceUsTrade(row(), 1)).rejects.toBeInstanceOf(UsCancelTooEarlyError);
+    });
+
+    it('refuses to reduce an order with nothing left', async () => {
+        await expect(reduceUsTrade(row({ status: 'Filled', deal_quantity: '10' }), 1)).rejects.toThrow('1 到 0');
+        expect(m.reduce).not.toHaveBeenCalledWith('t1', 1, H);
+    });
 });
 
 describe('price change = cancel then re-place', () => {
