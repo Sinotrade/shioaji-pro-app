@@ -115,3 +115,13 @@ it('position detail lists lots with null market data shown as a dash', async () 
     expect(t).toContain('5（10）股');
     expect(t).toContain('—');
 });
+
+it('retries once when the query was dropped because the server mode was learned mid-flight', async () => {
+    m.balance.mockRejectedValueOnce(new Error('查詢期間伺服器模式已變更，已丟棄回應；請重新更新'))
+        .mockResolvedValue({ account_type: 'H', currency: 'USD', balance: '50', buying_power: '50' });
+    m.settlements.mockResolvedValue([]);
+    await mount(createElement(UsAccountSection, { accounts: [acct()] }));
+    expect(m.balance).toHaveBeenCalledTimes(2);
+    expect(all()).toContain('帳戶餘額50.00 USD');
+    expect(all()).not.toContain('已丟棄回應');
+});

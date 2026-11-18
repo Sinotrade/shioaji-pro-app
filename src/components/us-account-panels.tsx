@@ -33,6 +33,7 @@ import { dateStrOffset } from '../lib/utils/kbars';
 import { fmtUsPnl, usAmountDir, UsTag } from './bottom-dock-shared';
 import * as dock from './bottom-dock.css';
 import * as panel from './panel.css';
+import { RefreshButton } from './refresh-button';
 
 const acctKey = (a: Account) => `H:${a.broker_id}:${a.account_id}`;
 const usd = (v: string | null | undefined, priv: boolean) => (v === null || v === undefined || v === '' ? '—' : `${maskMoney(fmtDec(decRound(v, 2), { minFraction: 2, maxFraction: 2 }), priv)} USD`);
@@ -41,8 +42,17 @@ const signedUsd = (v: string | null | undefined, priv: boolean) => (v === null |
 /** 每個帳戶的查詢結果：成功、尚未開放、或錯誤訊息 */
 export type PerAccount<T> = { account: Account } & ({ state: 'ok'; data: T } | { state: 'unavailable' } | { state: 'error'; error: string });
 
+/** 冷啟動剛得知伺服器模式時，查詢會被作廢；這種情況直接重查一次 */
+const MODE_CHANGED = '伺服器模式已變更';
+async function fetchRetryingModeChange<T>(fetch: (a: Account) => Promise<T>, account: Account): Promise<T> {
+    try { return await fetch(account); } catch (e) {
+        if (!(e instanceof Error && e.message.includes(MODE_CHANGED))) throw e;
+        return fetch(account);
+    }
+}
+
 export async function queryEachAccount<T>(accounts: Account[], fetch: (a: Account) => Promise<T>): Promise<PerAccount<T>[]> {
-    const settled = await Promise.allSettled(accounts.map(fetch));
+    const settled = await Promise.allSettled(accounts.map(a => fetchRetryingModeChange(fetch, a)));
     return settled.map((r, i) => {
         const account = accounts[i]!;
         if (r.status === 'fulfilled') return { account, state: 'ok', data: r.value };
@@ -80,7 +90,7 @@ function allUnavailable<T>(rows: PerAccount<T>[] | undefined) {
 interface UsFunds { balance: IntlAccountBalance | null; settlements: IntlSettlement[] | null; balanceError?: string; settlementsError?: string }
 
 async function fetchUsFunds(account: Account): Promise<UsFunds> {
-    const [b, s] = await Promise.allSettled([fetchUsBalance(account), fetchUsSettlements(account)]);
+    const [b, s] = await Promise.allSettled([fetchRetryingModeChange(a => fetchUsBalance(a), account), fetchRetryingModeChange(fetchUsSettlements, account)]);
     // 兩支都未開放：整個帳戶當成未開放
     if (b.status === 'rejected' && s.status === 'rejected' && isUsAccountUnavailable(b.reason) && isUsAccountUnavailable(s.reason)) throw b.reason;
     const errText = (e: unknown) => usAccountErrorText(e);
@@ -232,7 +242,7 @@ export function UsRealizedPnlSection({ accounts, days = 30 }: { accounts: Accoun
                         )}
                     </>
                 )}
-            <button type='button' className={dock.cancelBtn} disabled={loading} onClick={() => void refresh()}>{loading ? '更新中…' : '更新美股損益'}</button>
+            <div className={panel.refreshToolbar}><RefreshButton label='更新美股損益' loading={loading} onClick={() => void refresh()} /></div>
         </section>
     );
 }
