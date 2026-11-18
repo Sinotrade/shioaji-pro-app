@@ -33,7 +33,8 @@ import {
     US_TIME_IN_FORCE_ENABLED,
     US_TIME_IN_FORCE_LABEL,
     usOrderProblem,
-    usPriceTypeAllowed,
+    US_BETA_NOTICE,
+    usPriceTypeBlockReason,
 } from '../lib/us/us-order-rules';
 import { observeUsTrade } from '../lib/us/us-trading-state';
 import * as panel from './panel.css';
@@ -99,8 +100,9 @@ export function UsTicketBody({
     const [feedback, setFeedback] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
 
     useEffect(() => {
-        if (!usPriceTypeAllowed(tif, priceType)) setPriceType('LMT');
-    }, [tif, priceType]);
+        // 切到買進（或 ATC）時市價不能用：回到限價
+        if (usPriceTypeBlockReason(action, tif, priceType)) setPriceType('LMT');
+    }, [action, tif, priceType]);
 
     // 方向、時效、價別、價量、帳戶任一變動都要重新確認
     useEffect(() => { setArmed(false); }, [action, tif, priceType, price, qty, account ? acctKey(account) : '']);
@@ -247,13 +249,13 @@ export function UsTicketBody({
                 <span className={ticket.fieldLabel}>價別</span>
                 <div className={ticket.segGroup}>
                     {US_PRICE_TYPES.map(p => {
-                        const allowed = usPriceTypeAllowed(tif, p);
+                        const blocked = usPriceTypeBlockReason(action, tif, p);
                         return (
                             <button
                                 key={p}
                                 className={ticket.seg[priceType === p ? 'on' : 'off']}
-                                disabled={!allowed}
-                                title={allowed ? undefined : 'ATC 只能限價'}
+                                disabled={blocked !== null}
+                                title={blocked ?? undefined}
                                 onClick={() => setPriceType(p)}
                             >
                                 {US_PRICE_TYPE_LABEL[p]}
@@ -307,7 +309,7 @@ export function UsTicketBody({
 
             <div className={styles.notice}>
                 <AlertTriangle size={14} aria-hidden className={styles.warn} />
-                美股 Beta：只能整股、限價或市價，ATC 只能限價；改價會先刪單再重下。
+                {US_BETA_NOTICE}
             </div>
 
             <button

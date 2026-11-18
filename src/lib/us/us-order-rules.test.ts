@@ -12,9 +12,19 @@ describe('US order rules (closed beta)', () => {
     });
 
     it('rejects ATC with a market price', () => {
-        expect(usPriceTypeAllowed('ATC', 'MKT')).toBe(false);
-        expect(usOrderProblem(draft({ timeInForce: 'ATC', priceType: 'MKT', price: '' }))).toBe('ATC 只能限價，不能用市價');
+        expect(usPriceTypeAllowed('Sell', 'ATC', 'MKT')).toBe(false);
+        expect(usOrderProblem(draft({ action: 'Sell', timeInForce: 'ATC', priceType: 'MKT', price: '' }))).toBe('ATC 只能限價，不能用市價');
         expect(usOrderProblem(draft({ timeInForce: 'ATC' }))).toBeNull();
+    });
+
+    it('allows market orders only for Sell (spec 11/18)', () => {
+        expect(usPriceTypeAllowed('Buy', 'DAY', 'MKT')).toBe(false);
+        expect(usPriceTypeAllowed('Buy', 'DAY', 'LMT')).toBe(true);
+        expect(usPriceTypeAllowed('Sell', 'DAY', 'MKT')).toBe(true);
+        expect(usPriceTypeAllowed('Sell', 'DAY', 'LMT')).toBe(true);
+        expect(usOrderProblem(draft({ action: 'Buy', priceType: 'MKT', price: '' }))).toBe('買進只能限價，市價只能賣出');
+        expect(usOrderProblem(draft({ action: 'Buy', timeInForce: 'ATC', priceType: 'MKT', price: '' }))).toBe('買進只能限價，市價只能賣出');
+        expect(usOrderProblem(draft({ action: 'Sell', priceType: 'MKT', price: '' }))).toBeNull();
     });
 
     it('requires whole shares and at most 4 decimals', () => {
@@ -28,7 +38,7 @@ describe('US order rules (closed beta)', () => {
     it('builds a request with string price, MKT as "0", and no TW-only fields', () => {
         const lmt = buildUsOrderReq(draft({ price: '173.9700' }));
         expect(lmt).toEqual({ action: 'Buy', price: '173.97', quantity: 10, price_type: 'LMT', time_in_force: 'DAY' });
-        const mkt = buildUsOrderReq(draft({ priceType: 'MKT', price: '999' }));
+        const mkt = buildUsOrderReq(draft({ action: 'Sell', priceType: 'MKT', price: '999' }));
         expect(mkt.price).toBe('0');
         for (const key of ['order_lot', 'order_cond', 'daytrade_short', 'custom_field', 'order_type']) expect(mkt).not.toHaveProperty(key);
     });

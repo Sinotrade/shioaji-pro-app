@@ -2,6 +2,7 @@
 //
 // 規格（美股 PM，11/18）：
 // - 只用 H 帳戶、只能整股；price_type LMT／MKT。
+// - 市價只能賣出：買進只能限價（美股 PM，11/18）。
 // - time_in_force：DAY、ATC（ATC 只能限價；ATC＋MKT 上游 V016 會拒）。
 //   OPG 這版不開放；要開時把 'OPG' 加進 US_TIME_IN_FORCE_ENABLED 即可。
 // - 不帶 order_lot／order_cond／daytrade_short／custom_field（SDK 本地就拒）。
@@ -25,11 +26,21 @@ export const US_PRICE_TYPE_LABEL: Record<UsPriceType, string> = { LMT: '限價',
 
 export const US_PRICE_MAX_DECIMALS = 4;
 
-/** 這個時效能不能配這個價別 */
-export function usPriceTypeAllowed(tif: UsTimeInForce, priceType: UsPriceType): boolean {
-    if (tif === 'ATC' && priceType === 'MKT') return false;
-    return true;
+/** 這個方向＋時效不能用這個價別的原因；可以用回 null */
+export function usPriceTypeBlockReason(action: Action, tif: UsTimeInForce, priceType: UsPriceType): string | null {
+    if (priceType !== 'MKT') return null;
+    if (action === 'Buy') return '買進只能限價，市價只能賣出';
+    if (tif === 'ATC') return 'ATC 只能限價，不能用市價';
+    return null;
 }
+
+/** 這個方向＋時效能不能配這個價別（買進只能限價；ATC 只能限價） */
+export function usPriceTypeAllowed(action: Action, tif: UsTimeInForce, priceType: UsPriceType): boolean {
+    return usPriceTypeBlockReason(action, tif, priceType) === null;
+}
+
+/** 美股下單面板的 Beta 提示 */
+export const US_BETA_NOTICE = '美股 Beta：只能整股；買進只能限價，市價只能賣出；ATC 只能限價；改價會先刪單再重下。';
 
 export interface UsOrderDraft {
     action: Action;
@@ -44,7 +55,8 @@ export function usOrderProblem(d: UsOrderDraft): string | null {
     if (d.action !== 'Buy' && d.action !== 'Sell') return '請選擇買賣方向';
     if (!US_TIME_IN_FORCE_ENABLED.includes(d.timeInForce)) return `這個版本不開放 ${d.timeInForce} 時效`;
     if (!US_PRICE_TYPES.includes(d.priceType)) return '美股只能用限價或市價';
-    if (!usPriceTypeAllowed(d.timeInForce, d.priceType)) return 'ATC 只能限價，不能用市價';
+    const blocked = usPriceTypeBlockReason(d.action, d.timeInForce, d.priceType);
+    if (blocked) return blocked;
     const qty = d.quantity.trim();
     if (!/^\d+$/.test(qty) || Number(qty) < 1) return '美股只能整股，數量至少 1 股';
     if (!Number.isSafeInteger(Number(qty))) return '數量過大';

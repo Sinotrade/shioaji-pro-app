@@ -113,10 +113,39 @@ it('shows the live price, best bid/ask and session after a quote', async () => {
 
 it('offers DAY and ATC only and disables MKT under ATC', async () => {
     await mount();
+    await act(async () => { btn(/^賣出$/)!.props.onClick(); });
     expect(btn(/^OPG$/)).toBeUndefined();
     expect(btn(/^市價$/)!.props.disabled).toBe(false);
     await act(async () => { btn(/^ATC$/)!.props.onClick(); });
     expect(btn(/^市價$/)!.props.disabled).toBe(true);
+});
+
+it('market orders are Sell only: Buy disables 市價 and switching to Buy resets to 限價 (spec 11/18)', async () => {
+    await mount();
+    // 預設買進：市價不能選
+    expect(btn(/^市價$/)!.props.disabled).toBe(true);
+    expect(btn(/^市價$/)!.props.title).toBe('買進只能限價，市價只能賣出');
+    await act(async () => { btn(/^賣出$/)!.props.onClick(); });
+    await act(async () => { btn(/^市價$/)!.props.onClick(); });
+    expect(input('價格（USD）')).toBeUndefined();
+    // 市價下切回買進：回到限價（價格欄重新出現）
+    await act(async () => { btn(/^買進$/)!.props.onClick(); });
+    expect(btn(/^市價$/)!.props.disabled).toBe(true);
+    expect(input('價格（USD）')).toBeDefined();
+    await act(async () => { input('價格（USD）').props.onChange({ target: { value: '229.5' } }); });
+    await act(async () => { await btn(/買進下單/)!.props.onClick(); });
+    await act(async () => { await btn(/確認買進/)!.props.onClick(); });
+    expect(m.place.mock.calls[0]![1]).toMatchObject({ action: 'Buy', price_type: 'LMT' });
+    expect(all()).toContain('美股 Beta：只能整股；買進只能限價，市價只能賣出；ATC 只能限價；改價會先刪單再重下。');
+});
+
+it('sends a Sell market order with price "0"', async () => {
+    await mount();
+    await act(async () => { btn(/^賣出$/)!.props.onClick(); });
+    await act(async () => { btn(/^市價$/)!.props.onClick(); });
+    await act(async () => { await btn(/賣出下單/)!.props.onClick(); });
+    await act(async () => { await btn(/確認賣出/)!.props.onClick(); });
+    expect(m.place.mock.calls[0]![1]).toEqual({ action: 'Sell', price: '0', quantity: 1, price_type: 'MKT', time_in_force: 'DAY' });
 });
 
 it('arms then places a US-only order with {code, exchange}', async () => {
@@ -156,7 +185,7 @@ it('asks for confirmation when manual-order confirmation is on', async () => {
 it('blocks on the kill switch, before and right before dispatch', async () => {
     m.locked = true;
     await mount();
-    await act(async () => { btn(/^市價$/)!.props.onClick(); });
+    await act(async () => { input('價格（USD）').props.onChange({ target: { value: '229.5' } }); });
     await act(async () => { await btn(/買進下單/)!.props.onClick(); });
     await act(async () => { await btn(/確認買進/)!.props.onClick(); });
     expect(m.place).not.toHaveBeenCalled();
