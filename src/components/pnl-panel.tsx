@@ -15,6 +15,7 @@ import * as dock from './bottom-dock.css';
 import * as panel from './panel.css';
 import * as styles from './pnl-panel.css';
 import { AsyncStatus } from './async-status';
+import { UsRealizedPnlSection } from './us-account-panels';
 
 interface PnlRow {
     date: string;
@@ -84,6 +85,9 @@ export function PnlPanel() {
     const { accounts } = useAccounts();
     const privMoney = usePrivacyMoney();
     const tradable = accounts.filter(a => canTrade(a) && ['S', 'F'].includes(a.account_type));
+    // 美股（H）另列 USD，不和台幣相加
+    const usAccts = accounts.filter(a => canTrade(a) && a.account_type === 'H');
+    const usSection = usAccts.length > 0 ? <UsRealizedPnlSection accounts={usAccts} /> : null;
     const key = tradable.map(a => `${a.account_type}:${a.broker_id}:${a.account_id}`).join(',');
     const { data, error, loading, refresh } = useQuery<PnlRow[]>(
         useCallback(() => fetchPnl(tradable), [key]), `pnl-30d:${key}`, tradable.length > 0, tradable,
@@ -113,7 +117,7 @@ export function PnlPanel() {
                     phase={loading && !data ? 'loading' : error && !data ? 'error' : data ? 'empty' : 'idle'}
                     text={loading && !data ? '載入已實現損益…' : error && !data ? '損益資料無法取得' : data ? '近 30 日無已實現損益' : '尚無帳戶資料'}
                 />
-            </div></div>
+            </div>{usSection}</div>
         );
     }
 
@@ -163,6 +167,7 @@ export function PnlPanel() {
                     </span>
                 </div>
             </div>
+            {usSection}
         </div>
     );
 }

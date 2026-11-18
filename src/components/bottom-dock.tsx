@@ -39,7 +39,7 @@ import { vars } from '../theme.css';
 import { AccountPane, UsAccountSection, type AccountRefreshControls } from './bottom-dock-account';
 import { OrdersPane } from './bottom-dock-orders';
 import { useUsDockSummary } from './bottom-dock-us';
-import { refreshUsPositions, refreshUsTrades } from '../lib/us/us-trading-state';
+import { refreshUsPositions, refreshUsTrades, usAccounts } from '../lib/us/us-trading-state';
 import { decIsPositive as decIsPositiveText, fmtDec } from '../lib/us/decimal';
 import { PositionsPane } from './bottom-dock-positions';
 import {
@@ -430,7 +430,7 @@ export function BottomDock({
                         scopeAccount={scopeAccount}
                         onRefreshControls={setAccountRefresh}
                     />
-                    {us.shown && <UsAccountSection funds={portfolio.funds} />}
+                    {us.shown && <UsAccountSection accounts={usAccounts()} />}
                 </div>
             )}
         </div>

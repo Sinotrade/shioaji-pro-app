@@ -4,7 +4,7 @@ import { canTrade } from '../lib/account-tradable';
 
 import { reconcileAfterUnknownOutcome } from '../lib/order-outcome';
 import { ChevronDown, ChevronRight } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import { useTradingLive } from '../hooks/use-stream';
 import { contractMarket } from '../lib/contract-market';
 import { ensureContract } from '../lib/contracts-cache';
@@ -25,6 +25,7 @@ import {
 import { vars } from '../theme.css';
 import { Orb } from './orb';
 import { AsyncStatus } from './async-status';
+import { UsPositionDetail } from './us-account-panels';
 import * as panel from './panel.css';
 import * as styles from './bottom-dock.css';
 import {
@@ -128,6 +129,13 @@ export function PositionsPane({
     const privMoney = usePrivacyMoney();
     const [armed, setArmed] = useState(false);
     const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
+    // 美股庫存列展開的取得批次明細（list_position_detail）
+    const [usOpen, setUsOpen] = useState<ReadonlySet<string>>(new Set());
+    const toggleUsOpen = (key: string) => setUsOpen(prev => {
+        const next = new Set(prev);
+        if (next.has(key)) next.delete(key); else next.add(key);
+        return next;
+    });
     const [busy, setBusy] = useState<{ done: number; total: number } | null>(
         null,
     );
@@ -344,14 +352,30 @@ export function PositionsPane({
     // 美股列：股數、成本／市價／損益皆 USD decimal 字串；不參加平／反與批次平倉
     const usTableRow = (p: UsPositionRow, sz: SizeClass) => {
         const dir = usAmountDir(p.pnl);
+        const rowKey = usPositionRowKey(p);
+        const open = usOpen.has(rowKey);
+        const detailId = Number(p.id);
         return (
+            <Fragment key={rowKey}>
             <tr
-                key={usPositionRowKey(p)}
                 className={styles.clickableRow}
                 onClick={() => onSelectCode(usLinkKey(p.code))}
                 title='點擊連動圖表與下單面板（美股請由下單面板賣出）'
             >
-                <td className={styles.td} />
+                <td className={styles.td}>
+                    {Number.isInteger(detailId) && (
+                        <button
+                            type='button'
+                            className={styles.cancelBtn}
+                            aria-expanded={open}
+                            aria-label={open ? '收合庫存明細' : '展開庫存明細'}
+                            title={open ? '收合庫存明細' : '展開庫存明細'}
+                            onClick={e => { e.stopPropagation(); toggleUsOpen(rowKey); }}
+                        >
+                            {open ? <ChevronDown size={12} aria-hidden /> : <ChevronRight size={12} aria-hidden />}
+                        </button>
+                    )}
+                </td>
                 <td className={styles.td}>
                     {p.code}
                     <UsTag />
@@ -384,6 +408,15 @@ export function PositionsPane({
                 {sz === 'wide' && <td className={styles.td} />}
                 {sz === 'wide' && <td className={styles.td} />}
             </tr>
+            {open && (
+                <tr>
+                    <td className={styles.td} />
+                    <td className={styles.td} colSpan={sz === 'wide' ? 11 : 6}>
+                        <UsPositionDetail account={p.account} detailId={detailId} />
+                    </td>
+                </tr>
+            )}
+            </Fragment>
         );
     };
 

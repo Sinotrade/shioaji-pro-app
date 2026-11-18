@@ -22,10 +22,10 @@ vi.mock('../lib/us/us-order-actions', async () => {
     return { ...real, cancelUsTrade: m.cancelUs };
 });
 vi.mock('../lib/risk', () => ({ checkUsOrderAllowed: () => null }));
+vi.mock('./us-account-panels', () => ({ UsPositionDetail: ({ detailId }: { detailId: number }) => `DETAIL#${detailId}` }));
 vi.mock('./bottom-dock-shared', async original => ({ ...await original<object>(), useMeasuredWidth: () => ({ ref: () => undefined, width: 1400 }) }));
 import { OrdersPane, mergeNewestFirst, type OrderRow } from './bottom-dock-orders';
 import { PositionsPane } from './bottom-dock-positions';
-import { UsAccountSection } from './bottom-dock-account';
 
 const text = (n: ReactTestInstance): string => n.children.map(c => typeof c === 'string' ? c : text(c)).join('');
 let view: ReactTestRenderer | undefined;
@@ -143,8 +143,8 @@ it('renders TW and US positions in one table with USD values in shares', async (
     expect(us).toContain('+54.00');
     expect(us).toContain('USD');
     expect(us).toContain('+3.17%');
-    // US 列沒有平／反
-    expect(rowOf('AAPL').findAllByType('button')).toHaveLength(0);
+    // US 列沒有平／反（只有展開庫存明細）
+    expect(rowOf('AAPL').findAllByType('button').map(b => b.props['aria-label'])).toEqual(['展開庫存明細']);
     rowOf('AAPL').props.onClick();
     expect(props.onSelectCode).toHaveBeenCalledWith('US:AAPL');
 });
@@ -165,12 +165,19 @@ it('hides US positions on the futures filter and shows the later-version notice 
     expect(all()).toContain('美股庫存將於後續版本提供');
 });
 
-// ---- 帳務 ----
-
-it('shows the US account placeholder without H balances, and USD balances when present', async () => {
-    await act(async () => { view = create(createElement(UsAccountSection, { funds: [{ account: S, balance: { acc_balance: 5000, date: '', errmsg: '' } }] })); });
-    expect(all()).toContain('美股帳務後續提供');
-    expect(all()).not.toContain('5,000');
-    await act(async () => { view!.update(createElement(UsAccountSection, { funds: [{ account: H, balance: { acc_balance: 1234.5, date: '', errmsg: '' } }] })); });
-    expect(all()).toContain('1,234.50 USD');
+it('expands a US position row into its lot detail without selecting the symbol', async () => {
+    const props = posProps();
+    await act(async () => { view = create(createElement(PositionsPane, props)); });
+    expect(all()).not.toContain('DETAIL#0');
+    const toggle = view!.root.findAll(n => n.type === 'button' && n.props['aria-label'] === '展開庫存明細')[0]!;
+    const stop = vi.fn();
+    await act(async () => { toggle.props.onClick({ stopPropagation: stop }); });
+    expect(stop).toHaveBeenCalled();
+    expect(all()).toContain('DETAIL#0');
+    const close = view!.root.findAll(n => n.type === 'button' && n.props['aria-label'] === '收合庫存明細')[0]!;
+    await act(async () => { close.props.onClick({ stopPropagation: vi.fn() }); });
+    expect(all()).not.toContain('DETAIL#0');
 });
+
+// 美股帳務另見 us-account-panels.test.tsx
+
