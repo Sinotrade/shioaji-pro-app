@@ -16,6 +16,7 @@
 import { createAccountQuery } from '../account-query';
 import { apiGet, apiPost } from '../api';
 import { sendOrderMutation } from '../shioaji';
+import { requestUsAccountRefresh } from './us-account-events';
 import type { Account } from '../types/portfolio';
 import type { TradeCacheHealth } from '../types/order';
 import type { IntlPosition, UsContractInfo, UsContractRecord, UsOrderReq, UsTrade } from '../types/us';
@@ -81,17 +82,17 @@ export function placeUsOrder(
         time_in_force: order.time_in_force,
         account: wireAccount(h),
     };
-    return sendOrderMutation<UsTrade>('/api/v1/order/place_order', {
+    return afterUsMutation(sendOrderMutation<UsTrade>('/api/v1/order/place_order', {
         contract: usContractKey(contract),
         stock_order: stockOrder,
-    }, h, opts).then(ensureUsAccepted);
+    }, h, opts).then(ensureUsAccepted));
 }
 
 export function cancelUsOrder(tradeId: string, account: Account, opts?: { beforeDispatch?: () => void }): Promise<UsTrade> {
     let h: Account;
     try { h = requireH(account); } catch (e) { return Promise.reject(e); }
     if (!tradeId) return Promise.reject(Object.assign(new Error('缺少委託編號，未送出刪單'), { mutationNotStarted: true as const }));
-    return sendOrderMutation<UsTrade>('/api/v1/order/cancel_order', { trade_id: tradeId }, h, opts);
+    return afterUsMutation(sendOrderMutation<UsTrade>('/api/v1/order/cancel_order', { trade_id: tradeId }, h, opts));
 }
 
 /** reduceBy：要減掉的股數（1..剩餘），不是減量後的數量 */
@@ -101,7 +102,18 @@ export function reduceUsOrderQty(tradeId: string, reduceBy: number, account: Acc
     if (!Number.isSafeInteger(reduceBy) || reduceBy < 1) {
         return Promise.reject(Object.assign(new Error('減量股數至少 1 股'), { mutationNotStarted: true as const }));
     }
-    return sendOrderMutation<UsTrade>('/api/v1/order/update_qty', { trade_id: tradeId, quantity: reduceBy }, h);
+    return afterUsMutation(sendOrderMutation<UsTrade>('/api/v1/order/update_qty', { trade_id: tradeId, quantity: reduceBy }, h));
+}
+
+/** 美股下單／刪單／減量之後（成功或結果不明）：可下單金額會變，重查美股餘額 */
+function afterUsMutation<T>(p: Promise<T>): Promise<T> {
+    return p.then(
+        value => { requestUsAccountRefresh(); return value; },
+        error => {
+            if (!(error as { mutationNotStarted?: boolean } | null)?.mutationNotStarted) requestUsAccountRefresh();
+            throw error;
+        },
+    );
 }
 
 export function hQuery<T>(path: string, account: Account, extra: Record<string, unknown> = {}): Promise<T> {

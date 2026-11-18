@@ -40,6 +40,7 @@ import { AccountPane, UsAccountSection, type AccountRefreshControls } from './bo
 import { OrdersPane } from './bottom-dock-orders';
 import { useUsDockSummary } from './bottom-dock-us';
 import { refreshUsPositions, refreshUsTrades, usAccounts } from '../lib/us/us-trading-state';
+import { requestUsAccountRefresh } from '../lib/us/us-account-batch';
 import { decIsPositive as decIsPositiveText, fmtDec } from '../lib/us/decimal';
 import { PositionsPane } from './bottom-dock-positions';
 import {
@@ -97,6 +98,8 @@ export function BottomDock({
         // 美股列併在同一張表：同一顆更新按鈕也更新美股
         if (us.shown && tab === 'orders') void refreshUsTrades();
         if (us.shown && tab === 'positions') void refreshUsPositions();
+        // 帳務分頁的美股餘額／交割也跟著同一顆更新
+        if (us.shown && tab === 'account') requestUsAccountRefresh();
     };
     const { accounts, selectedStock, selectedFutures } = useAccounts();
     useEffect(ensureAccounts, []);
@@ -385,7 +388,7 @@ export function BottomDock({
                     onChanged={onTradesChanged}
                     onSelectCode={onSelectCode}
                     // 美股列由 pane 依市場／帳戶範圍篩選（只篩期貨或選單一台股帳戶時不顯示）
-                    us={us.has ? { positions: us.state.positions, status: us.state.positionsStatus, error: us.state.positionsError } : null}
+                    us={us.has ? { positions: us.state.positions, status: us.state.positionsStatus, error: us.state.positionsError, version: us.state.positionsVersion } : null}
                 />
             )}
             {tab === 'orders' && (
