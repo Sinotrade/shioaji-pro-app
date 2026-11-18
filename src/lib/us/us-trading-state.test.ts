@@ -320,6 +320,71 @@ describe('unhealthy hint lifecycle', () => {
         expect(us.getUsTradingState().error).toBeNull();
     });
 
+    // 讓下一次 statusListener('live') 一定是「重連」（會亮提示並全部重查）
+    const reconnect = () => {
+        m.streamStatus = 'live'; m.statusListener!();
+        m.streamStatus = 'down'; m.statusListener!();
+        m.streamStatus = 'live'; m.statusListener!();
+    };
+    const settle = async () => { await vi.waitFor(() => expect(us.getUsTradingState().loading).toBe(false)); for (let i = 0; i < 20; i++) await Promise.resolve(); };
+
+    it('does not let an older health check started before a newer warning clear it', async () => {
+        us.startUsTradingState();
+        m.trades.mockResolvedValue([row()]);
+        m.health.mockResolvedValue({ state: 'Healthy', reasons: [] });
+        m.streamStatus = 'live'; m.statusListener!();
+        await us.refreshUsTrades(); await settle();
+        // 第一次提示：全部重查失敗，H 仍待對帳
+        m.trades.mockRejectedValueOnce(new Error('503'));
+        m.streamStatus = 'down'; m.statusListener!();
+        m.streamStatus = 'live'; m.statusListener!();
+        await settle();
+        expect(us.getUsTradingState().hint).toBe(us.US_DEAL_UNHEALTHY_HINT);
+        // 單一帳戶恢復 → 開始一個很慢的健康度檢查（結果是提示前的 Healthy）
+        let slow!: (v: unknown) => void;
+        m.health.mockReturnValueOnce(new Promise(r => { slow = r; }));
+        await us.refreshUsAccount(H);
+        // 又一次重連：快取現在是 Degraded
+        m.health.mockResolvedValue({ state: 'Degraded', reasons: [{ event_type: 'IntlDeal', reason: 'SequenceGap' }] });
+        m.streamStatus = 'down'; m.statusListener!();
+        m.streamStatus = 'live'; m.statusListener!();
+        await settle();
+        expect(us.getUsTradingState().hint).toBe(us.US_DEAL_UNHEALTHY_HINT);
+        // 舊檢查晚到：不能清掉新的提示
+        slow({ state: 'Healthy', reasons: [] });
+        for (let i = 0; i < 20; i++) await Promise.resolve();
+        expect(us.getUsTradingState().hint).toBe(us.US_DEAL_UNHEALTHY_HINT);
+    });
+
+    it('recomputes after a failed full refresh when single-account retries drained the pending set', async () => {
+        const H2 = { ...H, account_id: '0000002' };
+        m.accounts = [S, H, H2];
+        us.startUsTradingState();
+        m.health.mockResolvedValue({ state: 'Healthy', reasons: [] });
+        m.trades.mockImplementation(() => Promise.resolve([]));
+        m.streamStatus = 'live'; m.statusListener!();
+        await us.refreshUsTrades(); await settle();
+        // 重連：A（H）失敗、B（H2）還在查
+        let releaseB!: (v: unknown) => void;
+        let aFails = true;
+        m.trades.mockImplementation((a: Account) => {
+            if (a.account_id === H2.account_id) return new Promise(r => { releaseB = r; });
+            if (aFails) { aFails = false; return Promise.reject(new Error('503')); }
+            return Promise.resolve([]);
+        });
+        m.streamStatus = 'down'; m.statusListener!();
+        m.streamStatus = 'live'; m.statusListener!();
+        expect(us.getUsTradingState().hint).toBe(us.US_DEAL_UNHEALTHY_HINT);
+        for (let i = 0; i < 10; i++) await Promise.resolve();
+        // A 的單一帳戶重試在 B 完成前成功
+        await us.refreshUsAccount(H);
+        releaseB([]);
+        await settle();
+        // 全部重查走失敗分支，但兩個帳戶都已對帳 → 仍要依健康度清除
+        await vi.waitFor(() => expect(us.getUsTradingState().hint).toBeNull());
+        expect(m.trades.mock.calls.filter(c => (c[0] as Account).account_id === H.account_id).length).toBeGreaterThanOrEqual(2);
+    });
+
     it('still shows the hint when the cache is degraded after reconciliation', async () => {
         us.startUsTradingState();
         m.trades.mockResolvedValue([row()]);

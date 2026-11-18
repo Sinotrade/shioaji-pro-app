@@ -147,17 +147,31 @@ function raiseHint() {
     for (const a of usAccounts()) pendingReconcile.add(keyOf(a));
     publish({ hint: US_DEAL_UNHEALTHY_HINT });
 }
-let hintCheck: Promise<void> | null = null;
+let hintCheck: { generation: number; run: Promise<void> } | null = null;
+/** 每次健康度檢查加一：只有最新的那次能發布結果 */
+let hintCheckSeq = 0;
+/** 待對帳在全部重查進行中清空：重算延到全部重查結束（不論成功或失敗）再做 */
+let recomputeOwed = false;
 /** 所有帳戶都對帳過：依 trade_cache_health 重算提示（Degraded／IntlDeal 有原因才保留） */
 function recomputeHint(): Promise<void> {
-    if (hintCheck) return hintCheck;
+    // 只沿用同一個提示世代裡開始的檢查：提示亮起前開始的檢查結果可能已過期
+    if (hintCheck && hintCheck.generation === hintGeneration) return hintCheck.run;
     const base = getApiBase();
-    hintCheck = anyDealUnhealthy(usAccounts()).then(unhealthy => {
-        // 查詢期間又有新的跳號／重連，或換了伺服器：不採用這次結果
-        if (pendingReconcile.size || base !== getApiBase()) return;
+    const generation = hintGeneration;
+    const seq = ++hintCheckSeq;
+    const run = anyDealUnhealthy(usAccounts()).then(unhealthy => {
+        // 查詢期間又有新的跳號／重連、有更新的檢查，或換了伺服器：不採用這次結果
+        if (generation !== hintGeneration || seq !== hintCheckSeq || pendingReconcile.size || base !== getApiBase()) return;
         publish({ hint: unhealthy ? US_DEAL_UNHEALTHY_HINT : null });
-    }).finally(() => { hintCheck = null; });
-    return hintCheck;
+    }).finally(() => { if (hintCheck?.run === run) hintCheck = null; });
+    hintCheck = { generation, run };
+    return run;
+}
+
+/** 待對帳剛清空：全部重查進行中就記下，等它結束再重算；否則立刻重算 */
+function onReconcileDrained() {
+    if (allInFlight) recomputeOwed = true;
+    else void recomputeHint().catch(() => undefined);
 }
 
 function mergeAccount(account: Account, rows: UsTrade[]) {
@@ -235,7 +249,7 @@ export function refreshUsAccount(account: Account): Promise<void> {
         if (unapplied) scheduleAccountRefetch(account);
         // 最後一個待對帳帳戶由單一帳戶重查完成（例如全部重查曾失敗）：重算提示；
         // 全部重查進行中則由它收尾
-        if (generation === hintGeneration && pendingReconcile.delete(k) && !pendingReconcile.size && !allInFlight) void recomputeHint().catch(() => undefined);
+        if (generation === hintGeneration && pendingReconcile.delete(k) && !pendingReconcile.size) onReconcileDrained();
     }).finally(() => {
         if (duringQuery.get(k) === buffer) duringQuery.delete(k);
         accountInFlight.delete(k);
@@ -274,8 +288,15 @@ export function refreshUsTrades(): Promise<void> {
         for (const k of [...pendingReconcile]) if (!usAccounts().some(a => keyOf(a) === k)) pendingReconcile.delete(k);
         publish({ loading: false });
         // 查詢期間又亮起提示（pendingReconcile 非空）：保留，交給排隊中的重查收尾
-        if (!pendingReconcile.size) await recomputeHint();
-    })().finally(() => { allInFlight = null; });
+        if (!pendingReconcile.size) { recomputeOwed = false; await recomputeHint(); }
+    })().finally(() => {
+        allInFlight = null;
+        // 失敗分支也要收尾：期間待對帳已被單一帳戶重查清空的話，這裡補做重算
+        if (recomputeOwed) {
+            recomputeOwed = false;
+            if (!pendingReconcile.size) void recomputeHint().catch(() => undefined);
+        }
+    });
     return allInFlight;
 }
 
@@ -630,6 +651,7 @@ export function resetUsTradingStateForTest(next: Partial<UsTradingState> = {}) {
     clearDealPositionsTimers();
     pendingReconcile.clear();
     hintCheck = null;
+    recomputeOwed = false;
     positionsCapability = null;
     capabilityBase = '';
     listeners.forEach(l => l());
