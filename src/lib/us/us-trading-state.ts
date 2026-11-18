@@ -134,6 +134,32 @@ const duringQuery = new Map<string, OrderEventReport[]>();
 let allInFlight: Promise<void> | null = null;
 let allQueued: Promise<void> | null = null;
 
+/**
+ * 提示（重連、跳號）亮起後還沒權威重查成功的帳戶。每個帳戶的 update_status
+ * 成功就移除；全部對帳完才依 trade_cache_health 重算提示 — 不論對帳是由
+ * 「全部重查」還是單一帳戶重查完成，提示都不會卡住。
+ */
+const pendingReconcile = new Set<string>();
+/** 提示每亮一次加一：亮起前就開始的查詢不算對帳過 */
+let hintGeneration = 0;
+function raiseHint() {
+    hintGeneration += 1;
+    for (const a of usAccounts()) pendingReconcile.add(keyOf(a));
+    publish({ hint: US_DEAL_UNHEALTHY_HINT });
+}
+let hintCheck: Promise<void> | null = null;
+/** 所有帳戶都對帳過：依 trade_cache_health 重算提示（Degraded／IntlDeal 有原因才保留） */
+function recomputeHint(): Promise<void> {
+    if (hintCheck) return hintCheck;
+    const base = getApiBase();
+    hintCheck = anyDealUnhealthy(usAccounts()).then(unhealthy => {
+        // 查詢期間又有新的跳號／重連，或換了伺服器：不採用這次結果
+        if (pendingReconcile.size || base !== getApiBase()) return;
+        publish({ hint: unhealthy ? US_DEAL_UNHEALTHY_HINT : null });
+    }).finally(() => { hintCheck = null; });
+    return hintCheck;
+}
+
 function mergeAccount(account: Account, rows: UsTrade[]) {
     const k = keyOf(account);
     const incoming = rows
@@ -191,6 +217,7 @@ export function refreshUsAccount(account: Account): Promise<void> {
         return queued;
     }
     const base = getApiBase();
+    const generation = hintGeneration;
     const buffer: OrderEventReport[] = [];
     duringQuery.set(k, buffer);
     const run = fetchUsTrades(account, true).then(rows => {
@@ -206,6 +233,9 @@ export function refreshUsAccount(account: Account): Promise<void> {
         if (unapplied) merged = keepMonotonic(merged, account);
         publish({ trades: merged, updatedAt: Date.now(), error: null });
         if (unapplied) scheduleAccountRefetch(account);
+        // 最後一個待對帳帳戶由單一帳戶重查完成（例如全部重查曾失敗）：重算提示；
+        // 全部重查進行中則由它收尾
+        if (generation === hintGeneration && pendingReconcile.delete(k) && !pendingReconcile.size && !allInFlight) void recomputeHint().catch(() => undefined);
     }).finally(() => {
         if (duringQuery.get(k) === buffer) duringQuery.delete(k);
         accountInFlight.delete(k);
@@ -225,7 +255,9 @@ export function refreshUsTrades(): Promise<void> {
     }
     const accounts = usAccounts();
     if (!accounts.length) {
-        publish({ trades: [], loading: false });
+        // 沒有 H 帳戶：沒有可漏的回報，提示與錯誤一起清掉
+        pendingReconcile.clear();
+        publish({ trades: [], loading: false, hint: null, error: null });
         return Promise.resolve();
     }
     publish({ loading: true });
@@ -234,10 +266,15 @@ export function refreshUsTrades(): Promise<void> {
         const failed = results.filter(r => r.status === 'rejected');
         if (failed.length) {
             const reason = (failed[0] as PromiseRejectedResult).reason;
+            // 失敗的帳戶仍在 pendingReconcile：提示保留，之後重查成功才重算
             publish({ loading: false, error: `美股委託查詢失敗，保留上次資料；請按更新重試（${reason instanceof Error ? reason.message : String(reason)}）` });
             return;
         }
-        publish({ loading: false, hint: (await anyDealUnhealthy(accounts)) ? US_DEAL_UNHEALTHY_HINT : null });
+        // 全部成功＝每個帳戶都對帳過（帳戶清單在查詢期間變了的，剩下的鍵已不適用）
+        for (const k of [...pendingReconcile]) if (!usAccounts().some(a => keyOf(a) === k)) pendingReconcile.delete(k);
+        publish({ loading: false });
+        // 查詢期間又亮起提示（pendingReconcile 非空）：保留，交給排隊中的重查收尾
+        if (!pendingReconcile.size) await recomputeHint();
     })().finally(() => { allInFlight = null; });
     return allInFlight;
 }
@@ -355,6 +392,32 @@ function onUsReport(report: OrderEventReport) {
     const projected = projectUsReport(state.trades, report, account);
     if (projected) publish({ trades: projected });
     else scheduleAccountRefetch(account);
+    // 成交會改變庫存（美股委託回報只有新單／刪單／減量，不改成交量）
+    if (report.kind === 'deal') scheduleDealPositionsRefresh();
+}
+
+// 成交後重查庫存：paper 等伺服器在成交回報之後才更新庫存，立刻查會拿到舊值。
+// 最後一筆成交後 1.5 秒查一次，5 秒再補一次；連續成交合併成同一組。
+export const US_DEAL_POSITIONS_DELAYS_MS = [1500, 5000] as const;
+const dealPositionsTimers = new Set<ReturnType<typeof setTimeout>>();
+function clearDealPositionsTimers() {
+    dealPositionsTimers.forEach(clearTimeout);
+    dealPositionsTimers.clear();
+}
+function scheduleDealPositionsRefresh() {
+    clearDealPositionsTimers();
+    const base = getApiBase();
+    const mode = getServerModeVersion();
+    for (const delay of US_DEAL_POSITIONS_DELAYS_MS) {
+        const timer = setTimeout(() => {
+            dealPositionsTimers.delete(timer);
+            // 換了伺服器／模式：由模式切換的重查負責，不用舊環境的排程
+            if (base !== getApiBase() || mode !== getServerModeVersion()) { clearDealPositionsTimers(); return; }
+            if (!usAccounts().length || state.positionsStatus === 'unsupported') return;
+            void refreshUsPositions().catch(() => undefined);
+        }, delay);
+        dealPositionsTimers.add(timer);
+    }
 }
 
 // ---- 庫存（feat/intl-portfolio；能力未確認前要能降級） ----
@@ -412,14 +475,20 @@ function retryPositionsSoon() {
     }, 1000);
 }
 
+// 庫存查詢可能重疊（分頁切換、成交後排程、更新鍵）：只採用最後發出的那次
+let positionsSeq = 0;
+
 export async function refreshUsPositions(): Promise<void> {
+    const seq = ++positionsSeq;
     const accounts = usAccounts();
     if (!accounts.length) { publish({ positions: [], positionsStatus: 'idle', positionsError: null }); return; }
     const base = getApiBase();
     const mode = getServerModeVersion();
+    const superseded = () => seq !== positionsSeq;
     const stale = () => base !== getApiBase() || mode !== getServerModeVersion();
     publish({ positionsStatus: state.positionsStatus === 'ready' ? 'ready' : 'loading' });
     const capability = await hasUsPortfolioCapability();
+    if (superseded()) return;
     if (stale()) { retryPositionsSoon(); return; }
     if (capability === 'no') {
         publish({ positions: [], positionsStatus: 'unsupported', positionsError: null });
@@ -430,6 +499,7 @@ export async function refreshUsPositions(): Promise<void> {
         return;
     }
     const results = await Promise.allSettled(accounts.map(a => fetchUsPositions(a)));
+    if (superseded()) return;
     if (stale()) { retryPositionsSoon(); return; }
     const rows: (IntlPosition & { account: Account })[] = [];
     for (const [i, r] of results.entries()) {
@@ -463,7 +533,7 @@ export function startUsTradingState() {
         const timer = setTimeout(() => {
             gapTimers.delete(timer);
             if (base !== getApiBase() || !usReportLedger.takeGaps(base, opened).size) return;
-            publish({ hint: US_DEAL_UNHEALTHY_HINT });
+            raiseHint();
             void refreshUsTrades().catch(() => undefined);
         }, 1500);
         gapTimers.add(timer);
@@ -473,7 +543,7 @@ export function startUsTradingState() {
         if (live && !wasLive) {
             wasLive = true;
             // 第一次連上或重連：回報不重播，H 帳戶一律重查
-            if (hadDown) publish({ hint: US_DEAL_UNHEALTHY_HINT });
+            if (hadDown) raiseHint();
             void refreshUsTrades().catch(() => undefined);
         } else if (!live && wasLive) {
             wasLive = false;
@@ -519,6 +589,8 @@ export function startUsTradingState() {
         stopServerInfo(); clearInterval(dayTimer); if (modeTimer) clearTimeout(modeTimer);
         stopEvents(); stopGaps(); stopStatus(); stopAccounts(); gapTimers.forEach(clearTimeout);
         refetchTimers.forEach(clearTimeout); refetchTimers.clear();
+        clearDealPositionsTimers();
+        if (positionsRetry) { clearTimeout(positionsRetry); positionsRetry = null; }
         started = false;
     });
     ensureStream();
@@ -555,6 +627,9 @@ export function resetUsTradingStateForTest(next: Partial<UsTradingState> = {}) {
     allQueued = null;
     refetchTimers.forEach(clearTimeout);
     refetchTimers.clear();
+    clearDealPositionsTimers();
+    pendingReconcile.clear();
+    hintCheck = null;
     positionsCapability = null;
     capabilityBase = '';
     listeners.forEach(l => l());

@@ -4,8 +4,13 @@ import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'rea
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 const H = { account_type: 'H', person_id: 'P', broker_id: '9A95', account_id: '0000001', signed: true, username: 'u' };
-const m = vi.hoisted(() => ({ cancel: vi.fn(), place: vi.fn(), reduce: vi.fn(), state: {} as Record<string, unknown> }));
-vi.mock('../lib/account-store', () => ({ useAccounts: () => ({ accounts: [H] }) }));
+const m = vi.hoisted(() => ({ cancel: vi.fn(), place: vi.fn(), reduce: vi.fn(), state: {} as Record<string, unknown>,
+    accounts: [] as unknown[], accountListeners: new Set<() => void>() }));
+vi.mock('../lib/account-store', () => ({
+    useAccounts: () => ({ accounts: [H] }),
+    getAccountState: () => ({ accounts: m.accounts, loaded: true }),
+    subscribeAccounts: (l: () => void) => { m.accountListeners.add(l); return () => { m.accountListeners.delete(l); }; },
+}));
 vi.mock('../lib/account-tradable', () => ({ canTrade: () => true }));
 vi.mock('../lib/privacy', () => ({ usePrivacyMode: () => false, usePrivacyMoney: () => false, maskAccountId: (id: string) => id, maskMoney: (t: string) => t }));
 vi.mock('../lib/us/us-order-actions', async () => {
@@ -18,13 +23,15 @@ vi.mock('../lib/us/us-trading-state', async () => {
 });
 vi.mock('../lib/risk', () => ({ checkUsOrderAllowed: () => null }));
 vi.mock('../lib/stream', () => ({ ensureStream: vi.fn(), getStreamStatus: () => 'down', onOrderEvent: () => () => undefined, subscribeStatusStore: () => () => undefined }));
-import { fmtUsPnl, UsOrderActions, usOrderRowKey, usPositionRowKey } from './bottom-dock-us';
+import { Fragment } from 'react';
+import { fmtUsPnl, getUsRepriceTarget, openUsReprice, resetUsRepriceForTest, UsOrderActions, usOrderRowKey, usPositionRowKey, UsRepriceHost } from './bottom-dock-us';
 import { UsCancelTooEarlyError } from '../lib/us/us-order-actions';
 
 const text = (n: ReactTestInstance): string => n.children.map(c => typeof c === 'string' ? c : text(c)).join('');
 let view!: ReactTestRenderer;
 const btn = (re: RegExp) => view.root.findAllByType('button').find(b => re.test(text(b)));
 const all = () => text(view.root);
+const dialogs = () => view.root.findAll(n => typeof n.type === 'string' && n.props?.role === 'dialog');
 const trade = {
     account: H,
     contract: { security_type: 'STK', exchange: 'NASDAQ', code: 'NVDA', region: 'US' },
@@ -34,12 +41,17 @@ const trade = {
 
 beforeEach(() => {
     vi.clearAllMocks();
+    m.accounts = [H];
+    resetUsRepriceForTest();
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn() });
 });
 afterEach(async () => { await act(async () => view?.unmount()); vi.unstubAllGlobals(); });
 
-const mount = async (t: unknown = trade) => { await act(async () => { view = create(createElement(UsOrderActions, { t: t as never })); }); };
+// 改價對話框由 App 層的 UsRepriceHost 顯示，不掛在委託列裡
+const tree = (rows: unknown[]) => createElement(Fragment, null,
+    ...rows.map(t => createElement(UsOrderActions, { key: (t as typeof trade).order.id, t: t as never })), createElement(UsRepriceHost));
+const mount = async (t: unknown = trade) => { await act(async () => { view = create(tree([t])); }); };
 const openReprice = async (value: string) => {
     await act(async () => { btn(/^改價$/)!.props.onClick(); });
     const price = view.root.findAll(n => n.type === 'input' && n.props['aria-label'] === '新價格')[0]!;
@@ -78,6 +90,43 @@ it('changes price in two confirmed steps and shows both results', async () => {
     expect(all()).toContain('新委託已送出');
 });
 
+it('keeps step 2 after step 1 removes the row from the working list', async () => {
+    m.cancel.mockResolvedValue({ confirmed: true, cancelled: '8' });
+    m.place.mockResolvedValue({ order: { id: 't2', seqno: '21157800' }, status: { status: 'PendingSubmit' } });
+    await mount();
+    await openReprice('170.5');
+    await act(async () => { await btn(/確認刪除原委託/)!.props.onClick(); });
+    // 有效篩選：刪單成功後原委託離開清單，委託列卸載
+    await act(async () => { view.update(tree([])); });
+    expect(btn(/^改價$/)).toBeUndefined();
+    expect(all()).toContain('原委託已刪除，取消 8 股');
+    await act(async () => { await btn(/送出新委託/)!.props.onClick(); });
+    expect(m.place).toHaveBeenCalledTimes(1);
+    expect(m.place.mock.calls[0]![1]).toMatchObject({ price: '170.5', quantity: 8 });
+    expect(all()).toContain('新委託已送出');
+    await act(async () => { btn(/^關閉$/)!.props.onClick(); });
+    expect(getUsRepriceTarget()).toBeNull();
+    expect(dialogs()).toHaveLength(0);
+});
+
+it('does not replace an open reprice with a second one', async () => {
+    const second = { ...trade, order: { ...trade.order, id: 't2', seqno: '21157800' }, status: { ...trade.status, id: 't2' } };
+    await mount();
+    await act(async () => { expect(openUsReprice(trade as never)).toBe(true); });
+    await act(async () => { expect(openUsReprice(second as never)).toBe(false); });
+    expect(getUsRepriceTarget()!.row.order.id).toBe('t1');
+});
+
+it('closes the reprice dialog when the H account is no longer tradable', async () => {
+    await mount();
+    await act(async () => { openUsReprice(trade as never); });
+    expect(dialogs()).toHaveLength(1);
+    m.accounts = [];
+    await act(async () => { m.accountListeners.forEach(l => l()); });
+    expect(getUsRepriceTarget()).toBeNull();
+    expect(dialogs()).toHaveLength(0);
+});
+
 it('does not re-place when the cancel is unconfirmed', async () => {
     m.cancel.mockResolvedValue({ confirmed: false });
     await mount();
@@ -110,8 +159,7 @@ it('keeps busy per order: cancelling one row leaves the others usable', async ()
     const second = { ...trade, order: { ...trade.order, id: 't2', seqno: '21157800' }, status: { ...trade.status, id: 't2' } };
     let release!: (v: unknown) => void;
     m.cancel.mockReturnValueOnce(new Promise(r => { release = r; }));
-    await act(async () => { view = create(createElement('div', null,
-        createElement(UsOrderActions, { key: 'a', t: trade as never }), createElement(UsOrderActions, { key: 'b', t: second as never }))); });
+    await act(async () => { view = create(tree([trade, second])); });
     await act(async () => { void btn(/^刪單$/)!.props.onClick(); });
     const cancels = view.root.findAllByType('button').filter(b => /^(刪單|處理中…)$/.test(text(b)));
     expect(cancels.map(b => text(b))).toEqual(['處理中…', '刪單']);

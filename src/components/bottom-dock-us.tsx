@@ -8,13 +8,14 @@
 
 import { ArrowRight, CheckCircle2, Circle, Loader2, XCircle } from 'lucide-react';
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
-import { useAccounts } from '../lib/account-store';
+import { getAccountState, subscribeAccounts, useAccounts } from '../lib/account-store';
 import { canTrade } from '../lib/account-tradable';
 import { orderNumber, orderStatusLabel } from '../lib/order-status-label';
+import { captureServerMode, subscribeServerInfo, type ServerModeGuard } from '../lib/server-info-store';
 import type { AccountedUsTrade, UsOrderReq } from '../lib/types/us';
 import { decAdd, decIsPositive, decToInt, fmtDec, fmtUsPrice } from '../lib/us/decimal';
 import { cancelUsTrade, placeReplacement, US_FILLED_BEFORE_CANCEL, type UsCancelResult, priceChangeProblem, reduceUsTrade, replacementOrder, UsCancelTooEarlyError } from '../lib/us/us-order-actions';
-import { getUsTradingState, subscribeUsTradingState, usRemaining, type UsTradingState } from '../lib/us/us-trading-state';
+import { getUsTradingState, subscribeUsTradingState, usAccounts, usRemaining, type UsTradingState } from '../lib/us/us-trading-state';
 import * as styles from './bottom-dock-us.css';
 import * as dock from './bottom-dock.css';
 export { fmtUsPnl, usAccountGroupKey, usAmountDir, usPositionRowKey, UsTag, type UsPositionRow } from './bottom-dock-shared';
@@ -96,7 +97,6 @@ export function UsOrderActions({ t }: { t: AccountedUsTrade }) {
     const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
     const [reducing, setReducing] = useState(false);
     const [reduceQty, setReduceQty] = useState('');
-    const [repricing, setRepricing] = useState(false);
     const remaining = usRemaining(t);
     const working = decIsPositive(remaining);
 
@@ -143,15 +143,73 @@ export function UsOrderActions({ t }: { t: AccountedUsTrade }) {
                 </>
             ) : (
                 <>
-                    <button className={dock.cancelBtn} disabled={busy || t.order.price_type === 'MKT'} title={t.order.price_type === 'MKT' ? '市價單不能改價' : '美股改價＝先刪單再以新價格重下'} onClick={() => setRepricing(true)}>改價</button>
+                    <button className={dock.cancelBtn} disabled={busy || t.order.price_type === 'MKT'} title={t.order.price_type === 'MKT' ? '市價單不能改價' : '美股改價＝先刪單再以新價格重下'} onClick={() => openUsReprice(t)}>改價</button>
                     <button className={dock.cancelBtn} disabled={busy} title='減少股數' onClick={() => { setReducing(true); setReduceQty(''); }}>減量</button>
                     <button className={dock.cancelBtn} disabled={busy} onClick={() => void cancel()}>{busy ? '處理中…' : '刪單'}</button>
                 </>
             ))}
             {msg && <span className={msg.kind === 'err' ? styles.rowError : styles.infoMeta} role='status'>{msg.text}</span>}
-            {repricing && <UsRepriceDialog row={t} onClose={() => setRepricing(false)} />}
         </span>
     );
+}
+
+// ---- 改價對話框的宿主 ----
+//
+// 對話框不能掛在委託列裡：預設「有效」篩選下，第 1 步刪單成功後那一列就離開
+// 清單、元件卸載，第 2 步「以新價格重新下單」跟著消失。改由模組層 store 保存
+// 開窗當下的委託快照，UsRepriceHost 掛在 App 層（和 OrderConfirmHost 同層）。
+
+interface UsRepriceTarget { id: number; row: AccountedUsTrade; guard: ServerModeGuard }
+let repriceTarget: UsRepriceTarget | null = null;
+let repriceSeq = 0;
+const repriceListeners = new Set<() => void>();
+const emitReprice = () => repriceListeners.forEach(l => l());
+function subscribeReprice(listener: () => void) {
+    repriceListeners.add(listener);
+    return () => { repriceListeners.delete(listener); };
+}
+export const getUsRepriceTarget = () => repriceTarget;
+
+/** 開啟改價。已有改價視窗時不替換（回 false）：避免中途丟掉已刪單、待重下的第 2 步 */
+export function openUsReprice(row: AccountedUsTrade): boolean {
+    if (repriceTarget) return false;
+    repriceTarget = { id: ++repriceSeq, row, guard: captureServerMode() };
+    emitReprice();
+    return true;
+}
+
+/** 關閉改價；帶 id 時只關那一個（晚到的關閉不誤關新開的視窗） */
+export function closeUsReprice(id?: number) {
+    if (!repriceTarget || (id !== undefined && repriceTarget.id !== id)) return;
+    repriceTarget = null;
+    emitReprice();
+}
+
+const sameAccount = (a: { broker_id: string; account_id: string }, b: { broker_id: string; account_id: string }) =>
+    a.broker_id === b.broker_id && a.account_id === b.account_id;
+
+export function UsRepriceHost() {
+    const target = useSyncExternalStore(subscribeReprice, getUsRepriceTarget);
+    useEffect(() => {
+        if (!target) return;
+        // 換了伺服器／模式，或該 H 帳戶不再可交易：關閉（重下會落在別的環境）
+        const check = () => {
+            const accountGone = getAccountState().loaded && !usAccounts().some(a => sameAccount(a, target.row.account));
+            if (!target.guard() || accountGone) closeUsReprice(target.id);
+        };
+        check();
+        const offInfo = subscribeServerInfo(check);
+        const offAccounts = subscribeAccounts(check);
+        return () => { offInfo(); offAccounts(); };
+    }, [target]);
+    if (!target) return null;
+    return <UsRepriceDialog key={target.id} row={target.row} onClose={() => closeUsReprice(target.id)} />;
+}
+
+/** 測試用 */
+export function resetUsRepriceForTest() {
+    repriceTarget = null;
+    emitReprice();
 }
 
 // ---- 改價：刪單後重下（兩步確認） ----

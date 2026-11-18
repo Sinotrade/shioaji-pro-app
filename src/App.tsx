@@ -45,6 +45,7 @@ import { NoticeCenter } from './components/notice-center';
 import { OptPayoff } from './components/opt-payoff';
 import { OptionChain } from './components/option-chain';
 import { OrderConfirmHost } from './components/order-confirm-dialog';
+import { UsRepriceHost } from './components/bottom-dock-us';
 import { primeOrderConfirmSimulation } from './lib/order-confirm';
 import { OrderTicket } from './components/order-ticket';
 import { PanelChrome } from './components/panel-chrome';
@@ -1004,6 +1005,7 @@ function PopoutView({
         <div className={styles.shell}>
             <EventToasts />
             <OrderConfirmHost />
+            <UsRepriceHost />
             <PendingTriggers compact />
             <PendingConfirmPanel compact />
             <section className={panel.panel} style={{ flex: 1, margin: 6 }}>
@@ -1798,6 +1800,7 @@ function MainApp() {
             />
 <EventToasts />
             <OrderConfirmHost />
+            <UsRepriceHost />
             <PendingTriggers />
             <PendingConfirmPanel />
             <CommandPalette

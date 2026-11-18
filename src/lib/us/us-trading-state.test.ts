@@ -4,6 +4,7 @@ const m = vi.hoisted(() => ({
     accounts: [] as unknown[],
     trades: vi.fn(), health: vi.fn(), positions: vi.fn(), apiGet: vi.fn(),
     onEvent: null as null | ((r: unknown) => void),
+    streamStatus: 'down', statusListener: null as null | (() => void),
 }));
 vi.mock('../account-store', () => ({
     getAccountState: () => ({ accounts: m.accounts }),
@@ -11,8 +12,9 @@ vi.mock('../account-store', () => ({
 }));
 vi.mock('../account-tradable', () => ({ canTrade: () => true }));
 vi.mock('../stream', () => ({
-    ensureStream: vi.fn(), getStreamStatus: () => 'down',
-    onOrderEvent: (fn: (r: unknown) => void) => { m.onEvent = fn; return () => undefined; }, subscribeStatusStore: () => () => undefined,
+    ensureStream: vi.fn(), getStreamStatus: () => m.streamStatus,
+    onOrderEvent: (fn: (r: unknown) => void) => { m.onEvent = fn; return () => undefined; },
+    subscribeStatusStore: (fn: () => void) => { m.statusListener = fn; return () => undefined; },
 }));
 vi.mock('./us-api', () => ({ fetchUsTrades: m.trades, fetchUsTradeCacheHealth: m.health, fetchUsPositions: m.positions }));
 vi.mock('../api', () => ({ apiGet: m.apiGet }));
@@ -231,5 +233,102 @@ describe('US positions capability', () => {
         const s = us.getUsTradingState();
         expect(s.positionsStatus).toBe('ready');
         expect(s.positions[0]).toMatchObject({ code: 'NVDA', quantity: '10.5', market_price: null, account: H });
+    });
+});
+
+describe('positions refresh after US deals', () => {
+    const flush = async () => { for (let i = 0; i < 10; i++) await Promise.resolve(); };
+    beforeEach(() => {
+        vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+        vi.setSystemTime(Date.UTC(2026, 10, 18, 15, 0));
+        us.startUsTradingState();
+        m.apiGet.mockResolvedValue({ components: { schemas: { IntlPosition: {} } } });
+        m.trades.mockResolvedValue([row()]);
+        m.health.mockResolvedValue({ state: 'Healthy', reasons: [] });
+        us.resetUsTradingStateForTest({ trades: [row()] });
+    });
+    const position = (quantity: string) => ({ id: 0, code: 'NVDA', direction: 'Buy', quantity, price: '173.95', cost_basis: '1',
+        market_price: null, market_value: null, pnl: null, pnl_pct: null, currency: 'USD' });
+
+    it('re-reads positions 1.5 s after the last deal and once more at 5 s, coalescing a burst', async () => {
+        // paper 伺服器成交後稍晚才更新庫存：第一次查到舊值，第二次才是新值
+        m.positions.mockResolvedValueOnce([position('1')]).mockResolvedValue([position('1.5')]);
+        m.onEvent!(normalizeOrderEvent(fx.deal));
+        await vi.advanceTimersByTimeAsync(1000);
+        m.onEvent!(normalizeOrderEvent({ ...fx.deal, data: { IntlDeal: { ...fx.deal.data.IntlDeal, exchange_seq: '107283172' } } }));
+        await vi.advanceTimersByTimeAsync(1499);
+        expect(m.positions).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(1);
+        await flush();
+        expect(m.positions).toHaveBeenCalledTimes(1);
+        expect(us.getUsTradingState().positions[0]!.quantity).toBe('1');
+        await vi.advanceTimersByTimeAsync(3500);
+        await flush();
+        expect(m.positions).toHaveBeenCalledTimes(2);
+        expect(us.getUsTradingState().positions[0]!.quantity).toBe('1.5');
+        await vi.advanceTimersByTimeAsync(20_000);
+        expect(m.positions).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not re-read positions for order reports (new／cancel／reduce)', async () => {
+        m.onEvent!(normalizeOrderEvent(fx.orderUpdateQty));
+        await vi.advanceTimersByTimeAsync(10_000);
+        expect(m.positions).not.toHaveBeenCalled();
+    });
+
+    it('skips the re-read when positions are unsupported', async () => {
+        us.resetUsTradingStateForTest({ trades: [row()], positionsStatus: 'unsupported' });
+        m.onEvent!(normalizeOrderEvent(fx.deal));
+        await vi.advanceTimersByTimeAsync(10_000);
+        expect(m.positions).not.toHaveBeenCalled();
+    });
+
+    it('publishes only the latest of overlapping positions reads', async () => {
+        let slow!: (v: unknown) => void;
+        m.positions.mockReturnValueOnce(new Promise(r => { slow = r; })).mockResolvedValue([position('2')]);
+        const first = us.refreshUsPositions();
+        await flush();
+        await us.refreshUsPositions();
+        slow([position('1')]);
+        await first;
+        expect(us.getUsTradingState().positions[0]!.quantity).toBe('2');
+    });
+});
+
+describe('unhealthy hint lifecycle', () => {
+    it('clears the hint when there are no H accounts', async () => {
+        us.resetUsTradingStateForTest({ hint: us.US_DEAL_UNHEALTHY_HINT });
+        m.accounts = [S];
+        await us.refreshUsTrades();
+        expect(us.getUsTradingState().hint).toBeNull();
+    });
+
+    it('keeps the hint after a failed reconciliation and clears it when a later account re-read succeeds', async () => {
+        us.startUsTradingState();
+        m.health.mockResolvedValue({ state: 'Healthy', reasons: [] });
+        m.trades.mockResolvedValue([row()]);
+        m.streamStatus = 'live'; m.statusListener!();
+        m.streamStatus = 'down'; m.statusListener!();
+        await us.refreshUsTrades();
+        m.trades.mockRejectedValueOnce(new Error('503'));
+        m.streamStatus = 'live'; m.statusListener!();
+        await vi.waitFor(() => expect(us.getUsTradingState().error).toContain('美股委託查詢失敗'));
+        expect(us.getUsTradingState().hint).toBe(us.US_DEAL_UNHEALTHY_HINT);
+        // 之後單一帳戶重查成功（例如回報對不上觸發的重查）：所有帳戶都對帳過 → 依健康度清除
+        await us.refreshUsAccount(H);
+        await vi.waitFor(() => expect(us.getUsTradingState().hint).toBeNull());
+        expect(us.getUsTradingState().error).toBeNull();
+    });
+
+    it('still shows the hint when the cache is degraded after reconciliation', async () => {
+        us.startUsTradingState();
+        m.trades.mockResolvedValue([row()]);
+        m.health.mockResolvedValue({ state: 'Degraded', reasons: [{ event_type: 'IntlDeal', reason: 'SequenceGap' }] });
+        m.streamStatus = 'live'; m.statusListener!();
+        m.streamStatus = 'down'; m.statusListener!();
+        m.streamStatus = 'live'; m.statusListener!();
+        await us.refreshUsTrades();
+        await vi.waitFor(() => expect(us.getUsTradingState().loading).toBe(false));
+        expect(us.getUsTradingState().hint).toBe(us.US_DEAL_UNHEALTHY_HINT);
     });
 });
