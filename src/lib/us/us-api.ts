@@ -104,7 +104,7 @@ export function reduceUsOrderQty(tradeId: string, reduceBy: number, account: Acc
     return sendOrderMutation<UsTrade>('/api/v1/order/update_qty', { trade_id: tradeId, quantity: reduceBy }, h);
 }
 
-function hQuery<T>(path: string, account: Account, extra: Record<string, unknown> = {}): Promise<T> {
+export function hQuery<T>(path: string, account: Account, extra: Record<string, unknown> = {}): Promise<T> {
     const query = createAccountQuery();
     return query.read('H', account, current => apiPost<T>(path, {
         ...extra,
