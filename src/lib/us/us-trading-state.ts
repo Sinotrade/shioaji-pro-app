@@ -43,11 +43,13 @@ export interface UsTradingState {
     positions: (IntlPosition & { account: Account })[];
     positionsStatus: UsPositionsStatus;
     positionsError: string | null;
+    /** 每次庫存查詢成功就加一：SDK 每次查詢會重新編 id，庫存明細快取要跟著換 */
+    positionsVersion: number;
 }
 
 const initial = (): UsTradingState => ({
     trades: [], loading: false, updatedAt: null, error: null, hint: null,
-    positions: [], positionsStatus: 'idle', positionsError: null,
+    positions: [], positionsStatus: 'idle', positionsError: null, positionsVersion: 0,
 });
 let state: UsTradingState = initial();
 const listeners = new Set<() => void>();
@@ -442,7 +444,7 @@ export async function refreshUsPositions(): Promise<void> {
         }
         rows.push(...parsed.map(p => ({ ...p, account: accounts[i]! })));
     }
-    publish({ positions: rows, positionsStatus: 'ready', positionsError: null });
+    publish({ positions: rows, positionsStatus: 'ready', positionsError: null, positionsVersion: state.positionsVersion + 1 });
 }
 
 // ---- 啟動與重連 ----

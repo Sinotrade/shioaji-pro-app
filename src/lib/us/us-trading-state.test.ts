@@ -210,6 +210,10 @@ describe('US positions capability', () => {
         m.positions.mockResolvedValue([]);
         await us.refreshUsPositions();
         expect(us.getUsTradingState().positionsStatus).toBe('ready');
+        // 每次成功查詢都換版本：SDK 會重新編 id，庫存明細快取不能沿用
+        const v = us.getUsTradingState().positionsVersion;
+        await us.refreshUsPositions();
+        expect(us.getUsTradingState().positionsVersion).toBe(v + 1);
     });
 
     it('shows a failed positions read as an error', async () => {

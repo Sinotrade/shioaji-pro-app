@@ -16,7 +16,8 @@ vi.mock('../lib/us/us-account-api', async () => {
     };
 });
 
-import { UsAccountSection, UsPositionDetail, UsRealizedPnlSection } from './us-account-panels';
+import { US_PARTIAL_FAILURE, US_POSITION_DETAIL_MISMATCH, UsAccountSection, UsPositionDetail, UsRealizedPnlSection } from './us-account-panels';
+import { requestUsAccountRefresh, resetUsAccountBatchForTest } from '../lib/us/us-account-batch';
 
 const H = { account_type: 'H', person_id: 'P', broker_id: '9A95', account_id: '0000001', signed: true, username: 'u' };
 const H2 = { ...H, account_id: '0000002' };
@@ -35,6 +36,7 @@ beforeEach(() => {
     Object.values(m).forEach(f => f.mockReset());
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     seq++;
+    resetUsAccountBatchForTest();
 });
 afterEach(async () => { await act(async () => view?.unmount()); view = undefined; vi.unstubAllGlobals(); });
 
@@ -109,7 +111,7 @@ it('P&L section also shows the not-yet-open state instead of errors', async () =
 
 it('position detail lists lots with null market data shown as a dash', async () => {
     m.posDetail.mockResolvedValue([{ account_type: 'H', code: 'AAPL', quantity: '5', original_quantity: '10', acquired_date: '2026-11-03', acquisition_type: 'Buy', price: '220', cost: '1100', market_price: null, pnl: null, settlement_currency: 'USD', currency: 'USD', base_currency: 'USD' }]);
-    await mount(createElement(UsPositionDetail, { account: acct(), detailId: 0 }));
+    await mount(createElement(UsPositionDetail, { account: acct(), detailId: 0, code: 'AAPL', version: 1 }));
     expect(m.posDetail).toHaveBeenCalledWith(expect.anything(), 0);
     const t = all();
     expect(t).toContain('5（10）股');
@@ -124,4 +126,73 @@ it('retries once when the query was dropped because the server mode was learned 
     expect(m.balance).toHaveBeenCalledTimes(2);
     expect(all()).toContain('帳戶餘額50.00 USD');
     expect(all()).not.toContain('已丟棄回應');
+});
+
+// useQuery 兩次查詢之間至少隔 1.5 秒
+const later = () => { const t = Date.now() + 2000; vi.spyOn(Date, 'now').mockReturnValue(t); };
+const settle = async () => { await act(async () => { await new Promise(r => setTimeout(r, 0)); }); };
+
+it('dock refresh (and US order events) re-query balance, also after a 503', async () => {
+    m.balance.mockRejectedValueOnce(unavailable()).mockResolvedValue({ account_type: 'H', currency: 'USD', balance: '10', buying_power: '10' });
+    m.settlements.mockRejectedValueOnce(unavailable()).mockResolvedValue([]);
+    await mount(createElement(UsAccountSection, { accounts: [acct()] }));
+    expect(all()).toContain('美股帳務服務尚未開放');
+    later();
+    await act(async () => { requestUsAccountRefresh(); });
+    await settle();
+    expect(m.balance).toHaveBeenCalledTimes(2);
+    expect(all()).toContain('帳戶餘額10.00 USD');
+    vi.restoreAllMocks();
+});
+
+it('position detail is cached per code and positions version, and rejects lots of another symbol', async () => {
+    const lot = (code: string) => ({ account_type: 'H', code, quantity: '1', original_quantity: '1', acquired_date: '2026-11-03', acquisition_type: 'Buy', price: '1', cost: '1', market_price: null, pnl: null, settlement_currency: 'USD', currency: 'USD', base_currency: 'USD' });
+    const a = acct();
+    m.posDetail.mockResolvedValue([lot('AAPL')]);
+    await mount(createElement(UsPositionDetail, { account: a, detailId: 0, code: 'AAPL', version: 1 }));
+    await act(async () => view!.unmount());
+    // 庫存重查後 id 0 變成 MSFT：不能沿用 AAPL 的快取
+    m.posDetail.mockResolvedValue([lot('MSFT')]);
+    await mount(createElement(UsPositionDetail, { account: a, detailId: 0, code: 'MSFT', version: 2 }));
+    expect(m.posDetail).toHaveBeenCalledTimes(2);
+    expect(all()).not.toContain(US_POSITION_DETAIL_MISMATCH);
+    await act(async () => view!.unmount());
+    // 回來的明細代碼不符這一列：不顯示別檔的批次
+    m.posDetail.mockResolvedValue([lot('AAPL')]);
+    await mount(createElement(UsPositionDetail, { account: a, detailId: 1, code: 'TSLA', version: 3 }));
+    expect(all()).toContain(US_POSITION_DETAIL_MISMATCH);
+    expect(all()).not.toContain('2026-11-03');
+});
+
+it('keeps the last good P&L of a failed account, marks it and leaves it out of the total', async () => {
+    const pl = (pnl: string, id: string) => ({ account_type: 'H', detail_id: id, code: 'AAPL', direction: 'Sell', date: '2026-11-17', quantity: '1', price: '1', cost: '1', pnl, pnl_pct: '1', currency: 'USD', base_currency: 'USD' });
+    const a1 = acct(); const a2 = acct(H2);
+    m.pnl.mockImplementation(async (a: typeof H) => [pl(a.account_id === a1.account_id ? '10' : '5', a.account_id)]);
+    m.dividends.mockResolvedValue([]);
+    await mount(createElement(UsRealizedPnlSection, { accounts: [a1, a2] }));
+    expect(all()).toContain('已實現損益合計+15.00 USD');
+    m.pnl.mockImplementation(async (a: typeof H) => {
+        if (a.account_id === a2.account_id) throw new Error('502 UPSTREAM_ERROR');
+        return [pl('10', a.account_id)];
+    });
+    later();
+    await act(async () => { view!.root.findAll(n => n.type === 'button' && /更新美股損益/.test(String(n.props['aria-label'] ?? n.props.title ?? '')))[0]?.props.onClick(); });
+    await settle();
+    const t = all();
+    expect(t).toContain('已實現損益合計+10.00 USD');
+    expect(t).toContain(US_PARTIAL_FAILURE);
+    expect(t).toContain('（上次查詢）');
+    expect(t).toContain('+5.00 USD');
+    vi.restoreAllMocks();
+});
+
+it('shows an error state, not 「無已實現損益」, when every account failed', async () => {
+    m.pnl.mockRejectedValue(new Error('502 UPSTREAM_ERROR'));
+    m.dividends.mockRejectedValue(new Error('502 UPSTREAM_ERROR'));
+    await mount(createElement(UsRealizedPnlSection, { accounts: [acct(), acct(H2)] }));
+    const t = all();
+    expect(t).toContain('美股已實現損益查詢失敗');
+    expect(t).toContain('美股現金股利查詢失敗');
+    expect(t).not.toContain('無美股已實現損益');
+    expect(t).not.toContain('已實現損益合計');
 });

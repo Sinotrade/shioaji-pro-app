@@ -60,6 +60,8 @@ export interface UsPositionsInput {
     positions: UsPositionRow[];
     status: UsPositionsStatus;
     error?: string | null;
+    /** 庫存查詢版本（id 每次重新編號） */
+    version?: number;
 }
 
 type SortMode = 'default' | 'value' | 'pnl' | 'code';
@@ -412,7 +414,7 @@ export function PositionsPane({
                 <tr>
                     <td className={styles.td} />
                     <td className={styles.td} colSpan={sz === 'wide' ? 11 : 6}>
-                        <UsPositionDetail account={p.account} detailId={detailId} />
+                        <UsPositionDetail account={p.account} detailId={detailId} code={p.code} version={us?.version ?? 0} />
                     </td>
                 </tr>
             )}
