@@ -53,18 +53,28 @@ export function usTapeRowFromMeta(meta: UsTickMeta): UsTapeRow {
     return { id: rowSeq++, ts: Math.floor(us), time: `${time}.${String(Math.floor(us) % 1_000_000).padStart(6, '0')}`, price: meta.price, volume: meta.volume, tickType: meta.tickType ?? 0 };
 }
 
+/** 歷史的 ns 時間經 JSON 數字傳遞後只準到 ±1 µs（見 us-history usTimeToUs） */
+export const TAPE_DEDUPE_TOLERANCE_US = 1;
+
 /**
- * 歷史回來時與載入期間收到的即時列合併：即時列若與歷史同一筆（同一微秒、價、量）
- * 就丟掉，避免重複；合併後依時間新到舊、取前 max 筆。
+ * 歷史回來時與載入期間收到的即時列合併：即時列若與某筆歷史同價、同量、時間
+ * 相差不超過 1 µs，就視為同一筆丟掉（每筆歷史只抵銷一筆）；合併後依時間
+ * 新到舊、取前 max 筆。
  */
 export function mergeUsTape(live: readonly UsTapeRow[], hist: readonly UsTapeRow[], max = MAX_ROWS): UsTapeRow[] {
-    const seen = new Map<string, number>();
-    const keyOf = (r: UsTapeRow) => `${r.ts}|${Number(r.price)}|${r.volume}`;
-    for (const r of hist) seen.set(keyOf(r), (seen.get(keyOf(r)) ?? 0) + 1);
+    const pool = new Map<string, number[]>();
+    const keyOf = (r: UsTapeRow) => `${Number(r.price)}|${r.volume}`;
+    for (const r of hist) {
+        const list = pool.get(keyOf(r)) ?? [];
+        list.push(r.ts);
+        pool.set(keyOf(r), list);
+    }
     const fresh = live.filter(r => {
-        const n = seen.get(keyOf(r)) ?? 0;
-        if (n > 0) { seen.set(keyOf(r), n - 1); return false; }
-        return true;
+        const list = pool.get(keyOf(r));
+        const i = list ? list.findIndex(ts => Math.abs(ts - r.ts) <= TAPE_DEDUPE_TOLERANCE_US) : -1;
+        if (i < 0) return true;
+        list!.splice(i, 1);
+        return false;
     });
     return [...fresh, ...hist].map((r, i) => [r, i] as const).sort((a, b) => b[0].ts - a[0].ts || a[1] - b[1]).map(([r]) => r).slice(0, max);
 }

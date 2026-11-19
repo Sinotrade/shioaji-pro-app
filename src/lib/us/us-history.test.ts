@@ -185,16 +185,29 @@ describe('availability and fetch', () => {
         m.base.mockReturnValue('http://127.0.0.1:21391');
     });
     it('marks the sidecar the request was actually dispatched to (boot gate rebase)', async () => {
-        m.base.mockReturnValue('http://a');
-        m.post.mockImplementationOnce(async (_p: string, _b: unknown, opts: { beforeDispatch?: () => void }) => {
-            m.base.mockReturnValue('http://b'); // 啟動閘門改派到 B
-            opts.beforeDispatch?.();
+        m.base.mockReturnValue('http://127.0.0.1:1111');
+        m.post.mockImplementationOnce(async (_p: string, _b: unknown, opts: { beforeDispatch?: (url?: string) => void }) => {
+            m.base.mockReturnValue('http://127.0.0.1:2222'); // 啟動閘門改派到 B
+            opts.beforeDispatch?.('http://127.0.0.1:2222/api/v1/data/snapshots');
             throw Object.assign(new Error('404 Not Found'), { status: 404 });
         });
         await expect(fetchUsSnapshots([AAPL])).rejects.toSatisfy(isUsHistoryUnavailable);
         expect(usHistoryAvailable()).toBe(false); // B
-        m.base.mockReturnValue('http://a');
+        m.base.mockReturnValue('http://127.0.0.1:1111');
         expect(usHistoryAvailable()).toBe(true);
+        m.base.mockReturnValue('http://127.0.0.1:21391');
+    });
+    it('uses the dispatched URL even when the current base moved again before dispatch (native transport wait)', async () => {
+        m.base.mockReturnValue('http://127.0.0.1:1111');
+        m.post.mockImplementationOnce(async (_p: string, _b: unknown, opts: { beforeDispatch?: (url?: string) => void }) => {
+            m.base.mockReturnValue('http://127.0.0.1:2222'); // URL 已對 A 建好，等待期間目前 base 變成 B
+            opts.beforeDispatch?.('http://127.0.0.1:1111/api/v1/data/snapshots');
+            throw Object.assign(new Error('404 Not Found'), { status: 404 });
+        });
+        await expect(fetchUsSnapshots([AAPL])).rejects.toSatisfy(isUsHistoryUnavailable);
+        expect(usHistoryAvailable()).toBe(true); // B 不受影響
+        m.base.mockReturnValue('http://127.0.0.1:1111');
+        expect(usHistoryAvailable()).toBe(false); // A 才是回應者
         m.base.mockReturnValue('http://127.0.0.1:21391');
     });
     it('does not latch on 5xx', async () => {

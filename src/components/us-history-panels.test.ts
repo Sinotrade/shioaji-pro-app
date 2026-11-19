@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { usBestLevel } from './us-depth';
+import { parseUsTicks } from '../lib/us/us-history';
 import { mergeUsTape, usTapeRowFromMeta, usTapeRowsFromHistory } from './us-tick-tape';
 
 describe('usBestLevel', () => {
@@ -38,6 +39,18 @@ describe('mergeUsTape', () => {
     it('keeps a same-price same-volume trade in a different microsecond of the same ms', () => {
         const near = usTapeRowFromMeta({ key: 'US:AAPL', price: '352.02', session: 'Regular', freshness: null, ts: t0 + 2, tsUs: (t0 + 2) * 1000 + 800, volume: 12 });
         expect(mergeUsTape([near], hist)).toHaveLength(4);
+    });
+    it('matches a live trade to history parsed from an imprecise ns JSON number (±1 µs)', () => {
+        // 1795012200000016 µs 的 ns 值超過 2^53，JSON.parse 後變成 ...015.9xx µs
+        const ns = 1795012200000016000;
+        const parsed = parseUsTicks({ ts: [ns], close: [352.05], volume: [8] })!;
+        expect(Math.abs(parsed[0]!.tsUs - 1795012200000016)).toBeLessThanOrEqual(1);
+        const h = usTapeRowsFromHistory(parsed);
+        const live = usTapeRowFromMeta({ key: 'US:AAPL', price: '352.05', session: 'Regular', freshness: null, ts: 1795012200000, tsUs: 1795012200000016, volume: 8 });
+        expect(mergeUsTape([live], h)).toHaveLength(1);
+        // 差 2 µs 以上是不同成交
+        const other = usTapeRowFromMeta({ key: 'US:AAPL', price: '352.05', session: 'Regular', freshness: null, ts: 1795012200000, tsUs: 1795012200000019, volume: 8 });
+        expect(mergeUsTape([other], h)).toHaveLength(2);
     });
     it('keeps a live row that only shares the timestamp', () => {
         const other = usTapeRowFromMeta({ key: 'US:AAPL', price: '352.02', session: 'Regular', freshness: null, ts: t0 + 2, tsUs: (t0 + 2) * 1000, volume: 99 });

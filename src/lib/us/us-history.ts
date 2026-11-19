@@ -70,12 +70,13 @@ function usContractBody(c: Pick<ContractBase, 'code' | 'exchange'>) {
 
 async function usPost<T>(path: string, body: unknown, parse: (raw: unknown) => T | null, opts?: { timeoutMs?: number }): Promise<T> {
     if (!usHistoryAvailable()) throw new UsHistoryUnavailable();
-    // 實際送出的 sidecar：啟動閘門可能在送出前把請求改派到另一個 base，
-    // 所以在送出那一刻（beforeDispatch，改派之後）才記下
+    // 實際送出的 sidecar：啟動閘門可能在送出前把請求改派到另一個 base，而
+    // 桌面版等待原生傳輸時目前的 base 又可能已經變了 — 一律以 beforeDispatch
+    // 帶來的實際 URL 的 origin 為準
     let base = getApiBase();
     let raw: unknown;
     try {
-        raw = await apiPost<unknown>(path, body, { timeoutMs: opts?.timeoutMs ?? 20_000, beforeDispatch: () => { base = getApiBase(); } });
+        raw = await apiPost<unknown>(path, body, { timeoutMs: opts?.timeoutMs ?? 20_000, beforeDispatch: (url) => { base = url ? originOf(url) ?? base : base; } });
     } catch (e) {
         const status = (e as { status?: unknown })?.status;
         const msg = e instanceof Error ? e.message : String(e);
@@ -94,6 +95,10 @@ async function usPost<T>(path: string, body: unknown, parse: (raw: unknown) => T
         throw new UsHistoryUnavailable();
     }
     return parsed;
+}
+
+function originOf(url: string): string | null {
+    try { return new URL(url).origin; } catch { return null; }
 }
 
 // ---- time ----
@@ -233,8 +238,10 @@ function sessionOf(v: unknown): UsTradingSession | null {
 }
 
 /** 時間欄位 → epoch µs（ns 數字取整到 µs；字串取小數秒前 6 位） */
+// ns 的 JSON 數字（約 1.8e18）超過 2^53，JSON.parse 時已經四捨五入到 256 ns
+// 的倍數，無法還原原值；取最接近的 µs，誤差最多 ±1 µs（去重時容許這個誤差）。
 function usTimeToUs(rawTime: unknown, ms: number): number {
-    if (typeof rawTime === 'number' && rawTime > 1e17) return Math.floor(rawTime / 1e3);
+    if (typeof rawTime === 'number' && rawTime > 1e17) return Math.round(rawTime / 1e3);
     if (typeof rawTime === 'number' && rawTime > 1e14) return Math.floor(rawTime);
     const frac = typeof rawTime === 'string' ? /\.(\d+)/.exec(rawTime)?.[1] : undefined;
     if (frac) return Math.floor(ms / 1000) * 1_000_000 + Number(frac.padEnd(6, '0').slice(0, 6));

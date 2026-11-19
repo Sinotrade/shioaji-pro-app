@@ -80,3 +80,12 @@ it('apiPost rechecks before dispatch and hands raw response headers to onRespons
     expect(out).toEqual({ ok: 1 });
     expect(seen).toEqual(['dispatch', 'inst-A']);
 });
+
+it('apiPost hands beforeDispatch the exact URL fetch is called with', async () => {
+    const fetchMock = vi.fn((_url: string) => Promise.resolve(new Response('{}')));
+    vi.stubGlobal('fetch', fetchMock);
+    let dispatched: string | undefined;
+    await apiPost('/api/v1/data/snapshots', {}, { beforeDispatch: (url) => { dispatched = url; } });
+    expect(dispatched).toBe(fetchMock.mock.calls[0]![0]);
+    expect(dispatched).toMatch(/\/api\/v1\/data\/snapshots$/);
+});

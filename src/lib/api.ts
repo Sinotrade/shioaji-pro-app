@@ -127,7 +127,7 @@ async function withWebviewInfoSlot<T>(origin: string, signal: AbortSignal | unde
     }
 }
 
-async function doFetch(url: string, init?: RequestInit, beforeDispatch?: () => void): Promise<Response> {
+async function doFetch(url: string, init?: RequestInit, beforeDispatch?: (url: string) => void): Promise<Response> {
     // #285: an App launch reads nothing until boot has checked the server
     const held = serverReadsHeld();
     if (held) {
@@ -171,10 +171,10 @@ async function doFetch(url: string, init?: RequestInit, beforeDispatch?: () => v
             }
         }
         const { fetch: tauriFetch } = await import('@tauri-apps/plugin-http');
-        beforeDispatch?.();
+        beforeDispatch?.(url);
         return tauriFetch(url, init);
     }
-    beforeDispatch?.();
+    beforeDispatch?.(url);
     return fetch(url, init);
 }
 
@@ -306,7 +306,8 @@ export async function apiPost<T>(
     body: unknown,
     opts?: {
         timeoutMs?: number; agentInitiated?: boolean; agentCallId?: string; agentAuto?: boolean;
-        beforeDispatch?: () => void;
+        /** 送出前一刻呼叫；直接 fetch 的路徑會帶上實際送出的 URL（啟動閘門改派之後） */
+        beforeDispatch?: (url?: string) => void;
         // 讀取回應標頭（例如 X-Shioaji-Instance，SDK 1.7.8+）；在解析 body 前呼叫
         onResponse?: (res: Response) => void;
     },
@@ -315,12 +316,12 @@ export async function apiPost<T>(
     // Loading the native transport (or serializing the body) can outlive a
     // mode change, even when the final mode is the same as the initial one.
     const subscriptionVersion = path === '/api/v1/auth/subscribe_trade' ? getServerModeVersion() : undefined;
-    const beforeDispatch = () => {
+    const beforeDispatch = (url?: string) => {
         if (subscriptionVersion !== undefined && getServerModeVersion() !== subscriptionVersion) {
             throw Object.assign(new Error('訂閱期間伺服器模式已變更，未送出請求；請重新訂閱'),
                 { subscriptionNotStarted: true as const });
         }
-        opts?.beforeDispatch?.();
+        opts?.beforeDispatch?.(url);
     };
     if (isTauri && AGENT_HARNESS_MUTATIONS.has(path) && !serverIdentityVerified()) {
         throw Object.assign(
@@ -418,7 +419,7 @@ export async function apiPost<T>(
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(body),
                 signal,
-            }, () => { beforeDispatch(); dispatched = true; });
+            }, (url) => { beforeDispatch(url); dispatched = true; });
         } catch (error) {
             throw markDispatchedOrderError(error, path, dispatched);
         }
