@@ -1,10 +1,13 @@
 // src/components/us-quote-board.tsx — 美股報價板
 //
-// SDK 1.8.0b1 只有逐筆與最佳一檔，沒有快照與歷史：第一筆 tick 前只顯示
-// 代碼／名稱／交易所／前一日參考價／幣別；之後補上成交價、漲跌、開高低、
-// 總量與最佳買賣。價格一律是原始 decimal 字串（USD），不套用台股級距。
+// 有即時逐筆時顯示成交價、漲跌、開高低、總量與最佳買賣。第一筆 tick 前
+// 先抓一次美股快照（SDK 1.8.0b1，只有正式環境有資料）顯示最近交易日的
+// 收盤與開高低；快照拿不到（舊 SDK、非正式環境）就只顯示前一日參考價。
+// 即時價格是原始 decimal 字串（USD），不套用台股級距；快照數字是 float，只供顯示。
 
+import { useEffect, useState } from 'react';
 import { useQuote } from '../hooks/use-stream';
+import { fetchUsSnapshots, type UsSnapshot } from '../lib/us/us-history';
 import { contractLinkKey } from '../lib/contract-key';
 import type { ContractInfo } from '../lib/types/contract';
 import { decCompare, fmtUsPrice } from '../lib/us/decimal';
@@ -29,9 +32,29 @@ const dirOf = (chg: string | undefined): 'up' | 'down' | 'flat' => {
     return c > 0 ? 'up' : c < 0 ? 'down' : 'flat';
 };
 
+/** 第一筆即時成交前抓一次快照；失敗不重試（換商品再抓） */
+function useUsSnapshot(contract: ContractInfo, enabled: boolean): UsSnapshot | null {
+    const [snap, setSnap] = useState<{ key: string; row: UsSnapshot } | null>(null);
+    const key = `${contract.exchange}:${contract.code}`;
+    useEffect(() => {
+        if (!enabled) return;
+        if (snap?.key === key) return;
+        let cancelled = false;
+        fetchUsSnapshots([contract])
+            .then(rows => { const row = rows[0]; if (!cancelled && row && row.close > 0) setSnap({ key, row }); })
+            .catch(() => { /* 沒有快照：維持參考價顯示 */ });
+        return () => { cancelled = true; };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [key, enabled]);
+    return snap?.key === key ? snap.row : null;
+}
+
+const numDir = (v: number): 'up' | 'down' | 'flat' => (v > 0 ? 'up' : v < 0 ? 'down' : 'flat');
+
 export function UsQuoteBoard({ contract }: { contract: ContractInfo }) {
     const key = contractLinkKey(contract);
     const quote = useQuote(key);
+    const snap = useUsSnapshot(contract, !quote?.tick);
     const halt = useUsHalt(contract);
     const tick = quote?.tick;
     const bid = quote?.bidask?.bid_price?.[0];
@@ -62,6 +85,19 @@ export function UsQuoteBoard({ contract }: { contract: ContractInfo }) {
                     {meta && US_SESSION_LABEL[meta.session] && <Stat label='時段'>{US_SESSION_LABEL[meta.session]}</Stat>}
                     {meta?.freshness && meta.freshness !== 'Realtime' && <Stat label='行情'>{meta.freshness === 'Delayed' ? '延遲' : '過時'}</Stat>}
                 </>
+            ) : snap ? (
+                <>
+                    <span className={styles.bigPrice[numDir(snap.changePrice)]}>{fmtUsPrice(snap.close)}</span>
+                    <span className={styles.changeBlock}>
+                        <span className={us.dir[numDir(snap.changePrice)]}>{`${snap.changePrice > 0 ? '+' : ''}${fmtUsPrice(snap.changePrice)}`}</span>
+                        <span className={us.dir[numDir(snap.changePrice)]}>{`${snap.changeRate > 0 ? '+' : ''}${snap.changeRate.toFixed(2)}%`}</span>
+                    </span>
+                    <Stat label='開'>{fmtUsPrice(snap.open)}</Stat>
+                    <Stat label='高'>{fmtUsPrice(snap.high)}</Stat>
+                    <Stat label='低'>{fmtUsPrice(snap.low)}</Stat>
+                    <Stat label='總量'>{fmtInt(snap.totalVolume)}</Stat>
+                    <span className={us.meta}>快照{snap.tradeDate ? `（${snap.tradeDate}）` : ''}<br />尚無即時報價</span>
+                </>
             ) : (
                 <>
                     <span className={styles.bigPrice.flat}>{ref ? fmtUsPrice(ref) : '—'}</span>
@@ -71,7 +107,7 @@ export function UsQuoteBoard({ contract }: { contract: ContractInfo }) {
                     </span>
                 </>
             )}
-            {tick && ref && <Stat label='參考'>{fmtUsPrice(ref)}</Stat>}
+            {(tick || snap) && ref && <Stat label='參考'>{fmtUsPrice(ref)}</Stat>}
             {(halt || contract.trading_suspended) && (
                 <span className={us.halt}>{halt ? usHaltLabel(halt) : '暫停交易'}</span>
             )}

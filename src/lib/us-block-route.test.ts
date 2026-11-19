@@ -11,9 +11,17 @@ describe('usBlockRoute', () => {
     it('blocks every unsupported panel for US contracts', () => {
         for (const t of US_UNSUPPORTED) expect(usBlockRoute(t, US)).toEqual({ kind: 'unsupported' });
     });
-    it('routes chart to the quote board and intraday to the US line', () => {
-        expect(usBlockRoute('chart', US)).toEqual({ kind: 'chart-quote' });
+    it('routes chart, intraday, tape and depth to the US components', () => {
+        expect(usBlockRoute('chart', US)).toEqual({ kind: 'chart' });
         expect(usBlockRoute('intraday', US)).toEqual({ kind: 'intraday' });
+        expect(usBlockRoute('tape', US)).toEqual({ kind: 'tape' });
+        expect(usBlockRoute('depth', US)).toEqual({ kind: 'depth' });
+        for (const t of ['chart', 'intraday', 'tape', 'depth'] as const) expect(US_UNSUPPORTED.has(t)).toBe(false);
+    });
+    it('keeps panels without US data unsupported', () => {
+        for (const t of ['depthmap', 'volprofile', 'replay', 'chips', 'optchain', 'conditional', 'backtest'] as const) {
+            expect(usBlockRoute(t, US)).toEqual({ kind: 'unsupported' });
+        }
     });
     it('leaves ticket/flash to their own wrappers and never touches TW', () => {
         expect(usBlockRoute('ticket', US)).toBeNull();
@@ -39,12 +47,12 @@ describe('App wiring', () => {
             expect(guard).toBeLessThan(popout.indexOf(branch));
         }
         expect(popout).toContain("usRoute?.kind === 'unsupported'");
-        expect(popout).toContain("usRoute?.kind === 'chart-quote'");
-        expect(popout).toContain("usRoute?.kind === 'intraday'");
+        for (const kind of ['chart', 'intraday', 'tape', 'depth']) expect(popout).toContain(`usRoute?.kind === '${kind}'`);
     });
 
     it('main window BlockBody uses the same route', () => {
         const main = body('BlockBody');
         expect(main.indexOf('usBlockRoute(block.type, contract)')).toBeLessThan(main.indexOf('switch (block.type)'));
+        for (const kind of ['chart', 'intraday', 'tape', 'depth']) expect(main).toContain(`usRoute?.kind === '${kind}'`);
     });
 });

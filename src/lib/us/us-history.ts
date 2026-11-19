@@ -1,0 +1,376 @@
+// src/lib/us/us-history.ts — 美股歷史行情（SDK 1.8.0b1 起：snapshots／kbars／ticks）
+//
+// HTTP（與台股同一組端點，contract 帶 region US）：
+//   - POST /api/v1/data/kbars：1 分 K，欄位與台股同（datetime／Open…）。美股的
+//     時間是 UTC 的「K 棒結束時間」（台股是台北牆鐘），只有一般盤；日 K 目前回空。
+//   - POST /api/v1/data/ticks：UsTicks（ts 為 UTC epoch ns，另有 session、
+//     updates_last、odd_lot；bid／ask 可能是 null）。只有一般盤（含收盤競價
+//     session=AfterHours）；一次最多 100000 筆。部分 sidecar 版本回台股形狀
+//     （datetime 字串、沒有 session）— 兩種都接受，時間一律當 UTC。
+//   - POST /api/v1/data/snapshots：每列帶 region，美股列是 UsSnapshot。
+// 美股行情只有 BC 有；IDC 回空。
+//
+// 舊版 SDK（1.8.0 以前）或回應形狀不對（4xx、欄位缺）時記下「這個 sidecar
+// 沒有美股歷史」，之後不再打（換 sidecar 才重試）；面板維持原本只用即時逐筆
+// 的行為。5xx／逾時只讓這一次失敗，不自動重試。
+//
+// 圖表時間模型與台股一致：牆鐘當 UTC 編碼（台股是台北牆鐘），美股用紐約
+// 牆鐘 — 與 App 其他地方顯示美股時間（nyDateTime）一致。
+
+import { apiPost } from '../api';
+import { getApiBase } from '../runtime';
+import { knownServerInfo } from '../server-info-store';
+import type { ContractBase } from '../types/contract';
+import type { Candle } from '../types/market';
+import { wallClockToUtc } from '../utils/kbars';
+import { nyDateTime, type UsTradingSession } from './us-quotes';
+
+// ---- availability ----
+
+const unavailableBases = new Set<string>();
+
+/** SDK 版本字串（1.8.0-beta.1／1.8.0b1／1.7.11）→ 是否已有美股歷史 API；不明回 null */
+export function sdkHasUsHistory(version: string | undefined | null): boolean | null {
+    const m = /^(\d+)\.(\d+)\./.exec(String(version ?? '').trim());
+    if (!m) return null;
+    const major = Number(m[1]);
+    const minor = Number(m[2]);
+    return major > 1 || (major === 1 && minor >= 8);
+}
+
+export function usHistoryAvailable(): boolean {
+    if (unavailableBases.has(getApiBase())) return false;
+    return sdkHasUsHistory(knownServerInfo()?.version) !== false;
+}
+
+function markUnavailable() {
+    unavailableBases.add(getApiBase());
+}
+
+export function resetUsHistoryForTest() {
+    unavailableBases.clear();
+}
+
+/** 美股歷史不可用（舊 SDK／形狀不對）時的錯誤；面板據此退回只用即時資料 */
+export class UsHistoryUnavailable extends Error {
+    constructor() {
+        super('這個 SDK 版本沒有美股歷史行情');
+        this.name = 'UsHistoryUnavailable';
+    }
+}
+
+export function isUsHistoryUnavailable(e: unknown): e is UsHistoryUnavailable {
+    return e instanceof UsHistoryUnavailable;
+}
+
+function usContractBody(c: Pick<ContractBase, 'code' | 'exchange'>) {
+    return { security_type: 'STK', region: 'US', exchange: c.exchange, code: c.code.trim().toUpperCase() };
+}
+
+async function usPost<T>(path: string, body: unknown, parse: (raw: unknown) => T | null, opts?: { timeoutMs?: number }): Promise<T> {
+    if (!usHistoryAvailable()) throw new UsHistoryUnavailable();
+    let raw: unknown;
+    try {
+        raw = await apiPost<unknown>(path, body, { timeoutMs: opts?.timeoutMs ?? 20_000 });
+    } catch (e) {
+        const status = (e as { status?: unknown })?.status;
+        const msg = e instanceof Error ? e.message : String(e);
+        // 4xx：舊 SDK 不認 region US 等 — 記下不再打
+        if ((typeof status === 'number' && status >= 400 && status < 500) || /^4\d\d( |$)/.test(msg)) {
+            markUnavailable();
+            throw new UsHistoryUnavailable();
+        }
+        throw e;
+    }
+    const parsed = parse(raw);
+    if (parsed === null) {
+        markUnavailable();
+        throw new UsHistoryUnavailable();
+    }
+    return parsed;
+}
+
+// ---- time ----
+
+/** 美股時間欄位 → epoch ms（UTC）。數字依位數判斷 ns／µs／ms／s；無時區的字串當 UTC。 */
+export function usTimeToMs(v: unknown): number | null {
+    if (typeof v === 'number') {
+        if (!Number.isFinite(v) || v <= 0) return null;
+        if (v > 1e17) return Math.floor(v / 1e6);
+        if (v > 1e14) return Math.floor(v / 1e3);
+        if (v > 1e11) return Math.floor(v);
+        return Math.floor(v * 1000);
+    }
+    if (typeof v !== 'string' || v.length < 10) return null;
+    const s = v.trim();
+    const hasZone = /(?:Z|[+-]\d{2}:?\d{2})$/.test(s.slice(10));
+    if (hasZone) {
+        const ms = Date.parse(s);
+        return Number.isFinite(ms) ? ms : null;
+    }
+    const m = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,9}))?)?)?$/.exec(s);
+    if (!m) return null;
+    const frac = m[7] ? Number(`0.${m[7]}`) * 1000 : 0;
+    return Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4] ?? 0), Number(m[5] ?? 0), Number(m[6] ?? 0)) + Math.floor(frac);
+}
+
+/** epoch ms（UTC）→ 紐約牆鐘當 UTC 的秒數（圖表時間軸用，與台股的台北牆鐘同一套編碼） */
+export function nyWallClockSec(ms: number): number {
+    const { date, time } = nyDateTime(ms * 1000);
+    if (!date) return NaN;
+    return wallClockToUtc(`${date}T${time}`);
+}
+
+/** 現在的紐約日期（YYYY-MM-DD），往前 daysAgo 天 */
+export function nyDateStr(nowMs = Date.now(), daysAgo = 0): string {
+    return nyDateTime((nowMs - daysAgo * 86_400_000) * 1000).date;
+}
+
+/** 一般盤 09:30–16:00（紐約牆鐘當 UTC 的秒數） */
+export function usRegularSessionRange(nyDate: string): { start: number; end: number } {
+    return { start: wallClockToUtc(`${nyDate}T09:30:00`), end: wallClockToUtc(`${nyDate}T16:00:00`) };
+}
+
+// ---- kbars ----
+
+const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : Number(v));
+
+function column(raw: Record<string, unknown>, ...names: string[]): unknown[] | null {
+    for (const n of names) {
+        const v = raw[n];
+        if (Array.isArray(v)) return v;
+    }
+    return null;
+}
+
+/**
+ * 美股 kbars → Candle（time＝紐約牆鐘當 UTC 的 K 棒結束時間，與台股 1 分 K
+ * 的 close-label-right 同慣例）。形狀不對回 null。
+ */
+export function parseUsKbars(raw: unknown): Candle[] | null {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+    const r = raw as Record<string, unknown>;
+    const times = column(r, 'ts', 'datetime');
+    const open = column(r, 'Open', 'open');
+    const high = column(r, 'High', 'high');
+    const low = column(r, 'Low', 'low');
+    const close = column(r, 'Close', 'close');
+    const volume = column(r, 'Volume', 'volume');
+    if (!times || !open || !high || !low || !close || !volume) return null;
+    const out: Candle[] = [];
+    for (let i = 0; i < times.length; i++) {
+        const ms = usTimeToMs(times[i]);
+        if (ms === null) continue;
+        const time = nyWallClockSec(ms);
+        const c = num(close[i]);
+        if (!Number.isFinite(time) || !Number.isFinite(c)) continue;
+        out.push({ time, open: num(open[i]), high: num(high[i]), low: num(low[i]), close: c, volume: num(volume[i]) || 0 });
+    }
+    out.sort((a, b) => a.time - b.time);
+    return out;
+}
+
+export function fetchUsKbars(contract: Pick<ContractBase, 'code' | 'exchange'>, start: string, end: string, opts?: { timeoutMs?: number }): Promise<Candle[]> {
+    return usPost('/api/v1/data/kbars', { contract: usContractBody(contract), start, end }, parseUsKbars, opts);
+}
+
+// ---- ticks ----
+
+export interface UsHistoryTick {
+    /** epoch ms（UTC） */
+    ts: number;
+    /** 紐約時間 HH:MM:SS.ffffff */
+    time: string;
+    price: number;
+    volume: number;
+    bid: number | null;
+    ask: number | null;
+    /** 1 外盤／2 內盤／0 不明 */
+    tickType: number;
+    session: UsTradingSession | null;
+    oddLot: boolean;
+}
+
+const SESSIONS: readonly UsTradingSession[] = ['Unknown', 'PreMarket', 'Regular', 'AfterHours'];
+function sessionOf(v: unknown): UsTradingSession | null {
+    if (typeof v === 'number') return SESSIONS[v] ?? 'Unknown';
+    if (typeof v === 'string') return (SESSIONS as readonly string[]).includes(v) ? v as UsTradingSession : 'Unknown';
+    return null;
+}
+
+/** 時間字串的小數秒（6 位）；數字時間用 ms 補零 */
+function nyTimeWithFraction(rawTime: unknown, ms: number): string {
+    const { time } = nyDateTime(ms * 1000);
+    let frac = '';
+    if (typeof rawTime === 'string') frac = /\.(\d+)/.exec(rawTime)?.[1] ?? '';
+    else if (typeof rawTime === 'number' && rawTime > 1e14) {
+        const us = rawTime > 1e17 ? Math.floor(rawTime / 1e3) : Math.floor(rawTime);
+        frac = String(us % 1_000_000).padStart(6, '0');
+    } else frac = String(ms % 1000).padStart(3, '0');
+    return `${time}.${frac.padEnd(6, '0').slice(0, 6)}`;
+}
+
+/** 美股 ticks（UsTicks 或台股形狀）→ 依時間排序的列；形狀不對回 null */
+export function parseUsTicks(raw: unknown): UsHistoryTick[] | null {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+    const r = raw as Record<string, unknown>;
+    const times = column(r, 'ts', 'datetime');
+    const close = column(r, 'close');
+    const volume = column(r, 'volume');
+    if (!times || !close || !volume) return null;
+    const bid = column(r, 'bid_price') ?? [];
+    const ask = column(r, 'ask_price') ?? [];
+    const tickType = column(r, 'tick_type') ?? [];
+    const session = column(r, 'session') ?? [];
+    const oddLot = column(r, 'odd_lot') ?? [];
+    const out: UsHistoryTick[] = [];
+    for (let i = 0; i < times.length; i++) {
+        const ms = usTimeToMs(times[i]);
+        const price = num(close[i]);
+        if (ms === null || !Number.isFinite(price)) continue;
+        const b = bid[i] === null || bid[i] === undefined ? null : num(bid[i]);
+        const a = ask[i] === null || ask[i] === undefined ? null : num(ask[i]);
+        out.push({
+            ts: ms,
+            time: nyTimeWithFraction(times[i], ms),
+            price,
+            volume: num(volume[i]) || 0,
+            bid: b !== null && Number.isFinite(b) && b > 0 ? b : null,
+            ask: a !== null && Number.isFinite(a) && a > 0 ? a : null,
+            tickType: Number(tickType[i]) || 0,
+            session: sessionOf(session[i]),
+            oddLot: oddLot[i] === true,
+        });
+    }
+    // 穩定排序（同一時間戳保留原順序）
+    return out.map((t, i) => [t, i] as const).sort((x, y) => x[0].ts - y[0].ts || x[1] - y[1]).map(([t]) => t);
+}
+
+/** date 是美東交易日（YYYY-MM-DD）；lastCnt 給定時只取最後 N 筆 */
+export function fetchUsTicks(contract: Pick<ContractBase, 'code' | 'exchange'>, date: string, opts?: { lastCnt?: number; timeoutMs?: number }): Promise<UsHistoryTick[]> {
+    const body: Record<string, unknown> = { contract: usContractBody(contract), date };
+    if (opts?.lastCnt) {
+        body.query_type = 'LastCount';
+        body.last_cnt = opts.lastCnt;
+    }
+    return usPost('/api/v1/data/ticks', body, parseUsTicks, opts);
+}
+
+// ---- snapshots ----
+
+export interface UsSnapshot {
+    code: string;
+    exchange: string;
+    /** epoch ms（UTC） */
+    ts: number | null;
+    /** 美東交易日 */
+    tradeDate: string;
+    open: number;
+    high: number;
+    low: number;
+    close: number;
+    reference: number | null;
+    changePrice: number;
+    changeRate: number;
+    totalVolume: number;
+    buyPrice: number | null;
+    sellPrice: number | null;
+    session: UsTradingSession | null;
+}
+
+const optNum = (v: unknown) => (v === null || v === undefined ? null : Number.isFinite(num(v)) ? num(v) : null);
+
+/** 一列 snapshot → UsSnapshot；不是美股列（region 缺＝台股）回 null */
+export function parseUsSnapshotRow(row: unknown): UsSnapshot | null {
+    if (!row || typeof row !== 'object') return null;
+    const r = row as Record<string, unknown>;
+    if (r.region !== 'US' || typeof r.code !== 'string') return null;
+    const close = num(r.close);
+    if (!Number.isFinite(close)) return null;
+    const tsMs = usTimeToMs(r.ts ?? r.datetime);
+    return {
+        code: r.code,
+        exchange: String(r.exchange ?? ''),
+        ts: tsMs,
+        tradeDate: typeof r.trade_date === 'string' ? r.trade_date : '',
+        open: num(r.open),
+        high: num(r.high),
+        low: num(r.low),
+        close,
+        reference: optNum(r.reference),
+        changePrice: num(r.change_price) || 0,
+        changeRate: num(r.change_rate) || 0,
+        totalVolume: num(r.total_volume) || 0,
+        buyPrice: optNum(r.buy_price),
+        sellPrice: optNum(r.sell_price),
+        session: sessionOf(r.session),
+    };
+}
+
+/** 美股 snapshots（依輸入順序；某列不是美股形狀則該位置為 null） */
+export function parseUsSnapshots(raw: unknown, count: number): (UsSnapshot | null)[] | null {
+    if (!Array.isArray(raw) || raw.length !== count) return null;
+    const rows = raw.map(parseUsSnapshotRow);
+    // 全部不是美股列：舊 SDK 把美股當台股回 — 視為不支援
+    if (count > 0 && rows.every(r => r === null)) return null;
+    return rows;
+}
+
+export function fetchUsSnapshots(contracts: Pick<ContractBase, 'code' | 'exchange'>[]): Promise<(UsSnapshot | null)[]> {
+    if (contracts.length === 0) return Promise.resolve([]);
+    return usPost('/api/v1/data/snapshots', { contracts: contracts.map(usContractBody) }, raw => parseUsSnapshots(raw, contracts.length));
+}
+
+// ---- 最近交易日 ----
+
+/**
+ * 從紐約今天往前找最近一個有 1 分 K 的交易日（最多 maxDays 天，跳過週末）。
+ * 盤前／台北白天時今天還沒資料，會落到前一個交易日。沒有資料回 null。
+ */
+export async function latestUsSessionBars(
+    contract: Pick<ContractBase, 'code' | 'exchange'>,
+    opts?: { nowMs?: number; maxDays?: number },
+): Promise<{ date: string; bars: Candle[] } | null> {
+    const now = opts?.nowMs ?? Date.now();
+    const maxDays = opts?.maxDays ?? 6;
+    for (let d = 0; d <= maxDays; d++) {
+        const date = nyDateStr(now, d);
+        const dow = new Date(`${date}T12:00:00Z`).getUTCDay();
+        if (dow === 0 || dow === 6) continue;
+        const bars = await fetchUsKbars(contract, date, date);
+        const range = usRegularSessionRange(date);
+        const day = bars.filter(b => b.time > range.start - 60 && b.time <= range.end + 600);
+        if (day.length > 0) return { date, bars: day };
+    }
+    return null;
+}
+
+// ---- 即時逐筆併入 K 棒 ----
+
+/** 逐筆時間（牆鐘當 UTC 的秒數）→ 所屬 K 棒 label（close-label-right；日 K 取日曆日） */
+export function usBarBucket(wallSec: number, minutes: number): number {
+    if (minutes >= 1440) return Math.floor(wallSec / 86400) * 86400;
+    const bucketSec = minutes * 60;
+    return Math.floor(wallSec / bucketSec) * bucketSec + bucketSec;
+}
+
+/**
+ * 把一筆即時成交併進 K 棒尾端：同桶更新、新桶新增；比尾端舊的成交忽略
+ * （lightweight-charts 不接受往回更新）。回傳被更新或新增的 K 棒，忽略時回 null。
+ */
+export function mergeUsTickIntoBars(bars: Candle[], wallSec: number, price: number, volume: number, minutes: number): Candle | null {
+    if (!Number.isFinite(wallSec) || !Number.isFinite(price)) return null;
+    const bucket = usBarBucket(wallSec, minutes);
+    const last = bars[bars.length - 1];
+    if (last && bucket < last.time) return null;
+    if (!last || bucket > last.time) {
+        const bar: Candle = { time: bucket, open: price, high: price, low: price, close: price, volume };
+        bars.push(bar);
+        return bar;
+    }
+    last.high = Math.max(last.high, price);
+    last.low = Math.min(last.low, price);
+    last.close = price;
+    last.volume += volume;
+    return last;
+}

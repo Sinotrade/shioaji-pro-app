@@ -103,6 +103,9 @@ import { ensureStream } from './lib/stream';
 import { contractLinkKey, isUsKey } from './lib/contract-key';
 import { createPinSetter, resolveInputContract as resolvePinInput } from './lib/pin-input';
 import { UsIntraday } from './components/us-intraday';
+import { UsCandleChart } from './components/us-candle-chart';
+import { UsTickTape } from './components/us-tick-tape';
+import { UsDepth } from './components/us-depth';
 import { ensureAccounts } from './lib/account-store';
 import type { ContractInfo, SecurityType } from './lib/types/contract';
 import {
@@ -312,8 +315,8 @@ function BlockBody({
         case 'dock':
             return <BottomDock {...dockProps} />;
         case 'chart':
-            // 美股沒有歷史 K 線：只顯示報價板
-            if (contract && usRoute?.kind === 'chart-quote') return (
+            // 美股：報價板＋美股 K 線（一般盤，只看盤）
+            if (contract && usRoute?.kind === 'chart') return (
                 <>
                     <QuoteBoard
                         contract={contract}
@@ -321,7 +324,11 @@ function BlockBody({
                         fields={block.quoteBoard}
                         onFieldsChange={(quoteBoard) => onSessionConfigChange(block.id, { quoteBoard })}
                     />
-                    <UsUnsupported detail='美股沒有歷史 K 線' />
+                    <UsCandleChart
+                        contract={contract}
+                        interval={block.chartInterval}
+                        onIntervalChange={(chartInterval) => onSessionConfigChange(block.id, { chartInterval })}
+                    />
                 </>
             );
             return contract ? (
@@ -389,6 +396,7 @@ function BlockBody({
                 />
             );
         case 'depth':
+            if (contract && usRoute?.kind === 'depth') return <UsDepth contract={contract} />;
             return contract ? (
                 <DepthLadder contract={contract} code={contract.code} snapshot={snapshot} />
             ) : (
@@ -401,6 +409,7 @@ function BlockBody({
                 <BlockPlaceholder phase={missingContractPhase} />
             );
         case 'tape':
+            if (contract && usRoute?.kind === 'tape') return <UsTickTape contract={contract} />;
             return contract ? (
                 <TickTape contract={contract} />
             ) : (
@@ -844,14 +853,16 @@ function PopoutView({
     // 美股：和主視窗 BlockBody 同一套分流與「美股暫不支援」防護
     const usRoute = usBlockRoute(type, contract);
     if (usRoute?.kind === 'unsupported') body = <UsUnsupported />;
-    else if (contract && usRoute?.kind === 'chart-quote')
+    else if (contract && usRoute?.kind === 'chart')
         body = (
             <>
                 <QuoteBoard contract={contract} sessionMode={chartSession} fields={popoutSession.quoteBoard} />
-                <UsUnsupported detail='美股沒有歷史 K 線' />
+                <UsCandleChart contract={contract} interval={popoutChartInterval} />
             </>
         );
     else if (contract && usRoute?.kind === 'intraday') body = <UsIntraday contract={contract} />;
+    else if (contract && usRoute?.kind === 'tape') body = <UsTickTape contract={contract} />;
+    else if (contract && usRoute?.kind === 'depth') body = <UsDepth contract={contract} />;
     else if (type === 'pnl') body = <PnlPanel />;
     else if (type === 'holdingmap')
         // popout 點持股 → 切換主視窗的選取商品；呈現／分組從面板帶入，之後只在這個視窗內切換

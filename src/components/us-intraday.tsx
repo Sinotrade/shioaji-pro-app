@@ -1,9 +1,13 @@
-// src/components/us-intraday.tsx — 美股走勢（只畫訂閱後收到的逐筆）
+// src/components/us-intraday.tsx — 美股走勢
 //
-// SDK 1.8.0b1 沒有美股歷史 ticks／K 線：線圖只有這個 App 開著、訂閱之後
-// 收到的本時段（盤前／盤中／盤後）成交；換時段重新開始。虛線是前一日參考價。
+// 有美股歷史（SDK 1.8.0b1）時：x 軸固定一般盤 09:30–16:00（美東時間），先畫
+// 最近一個交易日的 1 分 K 收盤，再接上即時一般盤逐筆。沒有歷史（舊 SDK、
+// 非正式環境、盤前／盤後）時退回只畫訂閱後收到的本時段逐筆。虛線是參考價。
 
 import { useEffect, useState } from 'react';
+import { isUsHistoryUnavailable, latestUsSessionBars } from '../lib/us/us-history';
+import { US_INTRADAY_H, US_INTRADAY_W, usIntradaySeries, usIntradaySessionPath } from '../lib/us/us-intraday';
+import type { Candle } from '../lib/types/market';
 import { useQuote } from '../hooks/use-stream';
 import { contractLinkKey } from '../lib/contract-key';
 import type { ContractInfo } from '../lib/types/contract';
@@ -42,20 +46,78 @@ export function usIntradayPath(ticks: readonly UsTickMeta[], ref: number | null)
     return { points, refY: ref ? y(ref) : null, lo, hi };
 }
 
+type HistoryState =
+    | { kind: 'loading' }
+    | { kind: 'ready'; date: string; bars: Candle[] }
+    | { kind: 'none'; reason: 'empty' | 'unavailable' | 'error' };
+
+function useUsSessionHistory(contract: ContractInfo): HistoryState {
+    const [state, setState] = useState<HistoryState>({ kind: 'loading' });
+    useEffect(() => {
+        let cancelled = false;
+        setState({ kind: 'loading' });
+        latestUsSessionBars(contract)
+            .then(r => { if (!cancelled) setState(r ? { kind: 'ready', ...r } : { kind: 'none', reason: 'empty' }); })
+            .catch(e => { if (!cancelled) setState({ kind: 'none', reason: isUsHistoryUnavailable(e) ? 'unavailable' : 'error' }); });
+        return () => { cancelled = true; };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [contract.code, contract.exchange]);
+    return state;
+}
+
+const AXIS_LABELS = [
+    { label: '09:30', frac: 0 },
+    { label: '12:00', frac: 150 / 390 },
+    { label: '16:00', frac: 1 },
+];
+
 export function UsIntraday({ contract }: { contract: ContractInfo }) {
     const key = contractLinkKey(contract);
     useQuote(key); // 確保已訂閱
     const ticks = useSessionTicks(key);
+    const history = useUsSessionHistory(contract);
     const ref = contract.us_reference ? Number(contract.us_reference) : null;
+    const series = usIntradaySeries(history.kind === 'ready' ? history : null, ticks);
+    // 參考價日期晚於畫的交易日時（參考價屬於下一個交易日）不畫參考線
+    const sessionRef = series && contract.reference_date && contract.reference_date > series.date ? null : ref;
+
+    if (series) {
+        const path = usIntradaySessionPath(series, sessionRef);
+        const up = sessionRef ? path.last >= sessionRef : true;
+        return (
+            <div className={styles.wrap} data-testid='us-intraday'>
+                <div className={styles.head}>
+                    <span>{contract.code} 走勢・一般盤 {series.date}</span>
+                    <span className={styles.note}>美東時間{series.fromHistory ? '' : '・只含開啟後收到的逐筆'}</span>
+                </div>
+                <svg className={styles.chart} viewBox={`0 0 ${US_INTRADAY_W} ${US_INTRADAY_H}`} preserveAspectRatio='none' role='img' aria-label={`${contract.code} 美股走勢`}>
+                    {path.refY !== null && <line x1={0} x2={US_INTRADAY_W} y1={path.refY} y2={path.refY} className={styles.refLine} />}
+                    <polyline points={path.points} className={up ? styles.lineUp : styles.lineDown} />
+                </svg>
+                <div className={styles.foot}>
+                    {AXIS_LABELS.map(a => <span key={a.label}>{a.label}</span>)}
+                </div>
+                <div className={styles.foot}>
+                    <span>低 {fmtUsPrice(String(path.lo))}</span>
+                    <span>最新 {fmtUsPrice(String(path.last))}</span>
+                    <span>高 {fmtUsPrice(String(path.hi))}</span>
+                </div>
+            </div>
+        );
+    }
+
     const path = usIntradayPath(ticks, ref);
     const last = ticks[ticks.length - 1];
     const up = last && ref ? Number(last.price) >= ref : true;
+    const note = history.kind === 'loading' ? '載入歷史走勢…'
+        : history.kind === 'none' && history.reason === 'unavailable' ? '這個 SDK 版本沒有美股歷史，只含開啟後收到的逐筆'
+        : '只含開啟後收到的逐筆';
 
     return (
         <div className={styles.wrap} data-testid='us-intraday'>
             <div className={styles.head}>
                 <span>{contract.code} 走勢{last ? `・${US_SESSION_LABEL[last.session] || ''}` : ''}</span>
-                <span className={styles.note}>只含開啟後收到的逐筆，沒有歷史資料</span>
+                <span className={styles.note}>{note}</span>
             </div>
             {path ? (
                 <svg className={styles.chart} viewBox={`0 0 ${W} ${H}`} preserveAspectRatio='none' role='img' aria-label={`${contract.code} 美股走勢`}>
@@ -64,7 +126,7 @@ export function UsIntraday({ contract }: { contract: ContractInfo }) {
                 </svg>
             ) : (
                 <div className={styles.empty}>
-                    {ref ? `參考 ${fmtUsPrice(contract.us_reference)}${contract.reference_date ? `（${contract.reference_date}）` : ''}・` : ''}尚無即時成交
+                    {ref ? `參考 ${fmtUsPrice(contract.us_reference)}${contract.reference_date ? `（${contract.reference_date}）` : ''}・` : ''}{history.kind === 'loading' ? '載入中…' : '尚無成交'}
                 </div>
             )}
             {path && (
