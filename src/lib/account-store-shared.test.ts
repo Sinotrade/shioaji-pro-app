@@ -156,3 +156,22 @@ describe('shared account read', () => {
         expect(fetchAccounts).toHaveBeenCalledTimes(2);
     });
 });
+
+describe('H (複委託) accounts', () => {
+    it('selects H separately from S even with the same broker/account id', async () => {
+        const s = { ...account };
+        const h = { ...account, account_type: 'H' };
+        fetchAccounts.mockResolvedValue([s, h]);
+        await mod.loadAccountsShared();
+        expect(mod.accountFor('S')).toBe(s);
+        expect(mod.accountFor('H')).toBe(h);
+        expect(mod.getAccountState().selectedIntl).toBe(h);
+        const h2 = { ...h, account_id: 'h2' };
+        fetchAccounts.mockResolvedValue([s, h, h2]);
+        await mod.loadAccountsShared();
+        mod.selectAccount(h2);
+        expect(mod.accountFor('H')).toBe(h2);
+        expect(mod.accountFor('S')).toBe(s);
+        expect(JSON.parse(store.get('sj-pro-accounts-selected')!).intl).toBe('b-h2');
+    });
+});

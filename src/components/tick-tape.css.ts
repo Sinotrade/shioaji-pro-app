@@ -43,3 +43,12 @@ export const volBig = style([
         fontWeight: 700,
     },
 ]);
+
+/** 美股明細跨日分隔（盤前即時列接前一交易日歷史） */
+export const dayBreak = style({
+    padding: '2px 0',
+    textAlign: 'center',
+    fontSize: '0.66rem',
+    color: vars.color.mutedForeground,
+    borderTop: `1px solid ${vars.color.border}`,
+});

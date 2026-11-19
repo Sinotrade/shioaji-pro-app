@@ -272,3 +272,18 @@ it('two panels on the same stock share one re-fetch at roll-over; a late failure
     expect(text(a.root)).toContain('ladder CDFK6');
     expect(text(b.root)).toContain('ladder CDFK6');
 });
+
+it('美股來源一律照選取：不查個股期、不找現股，linkKey 用 US:CODE', async () => {
+    const aapl = { code: 'AAPL', name: 'Apple', region: 'US', security_type: 'STK', exchange: 'NASDAQ' } as unknown as ContractInfo;
+    const targetRef = { current: null as string | null };
+    for (const kind of ['future', 'stock', 'select'] as const) {
+        seen = [];
+        const r = await mount(aapl, { kind }, { targetRef });
+        expect(text(r.root)).toBe('ladder AAPL');
+        expect(seen.at(-1)).toMatchObject({ code: 'AAPL', paused: undefined });
+        expect(seen.at(-1)!.linkKey).toContain('|US:AAPL');
+        expect(targetRef.current).toBe('US:AAPL');
+    }
+    expect(mocks.fetchFutures).not.toHaveBeenCalled();
+    expect(mocks.ensure).not.toHaveBeenCalled();
+});

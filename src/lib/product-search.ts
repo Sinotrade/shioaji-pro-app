@@ -18,6 +18,8 @@ import { getProductNamesVersion } from './product-names-version';
 import { SearchRequestCache } from './search-request';
 import { getProductCatalogVersion, subscribeProductCatalog } from './product-catalog-version';
 import { loadIndexSuggestions } from './index-catalog';
+import { usLinkKey } from './contract-key';
+import { cachedUsInfo, loadUsInfo, searchUsCodes, usCatalogStatus, usContractName, toUsContractInfo } from './us/us-contracts';
 
 export interface ProductSuggestion {
     code: string;
@@ -27,6 +29,80 @@ export interface ProductSuggestion {
     detail: string;
     kind?: 'ETF';
     contract?: ContractInfo;
+    /** 美股建議為 'US'；省略即台股 */
+    region?: 'TW' | 'US';
+    /** 連動 key（contractLinkKey）：美股 `US:AAPL`；省略時即台股裸代碼 */
+    key?: string;
+}
+
+/** 建議的連動 key：美股 `US:CODE`，台股裸代碼 */
+export function suggestionLinkKey(item: Pick<ProductSuggestion, 'code' | 'region' | 'key'>): string {
+    return item.key ?? (item.region === 'US' ? usLinkKey(item.code) : item.code);
+}
+
+/** 美股代碼前綴搜尋最多併入的列數 */
+export const US_SUGGESTION_LIMIT = 4;
+/** 等可見美股列的名稱（商品資訊）最多這麼久，逾時只顯示代碼 */
+const US_NAME_WAIT_MS = 800;
+
+/** 美股代碼的形狀：英文字母開頭（台股數字代碼、中文名稱不查美股） */
+export function looksLikeUsCode(raw: string): boolean {
+    return /^[A-Za-z][A-Za-z0-9.\-]{0,9}$/.test(raw.trim());
+}
+
+function usSuggestion(record: { code: string; exchange: string }): ProductSuggestion {
+    const code = record.code.toUpperCase();
+    const contract = toUsContractInfo(code, cachedUsInfo(code), record);
+    return {
+        code,
+        name: contract.name || code,
+        security_type: 'STK',
+        exchange: contract.exchange ?? record.exchange,
+        detail: `美股 · ${contract.exchange ?? record.exchange}`,
+        region: 'US',
+        key: usLinkKey(code),
+        contract,
+    };
+}
+
+/**
+ * 美股代碼命中（只在美股清單已載入時；清單由 useProductSearch 延後載入）。
+ * 可見列的名稱逐筆查商品資訊（限流、今日快取），最多等 US_NAME_WAIT_MS。
+ */
+export async function searchUsSuggestions(rawQuery: string, limit = US_SUGGESTION_LIMIT, signal?: AbortSignal): Promise<ProductSuggestion[]> {
+    if (usCatalogStatus() !== 'ready' || !looksLikeUsCode(rawQuery)) return [];
+    const hits = searchUsCodes(rawQuery, limit);
+    if (!hits.length) return [];
+    const missing = hits.filter(hit => !usContractName(hit.code) || !cachedUsInfo(hit.code));
+    if (missing.length) {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        await Promise.race([
+            Promise.allSettled(missing.map(hit => loadUsInfo(hit.code))),
+            new Promise<void>(resolve => {
+                timer = setTimeout(resolve, US_NAME_WAIT_MS);
+                signal?.addEventListener('abort', () => resolve(), { once: true });
+            }),
+        ]);
+        if (timer) clearTimeout(timer);
+    }
+    if (signal?.aborted) throw signal.reason ?? new DOMException('aborted', 'AbortError');
+    return hits.map(usSuggestion);
+}
+
+/**
+ * 台股結果併入美股命中：美股代碼完全相同且台股沒有同代碼時排最前；
+ * 其餘美股列放在台股之後，至少保留 min(美股列數, 3) 個位置。
+ */
+export function mergeUsSuggestions(tw: ProductSuggestion[], us: ProductSuggestion[], rawQuery: string, limit: number): ProductSuggestion[] {
+    if (!us.length) return tw.slice(0, limit);
+    const q = rawQuery.trim().toUpperCase();
+    const exact = us.find(row => row.code === q);
+    const twExact = tw.some(row => row.code.toUpperCase() === q);
+    const lead = exact && !twExact ? [exact] : [];
+    const rest = us.filter(row => !lead.includes(row));
+    const usSlots = Math.min(rest.length, Math.max(limit - lead.length - tw.length, Math.min(3, rest.length)));
+    const twSlots = Math.max(0, limit - lead.length - usSlots);
+    return [...lead, ...tw.slice(0, twSlots), ...rest.slice(0, usSlots)].slice(0, limit);
 }
 
 const CACHE_TTL_MS = 60_000;
@@ -470,9 +546,16 @@ export async function searchProducts(
         const [[futures, optionRows], warrants, indices] = await Promise.all([primaryRequest, loadWarrants(), indexOutcome]);
         assertScope();
         if ('error' in indices) throw indices.error;
-        const result = orderResults(anchor, {
+        const twResult = orderResults(anchor, {
             priority, stocks: stockMatches, futures, options: optionRows, warrants, indices: indices.rows,
         }, limit);
+        // 美股代碼命中（清單已載入才有）：讀取失敗不影響台股結果
+        const usRows = await searchUsSuggestions(rawQuery, US_SUGGESTION_LIMIT, signal).catch(error => {
+            if (signal.aborted) throw error;
+            return [] as ProductSuggestion[];
+        });
+        assertScope();
+        const result = mergeUsSuggestions(twResult, usRows, rawQuery, limit);
         // A failed primary futures source must not pass a lone index as complete.
         if (failures.length && (!result.length || (wantsFutures || indexFutureUnderlying) && !futures.length)) {
             throw new Error('商品搜尋暫時無法完成，請稍後重試', { cause: failures[0] });

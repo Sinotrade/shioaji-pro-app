@@ -6,6 +6,8 @@ import { resolveContract } from './shioaji';
 import { registerCodeAlias } from './stream';
 import { prefetchTickBands } from './tick-bands';
 import type { ContractInfo, SecurityType } from './types/contract';
+import { contractLinkKey, isUsKey, parseContractLinkKey } from './contract-key';
+import { resolveUsContract } from './us/us-contracts';
 
 // 期權合約一進 cache 就預取級距表 — 面板首次渲染（要等行情快照）前
 // bands 已就緒，render 期的 lazy prefetch 只是最後防線
@@ -33,6 +35,11 @@ function typedKey(code: string, type: SecurityType | undefined) {
 }
 
 function rememberContract(contract: ContractInfo, requestedCode = contract.code) {
+    // 美股只存 `US:CODE`：不可佔用裸代碼，否則台股同名代碼會解析成美股
+    if (contract.region === 'US') {
+        cache.set(contractLinkKey(contract), contract);
+        return;
+    }
     cache.set(requestedCode, contract);
     cache.set(contract.code, contract);
     typedCache.set(typedKey(requestedCode, contract.security_type), contract);
@@ -47,6 +54,7 @@ async function resolveTypedContract(code: string, type?: SecurityType) {
     return contract;
 }
 
+/** code 可以是台股裸代碼或美股 `US:CODE` */
 export function getCachedContract(code: string): ContractInfo | undefined {
     return cache.get(code);
 }
@@ -124,7 +132,13 @@ export async function ensureContract(
     const inflight = pending.get(pendingKey);
     if (inflight) return inflight;
 
-    const task = (async () => {
+    const task = isUsKey(code) ? (async () => {
+        // 美股：商品資訊（名稱、前一日參考價、交易所），不打 region=TW 查詢
+        const contract = await resolveUsContract(parseContractLinkKey(code).code);
+        rememberContract(contract);
+        emit();
+        return contract;
+    })() : (async () => {
         // Contract V2 get() searches all security types when no type is
         // supplied, so auto-detection is one request instead of four 404s.
         const contract = await resolveTypedContract(code, type);

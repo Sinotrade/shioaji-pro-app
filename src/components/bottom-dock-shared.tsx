@@ -13,6 +13,8 @@ import type {
 } from '../lib/types/portfolio';
 import { vars } from '../theme.css';
 import { contractMarket } from '../lib/contract-market';
+import type { IntlPosition, UsAmount } from '../lib/types/us';
+import { decIsPositive, fmtDec } from '../lib/us/decimal';
 import * as styles from './bottom-dock.css';
 
 export const ACTIVE_STATUSES: ReadonlySet<string> = new Set([
@@ -247,4 +249,31 @@ export function ConfirmButton({
             {confirming ? confirmLabel : label}
         </button>
     );
+}
+
+// ---- 美股（H 帳戶）列共用：key、損益文字、代碼格標記（不引入下單模組） ----
+
+export type UsPositionRow = IntlPosition & { account: Account };
+
+/** React key：帶 us 前綴與帳戶，不和台股裸代碼共用命名空間 */
+export const usPositionRowKey = (p: UsPositionRow) => `us:${p.account.broker_id}:${p.account.account_id}:${p.code}:${p.direction}:${p.id}`;
+/** 分帳戶檢視的群組 key（H 帳戶的 broker/account 可能和 S 相同，要帶類別） */
+export const usAccountGroupKey = (a: Account) => `H:${a.broker_id}-${a.account_id}`;
+
+export function usAmountDir(v: UsAmount | null | undefined): 'up' | 'down' | 'flat' {
+    if (v === null || v === undefined) return 'flat';
+    if (String(v).trim().startsWith('-')) return 'down';
+    return decIsPositive(v) ? 'up' : 'flat';
+}
+
+/** 美股損益（USD，兩位小數，正值帶 +） */
+export function fmtUsPnl(v: UsAmount | null | undefined): string {
+    if (v === null || v === undefined) return '—';
+    const s = fmtDec(v, { minFraction: 2, maxFraction: 2 });
+    return s === '—' ? s : `${decIsPositive(v) ? '+' : ''}${s}`;
+}
+
+/** 代碼格的「美股」標記 */
+export function UsTag() {
+    return <span className={styles.usTag} title='美股（H 帳戶，USD）'>美股</span>;
 }

@@ -28,6 +28,26 @@ export const EXPECTED_SERVER_VERSION: string =
         ? __SHIOAJI_SERVER_VERSION__.replace(/^v/, '')
         : '';
 
+/**
+ * 版本字串的同一種寫法：Python 套件用 PEP 440（1.8.0b1），sidecar 回報 Cargo
+ * 的 semver（1.8.0-beta.1）。預發布 aN／bN／rcN 與 -alpha.N／-beta.N／-rc.N
+ * 都轉成 semver 形式；去掉 v 前綴、不分大小寫。認不得的照原字串比。
+ */
+export function canonicalServerVersion(v: string): string {
+    const s = v.trim().replace(/^v/i, '').toLowerCase();
+    const pep = /^(\d+(?:\.\d+)*)[.-]?(a|b|rc|alpha|beta)[.-]?(\d+)$/.exec(s);
+    if (pep) {
+        const tag = pep[2] === 'a' || pep[2] === 'alpha' ? 'alpha' : pep[2] === 'b' || pep[2] === 'beta' ? 'beta' : 'rc';
+        return `${pep[1]}-${tag}.${Number(pep[3])}`;
+    }
+    return s;
+}
+
+/** 版本握手：1.8.0b1 與 1.8.0-beta.1 視為同一版 */
+export function sameServerVersion(a: string, b: string): boolean {
+    return canonicalServerVersion(a) === canonicalServerVersion(b);
+}
+
 // The shioaji server may run on a non-default port when the preferred one is
 // occupied — the chosen port is persisted here and read by every API/SSE
 // consumer.

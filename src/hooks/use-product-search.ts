@@ -4,12 +4,17 @@
 // 目錄／名稱目錄改版，都會取消在途查詢，晚到的結果一律不採用。progressive
 // 時先顯示已完成來源的部分結果，其餘來源補齊後再換成最終結果。
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { searchProducts, type ProductSuggestion } from '../lib/product-search';
+import { ensureUsContracts, subscribeUsContracts, usCatalogStatus } from '../lib/us/us-contracts';
 import { getProductCatalogVersion, useProductCatalogVersion } from '../lib/product-catalog-version';
 import { getProductNamesVersion } from '../lib/product-names-version';
 import { PRODUCT_SEARCH_DEBOUNCE_MS } from '../lib/search-request';
 import { useProductNamesVersion } from './use-product-names-version';
+
+const usCatalogReady = () => usCatalogStatus() === 'ready';
+// 與 product-search 的 looksLikeUsCode 相同：英文字母開頭才可能是美股代碼
+const looksLikeUsCode = (raw: string) => /^[A-Za-z][A-Za-z0-9.\-]{0,9}$/.test(raw.trim());
 
 const currentScope = () => JSON.stringify([getProductCatalogVersion(), getProductNamesVersion()]);
 
@@ -35,6 +40,13 @@ export function useProductSearch(query: string, { limit, enabled = true, resetKe
     const rowsScope = useRef('');
     const catalogVersion = useProductCatalogVersion();
     const namesVersion = useProductNamesVersion();
+    // 美股清單（約 1.3 萬檔代碼）在第一次輸入像美股代碼的字時才載入；
+    // 載入完成後重查一次，讓美股命中併進結果
+    const usReady = useSyncExternalStore(subscribeUsContracts, usCatalogReady, usCatalogReady);
+    const wantsUs = enabled && looksLikeUsCode(query);
+    useEffect(() => {
+        if (wantsUs && !usReady) void ensureUsContracts().catch(() => undefined);
+    }, [wantsUs, usReady]);
 
     // A fresh array on purpose: the re-render refreshes renderedVersion after a version bump.
     const dropRows = () => setSuggestions([]);
@@ -109,7 +121,7 @@ export function useProductSearch(query: string, { limit, enabled = true, resetKe
             request.abort();
             if (controller.current === request) controller.current = null;
         };
-    }, [enabled, query, attempt, catalogVersion, namesVersion, resetKey, limit, progressive]);
+    }, [enabled, query, attempt, catalogVersion, namesVersion, resetKey, limit, progressive, usReady]);
 
     const clear = () => {
         cancel();

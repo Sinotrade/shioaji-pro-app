@@ -24,7 +24,11 @@ export function CommandPalette({
 }: {
     open: boolean;
     onClose: () => void;
-    onJump: (code: string, securityType?: SecurityType) => Promise<unknown>;
+    /**
+     * 跳到商品。key 是連動 key（contractLinkKey）：台股裸代碼、美股 `US:AAPL`；
+     * 美股不帶 securityType（直接以 key 解析，不走 region=TW 查詢）。
+     */
+    onJump: (key: string, securityType?: SecurityType) => Promise<unknown>;
     onAddPanel?: (type: BlockType) => void;
 }) {
     const [value, setValue] = useState('');
@@ -128,8 +132,11 @@ export function CommandPalette({
         setBusy(true);
         setError(false);
         try {
-            if (item?.contract) primeContract(item.contract);
-            await onJump(code, item?.security_type);
+            // 美股建議的合約若還沒查到參考價就不預放快取，讓跳轉時查完整商品資訊
+            if (item?.contract && (item.region !== 'US' || item.contract.us_reference)) primeContract(item.contract);
+            // 美股建議一律帶 key（US:CODE）；台股建議的 key 就是裸代碼
+            if (item?.region === 'US') await onJump(item.key ?? `US:${item.code}`);
+            else await onJump(code, item?.security_type);
             if (search.isCurrent(submitVersion)) onClose();
         } catch {
             if (search.isCurrent(submitVersion)) setError(true);
@@ -151,7 +158,7 @@ export function CommandPalette({
                 <input
                     ref={inputRef}
                     className={styles.input}
-                    placeholder='輸入代碼跳轉商品（2330、TXFR1…）'
+                    placeholder='輸入代碼跳轉商品（2330、TXFR1、AAPL…）'
                     role='combobox'
                     aria-autocomplete='list'
                     aria-expanded={rowCount > 0}

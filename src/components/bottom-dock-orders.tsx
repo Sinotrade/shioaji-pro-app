@@ -14,7 +14,7 @@ import {
     updateOrderPrice,
     updateOrderQty,
 } from '../lib/shioaji';
-import { usePrivacyMode } from '../lib/privacy';
+import { maskAccountId, usePrivacyMode } from '../lib/privacy';
 import { notify } from '../lib/trade';
 import type { Trade } from '../lib/types/order';
 import { fmtInt, fmtPrice } from '../lib/utils/format';
@@ -40,6 +40,18 @@ import {
     type ViewMode,
 } from './bottom-dock-shared';
 import { orderStatusLabel } from '../lib/order-status-label';
+import { usLinkKey } from '../lib/contract-key';
+import type { AccountedUsTrade } from '../lib/types/us';
+import { fmtDec, fmtUsPrice } from '../lib/us/decimal';
+import { usRemaining } from '../lib/us/us-trading-state';
+import {
+    usAccountGroupKey,
+    UsOrderActions,
+    usOrderPriceText,
+    usOrderRowKey,
+    usStatusBucket,
+    UsTag,
+} from './bottom-dock-us';
 
 type StatusFilter = 'active' | 'filled' | 'dead' | 'all';
 const STATUS_FILTERS = ['active', 'filled', 'dead', 'all'] as const;
@@ -49,6 +61,40 @@ function statusBucket(t: Trade): Exclude<StatusFilter, 'all'> {
     if (remainingWorkingOrderQuantity(t) > 0) return 'active';
     if (st === 'Filled') return 'filled';
     return 'dead';
+}
+
+/** 委託表的一列：台股 Trade 或美股（H 帳戶）Trade；美股數量價格是 decimal 字串 */
+export type OrderRow =
+    | { kind: 'tw'; key: string; ts?: number; t: Trade }
+    | { kind: 'us'; key: string; ts?: number; t: AccountedUsTrade };
+
+/** 美股委託資料（dock 決定要不要顯示；null = 不顯示美股） */
+export interface UsOrdersInput {
+    trades: AccountedUsTrade[];
+    hint?: string | null;
+    error?: string | null;
+}
+
+const rowBucket = (r: OrderRow) => r.kind === 'us' ? usStatusBucket(r.t) : statusBucket(r.t);
+
+// order_ts 秒或毫秒都可能出現，統一成秒
+function normTs(v: number | undefined): number | undefined {
+    if (v === undefined || !Number.isFinite(v) || v <= 0) return undefined;
+    return v > 1e12 ? v / 1000 : v;
+}
+
+/** 兩串各自「新到舊」的列依委託時間合併；台股沒有時間就維持原順序在前 */
+export function mergeNewestFirst(tw: OrderRow[], us: OrderRow[]): OrderRow[] {
+    const out: OrderRow[] = [];
+    let i = 0;
+    let j = 0;
+    while (i < tw.length && j < us.length) {
+        const ta = tw[i]!.ts;
+        const tb = us[j]!.ts;
+        if (ta !== undefined && tb !== undefined && tb > ta) out.push(us[j++]!);
+        else out.push(tw[i++]!);
+    }
+    return out.concat(tw.slice(i), us.slice(j));
 }
 
 // 成交均價：OrderStatusInfo 無 avg_price 欄位，由 deals 加權平均回推；
@@ -224,10 +270,18 @@ function orderDetail(t: Trade): string {
     return parts.join(' ');
 }
 
+function usOrderDetail(t: AccountedUsTrade): string {
+    const parts: string[] = [];
+    if (t.order.price_type) parts.push(t.order.price_type);
+    if (t.order.time_in_force) parts.push(t.order.time_in_force);
+    if (t.order.session && t.order.session !== 'Regular') parts.push(t.order.session);
+    return parts.join(' ');
+}
+
 interface OrderGroup {
     key: string;
     label: string;
-    rows: Trade[];
+    rows: OrderRow[];
 }
 
 export function OrdersPane({
@@ -242,8 +296,11 @@ export function OrdersPane({
     onShowAll,
     showAllRequest,
     onShowAllRequestHandled,
+    us = null,
 }: {
     trades: Trade[];
+    /** 美股（H 帳戶）委託；併入同一張表。null = 不顯示 */
+    us?: UsOrdersInput | null;
     initialStatus: 'loading' | 'failed' | 'ready';
     mode: ViewMode;
     market: MarketFilter;
@@ -289,40 +346,62 @@ export function OrdersPane({
         });
     }, [trades, market, scopeKey, fallback]);
 
+    // 美股列：只篩期貨或選了單一台股帳戶時不顯示（H 帳戶不在帳戶範圍選單裡）
+    const usRows = useMemo<OrderRow[]>(() => {
+        if (!us || market === 'F' || scopeKey) return [];
+        return us.trades
+            .map((t): OrderRow => ({ kind: 'us', key: usOrderRowKey(t), ts: normTs(t.status.order_ts), t }))
+            .sort((a, b) => (b.ts ?? 0) - (a.ts ?? 0));
+    }, [us, market, scopeKey]);
+    const totalCount = trades.length + (us?.trades.length ?? 0);
+    const scopedCount = scoped.length + usRows.length;
+
+    const allRows = useMemo<OrderRow[]>(() => {
+        const tw = [...scoped].reverse().map((t): OrderRow => ({ kind: 'tw', key: t.order.id, ts: normTs(t.status.order_ts), t }));
+        return mergeNewestFirst(tw, usRows);
+    }, [scoped, usRows]);
+
     const bucketCounts = useMemo(() => {
         const counts = { active: 0, filled: 0, dead: 0 };
-        for (const t of scoped) counts[statusBucket(t)]++;
+        for (const r of allRows) counts[rowBucket(r)]++;
         return counts;
-    }, [scoped]);
+    }, [allRows]);
 
     // 最新在前；全部檢視時有效單置頂
     const rows = useMemo(() => {
-        const newest = [...scoped].reverse();
         const filtered =
             statusFilter === 'all'
-                ? newest
-                : newest.filter((t) => statusBucket(t) === statusFilter);
+                ? allRows
+                : allRows.filter((r) => rowBucket(r) === statusFilter);
         if (statusFilter === 'all') {
             return [
-                ...filtered.filter((t) => statusBucket(t) === 'active'),
-                ...filtered.filter((t) => statusBucket(t) !== 'active'),
+                ...filtered.filter((r) => rowBucket(r) === 'active'),
+                ...filtered.filter((r) => rowBucket(r) !== 'active'),
             ];
         }
         return filtered;
-    }, [scoped, statusFilter]);
+    }, [allRows, statusFilter]);
 
     const groups = useMemo<OrderGroup[]>(() => {
         if (mode !== 'grouped') return [{ key: '', label: '', rows }];
         const map = new Map<string, OrderGroup>();
-        for (const t of rows) {
-            const ref = tradeAccountRef(t, fallback);
-            const key = refKey(ref) || `type-${tradeMarket(t)}`;
+        for (const r of rows) {
+            let key: string;
+            let label: string;
+            if (r.kind === 'us') {
+                key = usAccountGroupKey(r.t.account);
+                label = `[美] ${r.t.account.broker_id}-${maskAccountId(r.t.account.account_id, priv)}`;
+            } else {
+                const ref = tradeAccountRef(r.t, fallback);
+                key = refKey(ref) || `type-${tradeMarket(r.t)}`;
+                label = accountRefLabel(ref, priv);
+            }
             let g = map.get(key);
             if (!g) {
-                g = { key, label: accountRefLabel(ref, priv), rows: [] };
+                g = { key, label, rows: [] };
                 map.set(key, g);
             }
-            g.rows.push(t);
+            g.rows.push(r);
         }
         return [...map.values()];
     }, [rows, mode, fallback, priv]);
@@ -336,9 +415,11 @@ export function OrdersPane({
     const activeIds = useMemo(
         () =>
             new Set(
+                // 批次刪單只含台股；美股逐筆走美股刪單
                 rows
-                    .filter((t) => remainingWorkingOrderQuantity(t) > 0)
-                    .map((t) => t.order.id),
+                    .filter((r): r is Extract<OrderRow, { kind: 'tw' }> => r.kind === 'tw')
+                    .filter((r) => remainingWorkingOrderQuantity(r.t) > 0)
+                    .map((r) => r.t.order.id),
             ),
         [rows],
     );
@@ -399,6 +480,46 @@ export function OrdersPane({
     };
 
     const fillCell = (t: Trade) => <OrderQuantity trade={t} />;
+
+    // 美股：價格 USD（decimal 字串），成交均價取回報的 avg_price
+    const usPriceCell = (t: AccountedUsTrade) => (
+        <span className={styles.priceDual}>
+            <span>
+                {usOrderPriceText(t)}
+                {t.order.price_type !== 'MKT' && <span className={styles.usUnit}>USD</span>}
+            </span>
+            {t.status.avg_price && (
+                <span className={styles.priceDualSub}>
+                    成 {fmtUsPrice(t.status.avg_price)}
+                </span>
+            )}
+        </span>
+    );
+
+    // 美股：數量一律以股計（decimal 字串，不 ×1000）
+    const usFillCell = (t: AccountedUsTrade, remaining: string) => (
+        <span
+            className={styles.priceDual}
+            title={`原始委託 ${fmtDec(t.order.quantity)} 股；已成交 ${fmtDec(t.status.deal_quantity)}；已取消 ${fmtDec(t.status.cancel_quantity)}；未成交 ${fmtDec(remaining)}`}
+        >
+            <span>未成交 {fmtDec(remaining)} 股</span>
+            <span className={styles.priceDualSub}>
+                成交 {fmtDec(t.status.deal_quantity)} · 取消 {fmtDec(t.status.cancel_quantity)} 股
+            </span>
+        </span>
+    );
+
+    const usStatusChip = (t: AccountedUsTrade, remaining: string) => {
+        const st = t.status.status;
+        return (
+            <span
+                title={t.status.msg || `狀態 ${orderStatusLabel(st)}`}
+                className={styles.statusChip[statusKind(st)]}
+            >
+                {ACTIVE_STATUSES.has(st) && fmtDec(remaining) === '0' ? '無未成交量' : orderStatusLabel(st)}
+            </span>
+        );
+    };
 
     const selectionCell = (t: Trade) => {
         const active = remainingWorkingOrderQuantity(t) > 0;
@@ -467,34 +588,7 @@ export function OrdersPane({
         );
     };
 
-    const renderTable = (list: Trade[]) => (
-        <table className={styles.table}>
-            <thead>
-                <tr>
-                    <th className={styles.th} style={{ width: '1.4rem' }}>
-                        <input
-                            type='checkbox'
-                            className={styles.chk}
-                            disabled={
-                                !armed || activeIds.size === 0 || busy !== null
-                            }
-                            checked={allSelected}
-                            onChange={toggleAll}
-                            title='全選有效單（批次刪單）'
-                        />
-                    </th>
-                    <th className={styles.th}>代碼</th>
-                    <th className={styles.th}>買賣</th>
-                    {size === 'wide' && <th className={styles.th}>類別</th>}
-                    <th className={styles.th}>價格</th>
-                    <th className={styles.th}>數量</th>
-                    <th className={styles.th}>狀態</th>
-                    {size === 'wide' && <th className={styles.th}>訊息</th>}
-                    <th className={styles.th} />
-                </tr>
-            </thead>
-            <tbody>
-                {list.map((t) => {
+    const twTableRow = (t: Trade) => {
                     const st = t.status.status;
                     return (
                         <tr
@@ -552,15 +646,92 @@ export function OrdersPane({
                             </td>
                         </tr>
                     );
-                })}
+    };
+
+    // 美股列：同欄位，數量以股、價格為 USD decimal 字串；點擊連動 US:CODE
+    const usTableRow = (t: AccountedUsTrade, key: string) => {
+        const st = t.status.status;
+        const remaining = usRemaining(t);
+        return (
+            <tr
+                key={key}
+                className={styles.clickableRow}
+                onClick={() => onSelectCode(usLinkKey(t.contract.code))}
+                title='點擊連動圖表與下單面板（美股請逐筆刪單，不參加批次刪單）'
+            >
+                <td className={styles.td} />
+                <td className={styles.td}>
+                    {t.contract.code}
+                    <UsTag />
+                </td>
+                <td
+                    className={`${styles.td} ${panel.dirText[t.order.action === 'Buy' ? 'up' : 'down']}`}
+                >
+                    {t.order.action === 'Buy' ? '買' : '賣'}
+                </td>
+                {size === 'wide' && (
+                    <td className={`${styles.td} ${styles.detailCell}`}>
+                        {usOrderDetail(t) || '—'}
+                    </td>
+                )}
+                <td className={styles.td}>{usPriceCell(t)}</td>
+                <td className={styles.td}>{usFillCell(t, remaining)}</td>
+                <td className={styles.td}>{usStatusChip(t, remaining)}</td>
+                {size === 'wide' && (
+                    <td
+                        className={styles.td}
+                        style={{
+                            maxWidth: '14rem',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                        }}
+                    >
+                        {t.status.msg || '—'}
+                    </td>
+                )}
+                <td className={styles.td}>
+                    <UsOrderActions t={t} />
+                </td>
+            </tr>
+        );
+    };
+
+    const renderTable = (list: OrderRow[]) => (
+        <table className={styles.table}>
+            <thead>
+                <tr>
+                    <th className={styles.th} style={{ width: '1.4rem' }}>
+                        <input
+                            type='checkbox'
+                            className={styles.chk}
+                            disabled={
+                                !armed || activeIds.size === 0 || busy !== null
+                            }
+                            checked={allSelected}
+                            onChange={toggleAll}
+                            title='全選有效單（批次刪單）'
+                        />
+                    </th>
+                    <th className={styles.th}>代碼</th>
+                    <th className={styles.th}>買賣</th>
+                    {size === 'wide' && <th className={styles.th}>類別</th>}
+                    <th className={styles.th}>價格</th>
+                    <th className={styles.th}>數量</th>
+                    <th className={styles.th}>狀態</th>
+                    {size === 'wide' && <th className={styles.th}>訊息</th>}
+                    <th className={styles.th} />
+                </tr>
+            </thead>
+            <tbody>
+                {list.map((r) =>
+                    r.kind === 'us' ? usTableRow(r.t, r.key) : twTableRow(r.t),
+                )}
             </tbody>
         </table>
     );
 
-    // 窄版：兩行卡片式 row（代碼＋買賣＋狀態 / 價格＋進度圈＋刪單）
-    const renderCards = (list: Trade[]) => (
-        <div>
-            {list.map((t) => {
+    const twCard = (t: Trade) => {
                 const st = t.status.status;
                 return (
                     <div
@@ -605,11 +776,54 @@ export function OrdersPane({
                         </div>
                     </div>
                 );
-            })}
+    };
+
+    const usCard = (t: AccountedUsTrade, key: string) => {
+        const remaining = usRemaining(t);
+        return (
+            <div
+                key={key}
+                className={styles.cardRow}
+                onClick={() => onSelectCode(usLinkKey(t.contract.code))}
+                title='點擊連動圖表與下單面板'
+            >
+                <div className={styles.cardLine}>
+                    <span className={styles.cardCode}>
+                        {t.contract.code}
+                        <UsTag />
+                    </span>
+                    <span
+                        className={
+                            styles.dirBadge[
+                                t.order.action === 'Buy' ? 'up' : 'down'
+                            ]
+                        }
+                    >
+                        {t.order.action === 'Buy' ? '買' : '賣'}
+                    </span>
+                    <span className={styles.cardSpacer} />
+                    {usStatusChip(t, remaining)}
+                </div>
+                <div className={styles.cardLine}>
+                    {usPriceCell(t)}
+                    {usFillCell(t, remaining)}
+                    <span className={styles.cardSpacer} />
+                    <UsOrderActions t={t} />
+                </div>
+            </div>
+        );
+    };
+
+    // 窄版：兩行卡片式 row（代碼＋買賣＋狀態 / 價格＋進度圈＋刪單）
+    const renderCards = (list: OrderRow[]) => (
+        <div>
+            {list.map((r) =>
+                r.kind === 'us' ? usCard(r.t, r.key) : twCard(r.t),
+            )}
         </div>
     );
 
-    const renderRows = (list: Trade[]) =>
+    const renderRows = (list: OrderRow[]) =>
         size === 'narrow' ? renderCards(list) : renderTable(list);
 
     const filterChips: { key: StatusFilter; label: string; n?: number }[] = [
@@ -645,6 +859,18 @@ export function OrdersPane({
                 ))}
             </div>
             <div className={styles.paneScroll}>
+                {us && market !== 'F' && !scopeKey && us.hint && (
+                    <div className={styles.usNote} role='status'>
+                        <UsTag />
+                        {us.hint}
+                    </div>
+                )}
+                {us && market !== 'F' && !scopeKey && us.error && (
+                    <div className={`${styles.usNote} ${panel.statusText.err}`} role='status'>
+                        <UsTag />
+                        {us.error}
+                    </div>
+                )}
                 {rows.length === 0 ? (
                     <div className={styles.emptyState}>
                         {initialStatus !== 'ready' ? (
@@ -652,15 +878,15 @@ export function OrdersPane({
                                 phase={initialStatus === 'loading' ? 'loading' : 'error'}
                                 text={initialStatus === 'loading' ? '載入委託…' : '委託尚未確認，請更新'}
                             />
-                        ) : trades.length === 0 ? (
+                        ) : totalCount === 0 ? (
                             <AsyncStatus phase='empty' text='NO ORDERS · 無委託' />
                         ) : (
                             // 有抓到委託但被篩選隱藏 — 不講清楚會被當成
                             // 「委託消失」回報（issue #19：持久化的狀態/
                             // 市場偏好讓清單長期空白）
                             <>
-                                {trades.length} 筆委託被
-                                {scoped.length === 0
+                                {totalCount} 筆委託被
+                                {scopedCount === 0
                                     ? '市場/帳戶範圍'
                                     : '狀態'}
                                 篩選隱藏{' '}
@@ -678,9 +904,13 @@ export function OrdersPane({
                     </div>
                 ) : mode === 'grouped' ? (
                     groups.map((g) => {
-                        const gActive = g.rows.filter((t) =>
-                            remainingWorkingOrderQuantity(t) > 0,
+                        // 群組全刪只含台股有效單；美股群組逐筆刪
+                        const gActive = g.rows.flatMap((r) =>
+                            r.kind === 'tw' && remainingWorkingOrderQuantity(r.t) > 0 ? [r.t] : [],
                         );
+                        const gWorking = g.rows.filter((r) =>
+                            r.kind === 'us' ? rowBucket(r) === 'active' : remainingWorkingOrderQuantity(r.t) > 0,
+                        ).length;
                         const isCollapsed = collapsed.has(g.key);
                         return (
                             <div key={g.key}>
@@ -717,7 +947,7 @@ export function OrdersPane({
                                             {g.rows.length} 筆
                                         </span>
                                         <span className={styles.groupStat}>
-                                            有效 {gActive.length}
+                                            有效 {gWorking}
                                         </span>
                                     </button>
                                     <span className={styles.groupSpacer} />

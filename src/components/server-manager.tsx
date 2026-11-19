@@ -28,7 +28,7 @@ import { unsignedAccountLabel } from '../lib/account-signing';
 import { canTrade } from '../lib/account-tradable';
 import { plainText, secretAccount } from '../lib/privacy';
 import { useRevealText } from '../lib/privacy-text';
-import { EXPECTED_SERVER_VERSION } from '../lib/runtime';
+import { EXPECTED_SERVER_VERSION, sameServerVersion } from '../lib/runtime';
 import { diagnoseOutput, errorLines, validateDesktopSettings, validateProfileSettings } from '../lib/server-diagnostics';
 import { describeServerEnvNotice, type ServerSwitchTarget } from '../lib/server-env-notice';
 import { serverStartErrorCopy } from '../lib/server-start-error';
@@ -677,7 +677,7 @@ export function ServerManager({
     const serverVersionMismatch =
         !!serverVersion &&
         !!EXPECTED_SERVER_VERSION &&
-        serverVersion !== EXPECTED_SERVER_VERSION;
+        !sameServerVersion(serverVersion, EXPECTED_SERVER_VERSION);
     // busy ends when the spawn is sent; the health wait's run lasts to the reload
     const switching = !!switchTarget && (busy || !!timingRun);
     const envNotice = describeServerEnvNotice({

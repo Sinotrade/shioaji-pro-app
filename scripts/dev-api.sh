@@ -26,9 +26,17 @@ if [ ! -x "$BIN" ]; then
 fi
 
 PORT="${SJ_DEV_PORT:-21322}"
-EXPECTED="$(tr -d 'v[:space:]' < SHIOAJI_VERSION)"
+# PEP 440（1.8.0b1）與 semver（1.8.0-beta.1）視為同一版
+canon_version() {
+    printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed -E \
+        -e 's/^v//' \
+        -e 's/^([0-9][0-9.]*)[.-]?(a|alpha)[.-]?([0-9]+)$/\1-alpha.\3/' \
+        -e 's/^([0-9][0-9.]*)[.-]?(b|beta)[.-]?([0-9]+)$/\1-beta.\3/' \
+        -e 's/^([0-9][0-9.]*)[.-]?rc[.-]?([0-9]+)$/\1-rc.\2/'
+}
+EXPECTED="$(canon_version "$(tr -d '[:space:]' < SHIOAJI_VERSION)")"
 BIN_VER="$("$BIN" --version 2>/dev/null | tail -1 | awk '{print $2}')"
-if [ "$BIN_VER" != "$EXPECTED" ]; then
+if [ "$(canon_version "$BIN_VER")" != "$EXPECTED" ]; then
     echo "binary version $BIN_VER != SHIOAJI_VERSION $EXPECTED — 換掉 $BIN" >&2
     exit 1
 fi
@@ -38,7 +46,7 @@ fi
 RUNNING="$(curl -sf -m 2 "http://127.0.0.1:$PORT/api/v1/info" 2>/dev/null \
     | sed -n 's/.*"version":"\([^"]*\)".*/\1/p')"
 if [ -n "$RUNNING" ]; then
-    if [ "$RUNNING" = "$EXPECTED" ]; then
+    if [ "$(canon_version "$RUNNING")" = "$EXPECTED" ]; then
         echo "dev api already running on :$PORT (v$RUNNING, version OK) — reusing"
         exec tail -f /dev/null # keep the launcher's process alive
     fi

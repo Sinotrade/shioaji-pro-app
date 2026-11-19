@@ -46,7 +46,15 @@ SERVER_BIN="$BIN_DIR/shioaji-$TARGET_TRIPLE"
 MKCERT_BIN="$BIN_DIR/mkcert-$TARGET_TRIPLE"
 SERVER_HEAD_FILE="$BIN_DIR/.shioaji-dev-head"
 SERVER_HEAD="$(git -C "$SERVER_DIR" rev-parse HEAD)"
-EXPECTED_VERSION="$(tr -d 'v[:space:]' < "$ROOT_DIR/SHIOAJI_VERSION")"
+# PEP 440（1.8.0b1）與 semver（1.8.0-beta.1）視為同一版
+canon_version() {
+    printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed -E \
+        -e 's/^v//' \
+        -e 's/^([0-9][0-9.]*)[.-]?(a|alpha)[.-]?([0-9]+)$/\1-alpha.\3/' \
+        -e 's/^([0-9][0-9.]*)[.-]?(b|beta)[.-]?([0-9]+)$/\1-beta.\3/' \
+        -e 's/^([0-9][0-9.]*)[.-]?rc[.-]?([0-9]+)$/\1-rc.\2/'
+}
+EXPECTED_VERSION="$(canon_version "$(tr -d '[:space:]' < "$ROOT_DIR/SHIOAJI_VERSION")")"
 
 mkdir -p "$BIN_DIR"
 DESKTOP_BIN_DIR="$DESKTOP_DIR/src-tauri/binaries"
@@ -68,7 +76,7 @@ if [[ ! -x "$SERVER_BIN" || ! -f "$SERVER_HEAD_FILE" || "$(<"$SERVER_HEAD_FILE")
 fi
 
 ACTUAL_VERSION="$("$SERVER_BIN" --version | tail -1 | awk '{print $2}')"
-if [[ "$ACTUAL_VERSION" != "$EXPECTED_VERSION" ]]; then
+if [[ "$(canon_version "$ACTUAL_VERSION")" != "$EXPECTED_VERSION" ]]; then
     echo "Dev sidecar version $ACTUAL_VERSION does not match expected $EXPECTED_VERSION" >&2
     exit 1
 fi

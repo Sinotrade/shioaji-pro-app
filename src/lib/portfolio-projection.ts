@@ -12,7 +12,8 @@ const positive = (v: unknown): v is number => typeof v === 'number' && Number.is
 export function reportBody(report: OrderEventReport): Rec | undefined {
     const raw = record(report.raw);
     const data = record(raw?.data);
-    return data ? record(data[`${report.market === 'stock' ? 'Stock' : 'Futures'}${report.kind === 'deal' ? 'Deal' : 'Order'}`]) : raw;
+    const prefix = report.market === 'stock' ? 'Stock' : report.market === 'us' ? 'Intl' : 'Futures';
+    return data ? record(data[`${prefix}${report.kind === 'deal' ? 'Deal' : 'Order'}`]) : raw;
 }
 
 export interface PositionFill {
@@ -31,7 +32,8 @@ export interface PositionFill {
 // Notifications intentionally tolerate missing fields. Accounting must not:
 // never infer an account or interpret a missing quantity as zero.
 export function positionFill(report: OrderEventReport, accounts: Account[], trades: AccountedTrade[]): PositionFill | null {
-    if (report.kind !== 'deal') return null;
+    // 美股成交不進台股持倉投影（美股庫存另由 H 帳戶查詢）
+    if (report.kind !== 'deal' || report.market === 'us') return null;
     const body = reportBody(report);
     if (!body || !positive(report.price) || !positive(report.quantity) || !report.ts
         || !['Buy', 'Sell'].includes(report.action ?? '') || !text(body.exchange_seq)) return null;

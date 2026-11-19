@@ -31,7 +31,9 @@ import { restoreAfterUnfilledClose, restoreTriggers, warnIfStillHeld, withFlatte
 import { FlashProtectStrip } from './flash-protect';
 import {
     type ReactNode,
+    lazy,
     memo,
+    Suspense,
     useCallback,
     useEffect,
     useMemo,
@@ -69,6 +71,8 @@ import { orderStatusWithNumber } from '../lib/order-status-label';
 import { flashOrderTotals, flashTotalsSince, flashWorkingOrders, sameContractMonth } from '../lib/flash-order-totals';
 import { useStockOrderConditionsVersion } from '../lib/stock-order-conditions';
 import { FlashTotalsRow } from './flash-totals-bar';
+// 美股分支延遲載入：台股面板（與其測試）不必載入美股下單模組
+const UsFlashOrder = lazy(() => import('./flash-order-us').then(m => ({ default: m.UsFlashOrder })));
 
 const ROW_H = 22; // must match row height in flash-order.css.ts
 const EDGE = 2; // auto-recenter when last price gets this close to the edge
@@ -385,7 +389,23 @@ const FlashRow = memo(function FlashRow({
     );
 });
 
-export function FlashOrder({
+type FlashOrderProps = Parameters<typeof FlashOrderTw>[0];
+
+// 美股合約改畫美股分支（只用 H 帳戶、整股限價）。在這裡分流、不在台股元件
+// 裡面分支：兩邊的 hook 順序各自固定（台股↔美股切換＝換掉整個子元件）
+export function FlashOrder(props: FlashOrderProps) {
+    if (props.contract.region === 'US') {
+        return (
+            <Suspense fallback={<div className={styles.waiting}>載入美股閃電…</div>}>
+                <UsFlashOrder contract={props.contract} linkKey={props.linkKey} symbolExtra={props.symbolExtra}
+                    settingsRows={props.settingsRows} paused={props.paused} />
+            </Suspense>
+        );
+    }
+    return <FlashOrderTw {...props} />;
+}
+
+function FlashOrderTw({
     contract,
     snapshot,
     trades: allTrades = [],

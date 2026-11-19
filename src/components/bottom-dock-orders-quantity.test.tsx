@@ -2,6 +2,9 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import type { Trade } from '../lib/types/order';
+// 委託表併入美股列：美股操作模組在 import 時碰 window，測試裡換成空殼
+vi.mock('./bottom-dock-us', () => ({ usAccountGroupKey: () => '', UsOrderActions: () => null, usOrderPriceText: () => '', usOrderRowKey: () => '', usStatusBucket: () => 'dead', UsTag: () => null }));
+vi.mock('../lib/us/us-trading-state', () => ({ usRemaining: () => '0' }));
 vi.mock('../lib/trade', () => ({ notify: vi.fn() }));
 vi.mock('../lib/shioaji', () => ({ cancelOrder: vi.fn(), updateOrderPrice: vi.fn(), updateOrderQty: vi.fn() }));
 import { OrderQuantity } from './bottom-dock-orders';

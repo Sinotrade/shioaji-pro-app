@@ -15,13 +15,19 @@ function atLeastSnapshot(event: { date?: string; time?: string; datetime?: strin
     return Number.isFinite(eventTime) && Number.isFinite(snapshotTime) && eventTime >= snapshotTime;
 }
 
+const withoutUs = (contracts: ContractBase[]) =>
+    contracts.some(c => c.region === 'US') ? contracts.filter(c => c.region !== 'US') : contracts;
+
 const keyOf = (contracts: ContractBase[]) => JSON.stringify(contracts.map(c => [c.security_type, c.exchange, c.code, c.target_code]));
 
 /** One scoped snapshot, then quote events. Changing presentation does not query.
  * `live` narrows the quote subscriptions to part of `contracts` (T 字訂閱窗 #371):
  * the rest keep their snapshot, and a contract entering `live` is re-queried once
  * so a quiet strike does not show the figures from when the table opened. */
-export function useLiveSnapshots(contracts: ContractBase[], fetcher?: () => Promise<Snapshot[]>, live?: ContractBase[]) {
+export function useLiveSnapshots(allContracts: ContractBase[], fetcher?: () => Promise<Snapshot[]>, allLive?: ContractBase[]) {
+    // 美股沒有快照，台股行情訂閱也不該保留美股（美股即時價由 useQuote('US:CODE') 走美股訂閱）
+    const contracts = withoutUs(allContracts);
+    const live = allLive && withoutUs(allLive);
     const key = keyOf(contracts);
     const tracked = live ?? contracts;
     const liveKey = live ? keyOf(live) : key;

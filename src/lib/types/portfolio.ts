@@ -1,6 +1,7 @@
 // src/lib/types/portfolio.ts — account/position shapes
 
-export type AccountTypeName = 'S' | 'F';
+// H = 複委託（美股）帳戶；broker_id／account_id 可能和 S 相同，一律明確帶 account_type
+export type AccountTypeName = 'S' | 'F' | 'H';
 
 export interface Account {
     account_type: string;

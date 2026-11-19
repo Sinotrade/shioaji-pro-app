@@ -9,6 +9,7 @@ import { useEffect, useRef, useState, useSyncExternalStore, type MutableRefObjec
 import { ensureContract, primeContract, useContract } from '../lib/contracts-cache';
 import { expiryTime, linkedStockCode, monthLabel, pickStockFuture, type FlashLink } from '../lib/flash-link';
 import { fetchFutures } from '../lib/shioaji';
+import { contractLinkKey } from '../lib/contract-key';
 import type { ContractInfo } from '../lib/types/contract';
 import { SettingsSegRow, settingsSelectClass } from './chart-order-popover';
 import * as styles from './flash-order.css';
@@ -84,7 +85,7 @@ export interface FlashLinkProps {
 
 const KIND_OPTIONS = [['select', '照選取'], ['stock', '現股'], ['future', '個股期']] as const;
 
-export function FlashLinkHost({ source, link, group, onLinkChange, render, targetRef, pending }: {
+export function FlashLinkHost({ source, link: savedLink, group, onLinkChange, render, targetRef, pending }: {
     source: ContractInfo;
     link: FlashLink;
     /** 連動方式（main／pin／A／B／C） */
@@ -97,11 +98,15 @@ export function FlashLinkHost({ source, link, group, onLinkChange, render, targe
     pending?: string;
 }) {
     if (targetRef) targetRef.current = null;
+    // 美股沒有個股期／現股對應：一律照選取（下單合約＝來源），絕不查個股期。
+    // 只影響這次的判斷，不改寫面板存的設定（換回台股時恢復原本的對應方式）
+    const us = source.region === 'US';
+    const link: FlashLink = us ? { ...savedLink, kind: 'select' } : savedLink;
     // 最後畫出的閃電：查詢中保留它（暫停、不顯示舊合約），數量等面板狀態不因查詢快慢而不同
     const lastShown = useRef<ContractInfo | null>(null);
     const lastExpiry = useRef<number | null | undefined>(undefined);
     const show = (contract: ContractInfo, props: FlashLinkProps) => {
-        if (targetRef) targetRef.current = contract.code;
+        if (targetRef) targetRef.current = contractLinkKey(contract); // 美股 US:CODE（彈出視窗以此查合約）
         lastShown.current = contract;
         lastExpiry.current = props.expiresAt;
         return render(contract, props);
@@ -127,9 +132,9 @@ export function FlashLinkHost({ source, link, group, onLinkChange, render, targe
     useRerenderAt(pick?.status === 'ok' ? pick.expiresAt : null);
     const picked = useContract(pick?.status === 'ok' ? pick.contract.code : null) ?? (pick?.status === 'ok' ? pick.contract : undefined);
 
-    const set = (patch: Partial<FlashLink>) => onLinkChange({ ...link, ...patch });
+    const set = (patch: Partial<FlashLink>) => onLinkChange({ ...savedLink, ...patch });
     const months = pick?.status === 'ok' ? pick.months : [];
-    const settingsRows = (
+    const settingsRows = us ? null : (
         <>
             <SettingsSegRow label='對應商品' value={link.kind} options={KIND_OPTIONS} onPick={kind => set({ kind })} />
             {link.kind === 'future' && (pick?.status === 'ok' && pick.hasMini || link.spec === 'mini' || pick?.status === 'noStd') && (
@@ -152,7 +157,7 @@ export function FlashLinkHost({ source, link, group, onLinkChange, render, targe
                 options={[['on', '顯示'], ['off', '隱藏']]} onPick={v => set({ ref: v === 'on' })} />
         </>
     );
-    const linkKey = `${group}|${link.kind}|${link.spec}|${link.month}|${source.code}${pending ? `|pending:${pending}` : ''}`;
+    const linkKey = `${group}|${link.kind}|${link.spec}|${link.month}|${contractLinkKey(source)}${pending ? `|pending:${pending}` : ''}`;
     const name = `${source.code === source.name || !source.name ? source.code : source.security_type === 'STK' ? `${source.code} ${source.name}` : source.name}`;
 
     const loading = (text: string) => (lastShown.current

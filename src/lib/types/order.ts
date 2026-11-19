@@ -76,6 +76,14 @@ export interface OrderResult {
     daytrade_short?: boolean;
     custom_field?: string;
     account?: { broker_id: string; account_id: string; account_type: string };
+    // 美股（H 帳戶）委託才有的欄位；台股委託不帶
+    currency?: string;
+    region?: string;
+    session?: string;
+    /** 美東交易日 yyyyMMdd */
+    trade_date?: string;
+    all_or_none?: boolean;
+    time_in_force?: string;
 }
 
 export interface OrderStatusInfo {
@@ -89,6 +97,8 @@ export interface OrderStatusInfo {
     modified_price: number;
     msg: string;
     deals: Deal[];
+    /** 美股成交均價（decimal 字串，沒成交時省略） */
+    avg_price?: string;
 }
 
 export interface Trade {
@@ -108,7 +118,7 @@ export type TradeCacheHealthReasonCode =
     | 'SequenceGap'
     | 'PendingReport'
     | 'ProjectionFailed';
-export type TradeReportEventType = 'StockOrder' | 'StockDeal' | 'FuturesOrder' | 'FuturesDeal';
+export type TradeReportEventType = 'StockOrder' | 'StockDeal' | 'FuturesOrder' | 'FuturesDeal' | 'IntlOrder' | 'IntlDeal';
 export interface TradeCacheHealth {
     state: TradeCacheHealthState;
     reasons: { event_type: TradeReportEventType; reason: TradeCacheHealthReasonCode }[];

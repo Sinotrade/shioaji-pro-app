@@ -23,12 +23,14 @@ import {
     registerCapabilitySubscription,
     registerSubscription,
     registerSubscriptionRaw,
+    retainUsQuoteStreams,
     unregisterCapabilitySubscription,
     unregisterSubscription,
 } from './stream';
 import type {
     ContractBase,
     ContractInfo,
+    Region,
     SecurityType,
     TickBandsResponse,
 } from './types/contract';
@@ -61,6 +63,8 @@ import type {
 import type { HistoryTicks } from './types/tick';
 import { contractMarket } from './contract-market';
 import { todayStr } from './utils/date';
+import { usLinkKey } from './contract-key';
+import { usSubscriptionBody } from './us/us-quotes';
 
 export interface ServerInfo {
     name: string;
@@ -72,6 +76,14 @@ export interface ServerInfo {
     instance_id?: string;
     agent_harness?: Health['agent_harness'];
 }
+
+/** 美股合約（region US）：beta 沒有即時報價，也不走台股下單路徑 */
+export function isUsContract(c: Pick<ContractBase, 'region'> | null | undefined): boolean {
+    return c?.region === 'US';
+}
+
+const US_NO_QUOTES = '美股這個版本沒有即時行情';
+const US_TW_ORDER_PATH = '美股請用下單或閃電面板下單；這個下單路徑只支援台股';
 
 function contractKey(c: ContractBase) {
     return {
@@ -394,6 +406,7 @@ export function fetchWarrantUnderlyings(opts?: { signal?: AbortSignal }) {
 // ---- market data ----
 
 export function fetchSnapshots(contracts: ContractBase[]) {
+    if (contracts.some(isUsContract)) return Promise.reject(new Error(US_NO_QUOTES));
     return observeMarketSnapshots(contracts, apiPost<Snapshot[]>('/api/v1/data/snapshots', {
         contracts: contracts.map(marketDataContract),
     }));
@@ -410,6 +423,7 @@ export async function fetchKbars(
     end: string,
     opts?: { timeoutMs?: number },
 ): Promise<KBars> {
+    if (isUsContract(contract)) throw new Error(US_NO_QUOTES);
     const body = { contract: marketDataContract(contract), start, end };
     for (let attempt = 0; ; attempt++) {
         try {
@@ -468,12 +482,27 @@ export interface QuoteSubscribeOptions {
     oddLot?: boolean;
 }
 
+// 美股訂閱期間保持獨立的美股 SSE（key：US:CODE:quoteType）
+const usStreamHolds = new Map<string, () => void>();
+
 export function subscribeQuote(
     contract: ContractBase,
     quoteType: QuoteTypeName,
     options?: QuoteSubscribeOptions,
 ) {
     const oddLot = options?.oddLot === true;
+    // 美股（SDK 1.8.0b1）：只有 Tick／BidAsk，沒有零股分流
+    if (isUsContract(contract)) {
+        if (oddLot || quoteType === 'Quote') return Promise.reject(new Error(US_NO_QUOTES));
+        const body = usSubscriptionBody(contract, quoteType);
+        return apiPost<SubscriptionResponse>('/api/v1/stream/subscribe', body).then((response) => {
+            if (!response.success) throw new Error(response.message || '美股行情訂閱失敗');
+            const holdKey = `${usLinkKey(contract.code)}:${quoteType}`;
+            registerSubscriptionRaw(usLinkKey(contract.code), quoteType, body);
+            if (!usStreamHolds.has(holdKey)) usStreamHolds.set(holdKey, retainUsQuoteStreams());
+            return response;
+        });
+    }
     // 組合商品走巢狀腳訂閱（flat code 如 TXFI6/J6 server 不認）
     const comboMeta = (contract as { combo?: unknown }).combo;
     if (comboMeta) {
@@ -507,6 +536,17 @@ export function unsubscribeQuote(
     options?: QuoteSubscribeOptions,
 ) {
     const oddLot = options?.oddLot === true;
+    if (isUsContract(contract)) {
+        if (oddLot || quoteType === 'Quote') return Promise.resolve({ success: true, message: '' } as SubscriptionResponse);
+        return apiPost<SubscriptionResponse>('/api/v1/stream/unsubscribe', usSubscriptionBody(contract, quoteType)).then((response) => {
+            if (!response.success) throw new Error(response.message || '取消行情訂閱失敗');
+            const holdKey = `${usLinkKey(contract.code)}:${quoteType}`;
+            unregisterSubscription(usLinkKey(contract.code), quoteType);
+            usStreamHolds.get(holdKey)?.();
+            usStreamHolds.delete(holdKey);
+            return response;
+        });
+    }
     const comboMeta = (contract as { combo?: unknown }).combo;
     if (comboMeta && !oddLot) {
         return unsubscribeComboQuote(
@@ -810,7 +850,7 @@ export function unsubscribeMarketSignal(
 
 /** Every mutation shares this dispatch gate. Re-read the wire account from
  * the current list and the current mode, including after transport loading. */
-function sendOrderMutation<T>(
+export function sendOrderMutation<T>(
     path: string,
     body: unknown,
     account: Account | undefined,
@@ -869,6 +909,9 @@ export function placeStockOrder(
     account?: Account,
     opts?: { agentInitiated?: boolean; agentCallId?: string; agentAuto?: boolean; beforeDispatch?: () => void; onResponse?: (res: Response) => void },
 ) {
+    // 美股不走這條路（grid／括號單／觸價／背景引擎／Agent 都經過這裡）：
+    // 這裡的 order_lot／order_cond／custom_field 美股都會被拒
+    if (isUsContract(contract)) return Promise.reject(Object.assign(new Error(US_TW_ORDER_PATH), { mutationNotStarted: true as const }));
     // 零股不支援的組合（融資券／當沖／市價／IOC／超過 999 股）與整股信用規則
     // （融券買進、不可當沖的當沖先賣）一律在送出前擋下（#204）
     // 權證：沒有零股、只能現股、外國標的不收市價（docs/qa/warrant-rules.md）
@@ -892,6 +935,7 @@ export function placeFuturesOrder(
     account?: Account,
     opts?: { agentInitiated?: boolean; agentCallId?: string; agentAuto?: boolean; beforeDispatch?: () => void },
 ) {
+    if (isUsContract(contract)) return Promise.reject(Object.assign(new Error(US_TW_ORDER_PATH), { mutationNotStarted: true as const }));
     // 倉別／效期／價別不在下單面板提供的範圍就不送（與下單面板、閃電同一套規則）
     const problem = futuresOrderProblem(order);
     if (problem) return Promise.reject(Object.assign(new Error(problem), { mutationNotStarted: true as const }));
@@ -1591,10 +1635,31 @@ export function fetchComboTrades() {
 
 // ---- server watchlists ----
 
+/**
+ * 伺服器自選清單的成員。region 由 sw／SDK 1.8 起回傳（TW／US）；舊伺服器
+ * 沒有這個欄位，一律視為台股。美股成員的 exchange 是實際交易所
+ * （NASDAQ／NYSE／BATS／TXSE）。
+ */
+export interface ServerWatchlistContract {
+    security_type: SecurityType;
+    exchange: string;
+    code: string;
+    region?: Region;
+}
+
 export interface ServerWatchlist {
     id: string;
     name: string;
-    contracts: { security_type: SecurityType; exchange: string; code: string }[];
+    contracts: ServerWatchlistContract[];
+}
+
+// 自選成員的 wire 格式：region 一律送（舊伺服器忽略）；美股必須帶實際
+// 交易所（NASDAQ／NYSE／BATS／TXSE），缺交易所就不送，避免存成無法還原的成員
+function watchlistContractKey(c: ContractBase) {
+    if (c.region === 'US' && !c.exchange) {
+        throw new Error(`美股 ${c.code} 缺少交易所，無法加入自選`);
+    }
+    return contractKey(c);
 }
 
 export function fetchWatchlists() {
@@ -1607,25 +1672,25 @@ export function createWatchlist(
 ) {
     return apiPost<ServerWatchlist>('/api/v1/watchlist', {
         name,
-        contracts: contracts.map(contractKey),
+        contracts: contracts.map(watchlistContractKey),
     });
 }
 
 export function syncWatchlist(id: string, contracts: ContractBase[]) {
     return apiPut<ServerWatchlist>(`/api/v1/watchlist/${id}`, {
-        contracts: contracts.map(contractKey),
+        contracts: contracts.map(watchlistContractKey),
     });
 }
 
 export function addWatchlistContracts(id: string, contracts: ContractBase[]) {
     return apiPost<ServerWatchlist>(`/api/v1/watchlist/${id}/contracts`, {
-        contracts: contracts.map(contractKey),
+        contracts: contracts.map(watchlistContractKey),
     });
 }
 
 export function removeWatchlistContracts(id: string, contracts: ContractBase[]) {
     return apiDelete<ServerWatchlist>(`/api/v1/watchlist/${id}/contracts`, {
-        contracts: contracts.map(contractKey),
+        contracts: contracts.map(watchlistContractKey),
     });
 }
 

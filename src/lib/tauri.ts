@@ -6,6 +6,7 @@ import {
     type ApiScheme,
     DEFAULT_PORT,
     EXPECTED_SERVER_VERSION,
+    sameServerVersion,
     LEGACY_PORT,
     blockForeignServerPort,
     foreignServerPortBlocked,
@@ -318,7 +319,7 @@ function reloadIfConfiguredServerHealthy(): void {
             const settings = await loadDesktopSettings();
             const status = await serverStatus(async (candidate) => {
                 if (!candidate.healthy || candidate.simulation !== !settings.production) return false;
-                if (EXPECTED_SERVER_VERSION && candidate.version && candidate.version !== EXPECTED_SERVER_VERSION) return false;
+                if (EXPECTED_SERVER_VERSION && candidate.version && !sameServerVersion(candidate.version, EXPECTED_SERVER_VERSION)) return false;
                 const scheme = candidate.scheme ?? 'http';
                 if (settings.httpsEnabled
                     ? scheme !== 'https' && await localTlsCertExists()
@@ -1003,7 +1004,7 @@ async function startServerOnce(opts: StartOptions): Promise<StartResult> {
         const versionMismatch =
             EXPECTED_SERVER_VERSION !== '' &&
             st.version !== undefined &&
-            st.version !== EXPECTED_SERVER_VERSION;
+            !sameServerVersion(st.version, EXPECTED_SERVER_VERSION);
         const nativeHarnessOwned = await nativeOwnsHarnessSidecar(st.port);
         const harnessMismatch = !harnessOwnershipCompatible(
             opts.agentHarnessEnabled === true,

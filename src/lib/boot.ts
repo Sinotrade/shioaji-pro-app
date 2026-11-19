@@ -11,6 +11,7 @@ import { describeOrderReport } from './order-report';
 import {
     blockForeignServerPort,
     EXPECTED_SERVER_VERSION,
+    sameServerVersion,
     foreignServerPortBlocked,
     getApiPort,
     isTauri,
@@ -90,7 +91,7 @@ async function matchesServerIdentity(status: ServerStatus | null, settings: Desk
         !!status.port && await nativeOwnsHarnessSidecar(status.port),
     );
     if (status.simulation !== !settings.production || !schemeOk || !harnessOwned ||
-        (EXPECTED_SERVER_VERSION !== '' && status.version !== undefined && status.version !== EXPECTED_SERVER_VERSION)) {
+        (EXPECTED_SERVER_VERSION !== '' && status.version !== undefined && !sameServerVersion(status.version, EXPECTED_SERVER_VERSION))) {
         return false;
     }
     return true;
@@ -484,7 +485,7 @@ async function run() {
                 if (
                     EXPECTED_SERVER_VERSION !== '' &&
                     st.version !== undefined &&
-                    st.version !== EXPECTED_SERVER_VERSION
+                    !sameServerVersion(st.version, EXPECTED_SERVER_VERSION)
                 ) {
                     return; // wrong-version server — keep waiting
                 }
@@ -549,7 +550,7 @@ async function serverVersionOk(): Promise<boolean> {
     if (!isTauri || EXPECTED_SERVER_VERSION === '') return true;
     try {
         const info = await fetchInfo();
-        if (!info.version || info.version === EXPECTED_SERVER_VERSION) {
+        if (!info.version || sameServerVersion(info.version, EXPECTED_SERVER_VERSION)) {
             return true;
         }
         if (!versionWarned) {

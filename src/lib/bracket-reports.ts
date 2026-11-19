@@ -57,6 +57,8 @@ export function recentReportsFor(base: string, orderId: string, now = Date.now()
 
 /** Reports reaching here were already de-duplicated by stream.ts. */
 export function ingestReport(report: OrderEventReport, now = Date.now()) {
+    // 美股不支援括號單／保護單：回報不進這裡
+    if (report.market === 'us') return;
     const base = getApiBase();
     remember(base, report, now);
     const info = { untrackable: !parseEventId(report.eventId) };

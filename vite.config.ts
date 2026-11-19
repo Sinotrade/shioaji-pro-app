@@ -145,6 +145,8 @@ export default defineConfig(({ mode, command }) => {
                 // binary、port 21322）— 確保 API/UI 版本相符，不依賴使用
                 // 者自裝在 8080 的 CLI。要打別台時用 VITE_API_TARGET 蓋掉
                 '/api': env.VITE_API_TARGET ?? isolatedApi ?? 'http://127.0.0.1:21322',
+                // 美股帳務能力判斷讀 sidecar 的 /openapi.json（dev 才需要 proxy）
+                '/openapi.json': env.VITE_API_TARGET ?? isolatedApi ?? 'http://127.0.0.1:21322',
             },
         },
         preview: { host: '127.0.0.1' },

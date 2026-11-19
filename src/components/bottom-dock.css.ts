@@ -837,3 +837,41 @@ export const ringWrap = style({
     gap: '4px',
     whiteSpace: 'nowrap',
 });
+
+// ---- 美股（H 帳戶）列：代碼格標記、逐筆操作、狀態提示 ----
+
+export const usTag = style({
+    display: 'inline-block',
+    marginLeft: '4px',
+    padding: '0 4px',
+    fontSize: '0.58rem',
+    fontWeight: 600,
+    lineHeight: 1.4,
+    borderRadius: vars.radius.sm,
+    color: vars.color.mutedForeground,
+    border: `1px solid ${vars.color.border}`,
+    whiteSpace: 'nowrap',
+    verticalAlign: 'middle',
+});
+
+export const usUnit = style({
+    marginLeft: '2px',
+    fontSize: '0.58rem',
+    color: vars.color.mutedForeground,
+});
+
+export const usActions = style({
+    display: 'inline-flex',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: '4px',
+});
+
+export const usNote = style({
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
+    padding: '3px 10px',
+    fontSize: '0.66rem',
+    color: vars.color.mutedForeground,
+});

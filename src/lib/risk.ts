@@ -126,3 +126,13 @@ export function checkOrderAllowed(quantity: number, orderLot?: StockOrderLot | s
     }
     return null;
 }
+
+/**
+ * 美股（H 帳戶）下單的風控：只套用風控鎖（Kill Switch）。
+ * 單筆上限以張／口設定、日虧上限以 TWD 台股損益計算，幣別與單位都不同，
+ * 不套用到美股（設定頁有註明）。
+ */
+export function checkUsOrderAllowed(): string | null {
+    if (settings.locked) return '風控鎖啟動中 — 所有下單已封鎖';
+    return null;
+}

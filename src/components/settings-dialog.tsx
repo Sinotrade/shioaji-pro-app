@@ -303,7 +303,7 @@ function SoundPrivacySection() {
 }
 
 export function AccountsSection() {
-    const { accounts, selectedStock, selectedFutures, loaded, loadError } = useAccounts();
+    const { accounts, selectedStock, selectedFutures, selectedIntl, loaded, loadError } = useAccounts();
     const simulation = useServerInfo()?.simulation === true;
     const priv = usePrivacyMode();
     const [refreshing, setRefreshing] = useState(false);
@@ -311,7 +311,7 @@ export function AccountsSection() {
     const unsignedTypes = (['S', 'F'] as const).filter((t) =>
         accounts.some((a) => a.account_type === t && !a.signed),
     );
-    const groups: { label: string; type: 'S' | 'F'; selected: string }[] = [
+    const groups: { label: string; type: 'S' | 'F' | 'H'; selected: string }[] = [
         {
             label: '證券帳戶',
             type: 'S',
@@ -324,6 +324,14 @@ export function AccountsSection() {
             type: 'F',
             selected: selectedFutures
                 ? `${selectedFutures.broker_id}-${selectedFutures.account_id}`
+                : '',
+        },
+        {
+            // 複委託（美股）：只用在美股下單面板與美股委託
+            label: '複委託帳戶（美股）',
+            type: 'H',
+            selected: selectedIntl
+                ? `${selectedIntl.broker_id}-${selectedIntl.account_id}`
                 : '',
         },
     ];
@@ -484,6 +492,8 @@ function RiskSection() {
                 （持倉未實現＋期貨平倉）
                 <br />
                 停損/停利觸價單不受風控封鎖。
+                <br />
+                美股（複委託）只受 Kill Switch 封鎖，單筆上限與日虧上限只算台股／期貨。
                 <br />
                 Kill Switch（鎖定下單）在畫面右上角「風控」鈕，一鍵鎖定/解鎖。
             </span>

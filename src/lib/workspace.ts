@@ -1220,6 +1220,7 @@ export function isKnownBlockType(value: unknown): value is BlockType {
  * 已知類型完全不動；沒有未知面板時回傳原物件。
  */
 export function sanitizeWorkspace(w: Workspace): Workspace {
+    w = dropRetiredPanels(w);
     const carried = w.unsupported;
     const unknownIds = new Set(
         w.blocks.filter((b) => !isKnownBlockType(b.type)).map((b) => b.id),
@@ -1251,6 +1252,32 @@ export function sanitizeWorkspace(w: Workspace): Workspace {
         unsupported,
     };
 }
+
+// 已併入其他面板而移除的面板：讀到就直接拿掉（不保留），啟動時提示一次。
+// usorder（美股下單）已併入下單面板與閃電下單。
+const RETIRED_PANELS: ReadonlySet<string> = new Set(['usorder']);
+let retiredDropped = 0;
+
+function dropRetiredPanels(w: Workspace): Workspace {
+    const gone = new Set(w.blocks.filter((b) => RETIRED_PANELS.has(b.type as string)).map((b) => b.id));
+    if (gone.size === 0) return w;
+    retiredDropped += gone.size;
+    const blocks = w.blocks.filter((b) => !gone.has(b.id));
+    const layout = w.layout.filter((l) => !gone.has(l.i));
+    if (blocks.length === 0) {
+        return { ...structuredClone(DEFAULT_WORKSPACE), ...(w.linkGroups ? { linkGroups: w.linkGroups } : {}) };
+    }
+    return { ...w, blocks, layout };
+}
+
+/** 讀入時移除的舊面板數（讀一次就歸零） */
+export function takeRetiredPanelCount(): number {
+    const n = retiredDropped;
+    retiredDropped = 0;
+    return n;
+}
+
+export const RETIRED_US_PANEL_NOTICE = '美股下單已併入「下單面板」與「閃電下單」：在自選加入美股、點選後即可連動下單。舊版面裡的美股下單面板已移除。';
 
 /** 此版本略過的面板數（給提示用） */
 export function unsupportedPanelCount(w: Workspace): number {

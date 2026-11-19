@@ -20,7 +20,7 @@ vi.mock('../lib/account-store', () => {
 });
 vi.mock('../lib/order-confirm', () => ({ requestOrderConfirm: h.confirm, accountConfirmLabel: () => 'acct' }));
 vi.mock('../lib/risk', () => ({ checkOrderAllowed: () => null, getRiskSettings: () => ({ confirmManualOrders: h.confirmManualOrders }) }));
-vi.mock('../lib/shioaji', () => ({ fetchInfo: () => new Promise(() => undefined), placeFuturesOrder: m.future, placeStockOrder: vi.fn() }));
+vi.mock('../lib/shioaji', () => ({ isUsContract: (c: { region?: string } | null | undefined) => c?.region === 'US', fetchInfo: () => new Promise(() => undefined), placeFuturesOrder: m.future, placeStockOrder: vi.fn() }));
 vi.mock('../lib/trade', () => ({ notify: m.notify }));
 vi.mock('../lib/bracket', () => ({ ensureBracketHost: m.host, registerBracket: m.register, registrationFailureText: String,
     validateBracketRequest: () => null }));
