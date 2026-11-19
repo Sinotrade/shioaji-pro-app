@@ -24,7 +24,8 @@ export function chartPriceDigits(contract: { region?: Region | string } | null |
 
 export function chartPriceFormat(contract: { region?: Region | string } | null | undefined, price?: number | null): ChartPriceFormat {
     const precision = chartPriceDigits(contract, price);
-    return { type: 'price', precision, minMove: 10 ** -precision };
+    // 10 ** -4 在部分 Node 版本是 0.00009999…；用字串轉回來才是精確的 0.0001
+    return { type: 'price', precision, minMove: Number((1 / 10 ** precision).toFixed(precision)) };
 }
 
 /**
