@@ -6,7 +6,7 @@
 
 import { useEffect, useState } from 'react';
 import { isUsHistoryUnavailable, latestUsSessionBars } from '../lib/us/us-history';
-import { US_INTRADAY_H, US_INTRADAY_W, usIntradaySeries, usIntradaySessionPath } from '../lib/us/us-intraday';
+import { US_INTRADAY_H, US_INTRADAY_W, usIntradaySeries, usIntradaySessionPath, usSessionReference } from '../lib/us/us-intraday';
 import type { Candle } from '../lib/types/market';
 import { useQuote } from '../hooks/use-stream';
 import { contractLinkKey } from '../lib/contract-key';
@@ -75,8 +75,7 @@ export function UsIntraday({ contract }: { contract: ContractInfo }) {
     const history = useUsSessionHistory(contract);
     const ref = contract.us_reference ? Number(contract.us_reference) : null;
     const series = usIntradaySeries(history.kind === 'ready' ? history : null, ticks);
-    // 參考價日期晚於畫的交易日時（參考價屬於下一個交易日）不畫參考線
-    const sessionRef = series && contract.reference_date && contract.reference_date > series.date ? null : ref;
+    const sessionRef = series ? usSessionReference(ref, contract.reference_date, series.date) : ref;
 
     if (series) {
         const path = usIntradaySessionPath(series, sessionRef);

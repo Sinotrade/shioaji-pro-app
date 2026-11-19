@@ -20,6 +20,7 @@
 // 數字欄位只供顯示；送單價格一律由梯形或輸入框的 decimal 字串決定。
 
 import { usLinkKey } from '../contract-key';
+import { decIsPositive, decNormalize, decSub } from './decimal';
 import type { SseBidAsk, SseTick } from '../types/market';
 
 /** SSE 事件名稱與獨立串流路徑 */
@@ -103,10 +104,29 @@ export function nyDateTime(epochUs: number): { date: string; time: string } {
 
 const str = (v: string | null | undefined) => (v === null || v === undefined ? '' : String(v));
 
+/**
+ * 漲跌與幅度。一般盤用 SDK 的 price_chg／pct_chg；盤前／盤後 SDK 送的是一般盤
+ * 漲跌（盤前一律 0），改以最近一般盤收盤價（us_tick 的 close）計算延長時段漲跌，
+ * 與美股報價慣例（Pre-Market +1.47 / +0.42%）一致。
+ */
+export function usTickChange(raw: Pick<RawUsTick, 'close' | 'price_chg' | 'pct_chg' | 'session'>, price: string): { priceChg?: string; pctChg?: string } {
+    const extended = raw.session === 'PreMarket' || raw.session === 'AfterHours';
+    const close = str(raw.close);
+    if (extended && decIsPositive(close)) {
+        const chg = decSub(price, close);
+        if (chg !== null) {
+            return { priceChg: decNormalize(chg) ?? chg, pctChg: ((Number(chg) / Number(close)) * 100).toFixed(2) };
+        }
+    }
+    return { priceChg: str(raw.price_chg) || undefined, pctChg: str(raw.pct_chg) || undefined };
+}
+
 /** us_tick → SseTick（code＝US:CODE）＋美股資訊；沒有成交價回 null */
 export function normalizeUsTick(raw: RawUsTick): { tick: SseTick; meta: UsTickMeta } | null {
+    // price 是這筆成交價（可含 sub-penny，例如零股或中價成交，照原值顯示）；close 是一般盤價
     const price = str(raw.price) || str(raw.close);
     if (!raw?.code || !price || !Number.isFinite(Number(price))) return null;
+    const change = usTickChange(raw, price);
     const key = usLinkKey(raw.code);
     const { date, time } = nyDateTime(raw.datetime);
     const tick: SseTick = {
@@ -124,8 +144,8 @@ export function normalizeUsTick(raw: RawUsTick): { tick: SseTick; meta: UsTickMe
         total_amount: str(raw.total_amount) || undefined,
         tick_type: Number(raw.tick_type) || 0,
         chg_type: raw.chg_type,
-        price_chg: str(raw.price_chg) || undefined,
-        pct_chg: str(raw.pct_chg) || undefined,
+        price_chg: change.priceChg,
+        pct_chg: change.pctChg,
         bid_side_total_vol: raw.bid_side_total_vol,
         ask_side_total_vol: raw.ask_side_total_vol,
         // 美股零股成交也是同一個市場：不分 store

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { getUsSessionTicks, normalizeUsBidAsk, normalizeUsTick, nyDateTime, recordUsTick, resetUsQuotesForTest, usSubscriptionBody } from './us-quotes';
+import { getUsSessionTicks, normalizeUsBidAsk, normalizeUsTick, nyDateTime, recordUsTick, resetUsQuotesForTest, usSubscriptionBody, usTickChange } from './us-quotes';
 
 // 2026-11-17 14:30:05 America/New_York（EST, UTC-5）
 const T = Date.UTC(2026, 10, 17, 19, 30, 5) * 1000;
@@ -11,6 +11,20 @@ describe('US quote adapter', () => {
         const r = normalizeUsTick({ exchange: 'NASDAQ', code: 'aapl', datetime: T, price: '231.4500', volume: 100, total_volume: 5000, session: 'Regular', freshness: { status: 'Realtime' } });
         expect(r?.tick).toMatchObject({ code: 'US:AAPL', close: '231.4500', volume: 100, total_volume: 5000, date: '2026-11-17', time: '14:30:05', simtrade: false, intraday_odd: false });
         expect(r?.meta).toMatchObject({ key: 'US:AAPL', price: '231.4500', session: 'Regular', freshness: 'Realtime' });
+    });
+    it('computes the pre-market change from the regular close, keeping the raw sub-penny price', () => {
+        // 2026-11-19 美東盤前實際收到的 us_tick（ed7f77df sidecar）：SDK 的 price_chg／pct_chg 是一般盤漲跌 0
+        const raw = { exchange: 'NASDAQ', code: 'AAPL', datetime: 1795092699431770, price: '354.1244', volume: 25, close: '352.45', open: null, high: null, low: null, total_volume: 255203, tick_type: 0, chg_type: 0, price_chg: '0', pct_chg: '0', odd_lot: true, session: 'PreMarket' as const };
+        const r = normalizeUsTick(raw)!;
+        expect(r.tick.close).toBe('354.1244');
+        expect(r.tick.price_chg).toBe('1.6744');
+        expect(r.tick.pct_chg).toBe('0.48');
+        // 盤後同樣以當日一般盤收盤價計算
+        expect(usTickChange({ ...raw, session: 'AfterHours', close: '355' }, '354.5')).toEqual({ priceChg: '-0.5', pctChg: '-0.14' });
+    });
+    it('keeps the SDK change during the regular session', () => {
+        expect(usTickChange({ close: '352.45', price_chg: '1.2', pct_chg: '0.34', session: 'Regular' }, '353.65')).toEqual({ priceChg: '1.2', pctChg: '0.34' });
+        expect(usTickChange({ close: null, price_chg: '0', pct_chg: '0', session: 'PreMarket' }, '1')).toEqual({ priceChg: '0', pctChg: '0' });
     });
     it('drops ticks without a price', () => {
         expect(normalizeUsTick({ exchange: 'NASDAQ', code: 'AAPL', datetime: T, price: null, volume: 0 })).toBeNull();

@@ -60,6 +60,17 @@ export function usIntradaySeries(
     return { date, start, end, points, fromHistory };
 }
 
+/**
+ * 合約的參考價能不能當這個交易日的參考線：reference_date 是參考價來源的
+ * 收盤日，參考價適用於下一個交易日，所以 reference_date 必須早於畫的交易日
+ * （等於或晚於時，那是這一天或之後的收盤價，不畫）。沒有日期時照用。
+ */
+export function usSessionReference(ref: number | null, referenceDate: string | undefined, sessionDate: string): number | null {
+    if (!ref || !(ref > 0)) return null;
+    if (referenceDate && referenceDate >= sessionDate) return null;
+    return ref;
+}
+
 export const US_INTRADAY_W = 600;
 export const US_INTRADAY_H = 240;
 

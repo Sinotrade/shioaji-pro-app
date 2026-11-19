@@ -1,9 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import type { UsTickMeta } from './us-quotes';
-import { US_INTRADAY_W, usIntradaySeries, usIntradaySessionPath } from './us-intraday';
+import { US_INTRADAY_W, usIntradaySeries, usIntradaySessionPath, usSessionReference } from './us-intraday';
 
 const wall = (s: string) => Date.UTC(+s.slice(0, 4), +s.slice(5, 7) - 1, +s.slice(8, 10), +s.slice(11, 13), +s.slice(14, 16)) / 1000;
 const tick = (utc: number, price: string, session: UsTickMeta['session'] = 'Regular'): UsTickMeta => ({ key: 'US:AAPL', price, session, freshness: null, ts: utc, volume: 1 });
+
+describe('usSessionReference', () => {
+    it('uses a reference only for a trading day after its close date', () => {
+        expect(usSessionReference(351.91, '2026-11-17', '2026-11-18')).toBe(351.91);
+        expect(usSessionReference(352.45, '2026-11-18', '2026-11-18')).toBeNull();
+        expect(usSessionReference(352.45, '2026-11-19', '2026-11-18')).toBeNull();
+        expect(usSessionReference(351.91, undefined, '2026-11-18')).toBe(351.91);
+        expect(usSessionReference(null, '2026-11-17', '2026-11-18')).toBeNull();
+    });
+});
 
 describe('usIntradaySeries', () => {
     const history = { date: '2026-11-18', bars: [
