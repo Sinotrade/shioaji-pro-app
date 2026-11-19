@@ -13,6 +13,8 @@
 - 沒有美股資料的面板（籌碼、公司資料、權證、選擇權等）會顯示「美股暫不支援」。
 - 需要內建或連線的 SDK 為 1.8.0b1 以上；舊版 SDK 不會出現美股功能。
 
+![美股：自選清單、AAPL 5 分 K 與報價板、最佳一檔、成交明細（模擬環境）](https://raw.githubusercontent.com/Sinotrade/shioaji-pro-app/v0.1.58-1/docs/images/release-0.1.58-1-us.png)
+
 ### 其他
 
 - 連線測試輸出加上長度上限（#410）。
