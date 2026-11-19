@@ -1,18 +1,22 @@
 import { describe, expect, it } from 'vitest';
-import { barTimeOfLabel, tradeMinuteLabel, twChartTrade, usChartTrade } from './chart-trade';
+import { barTimeOfLabel, candleBarTime, candleMinuteLabel, twChartTrade, usChartTrade, usTradeMinuteLabel } from './chart-trade';
 import { aggregate } from './utils/kbars';
 
 const D = Date.UTC(2026, 10, 18) / 1000; // 牆鐘編碼的當天 00:00
 const hm = (h: number, m: number, s = 0) => D + h * 3600 + m * 60 + s;
 
-describe('tradeMinuteLabel / barTimeOfLabel', () => {
-    it('puts the US closing cross (16:00:00–16:00:15) in the 16:00 bar for every timeframe', () => {
+describe('US minute labels', () => {
+    it('puts the closing cross (16:00:00–16:00:15) in the 16:00 bar for every timeframe', () => {
         const t = hm(16, 0, 1.445);
-        expect(tradeMinuteLabel('US', t)).toBe(hm(16, 0));
-        expect(barTimeOfLabel(tradeMinuteLabel('US', t), 1)).toBe(hm(16, 0));
-        expect(barTimeOfLabel(tradeMinuteLabel('US', t), 5)).toBe(hm(16, 0));
-        expect(barTimeOfLabel(tradeMinuteLabel('US', t), 60)).toBe(hm(16, 0));
-        expect(barTimeOfLabel(tradeMinuteLabel('US', hm(16, 0, 14.9)), 1)).toBe(hm(16, 0));
+        expect(usTradeMinuteLabel(t)).toBe(hm(16, 0));
+        for (const m of [1, 5, 60]) expect(candleBarTime('US', t, m)).toBe(hm(16, 0));
+        expect(candleBarTime('US', hm(16, 0, 14.9), 1)).toBe(hm(16, 0));
+    });
+    it('uses close-label-right with precise seconds and puts the 09:30 open in 09:31', () => {
+        expect(usTradeMinuteLabel(hm(10, 18, 30))).toBe(hm(10, 19));
+        expect(usTradeMinuteLabel(hm(10, 19, 0))).toBe(hm(10, 19));
+        expect(usTradeMinuteLabel(hm(10, 19, 0.2))).toBe(hm(10, 20));
+        expect(usTradeMinuteLabel(hm(9, 30))).toBe(hm(9, 31));
     });
     it('matches aggregate() for the labels history uses', () => {
         const labels = [hm(9, 31), hm(9, 35), hm(9, 36), hm(10, 0), hm(10, 1), hm(16, 0)];
@@ -22,14 +26,23 @@ describe('tradeMinuteLabel / barTimeOfLabel', () => {
             for (const l of labels) expect(times.has(barTimeOfLabel(l, minutes))).toBe(true);
         }
     });
-    it('uses close-label-right with precise seconds, and clamps the open into the first bar', () => {
-        expect(tradeMinuteLabel('US', hm(10, 18, 30))).toBe(hm(10, 19));
-        expect(tradeMinuteLabel('US', hm(10, 19, 0))).toBe(hm(10, 19));
-        expect(tradeMinuteLabel('US', hm(10, 19, 0.2))).toBe(hm(10, 20));
-        expect(tradeMinuteLabel('US', hm(9, 30))).toBe(hm(9, 31));
-        expect(tradeMinuteLabel('FUT', hm(8, 45))).toBe(hm(8, 46));
-        // 台股收盤後的定盤（13:30:xx）歸 13:30
-        expect(tradeMinuteLabel('STK', hm(13, 30, 2))).toBe(hm(13, 30));
+});
+
+describe('TW candle buckets stay as main', () => {
+    it('[m, m+60) → m+60: an exact-minute trade goes to the next bar', () => {
+        expect(candleMinuteLabel('STK', hm(10, 5, 0))).toBe(hm(10, 6));
+        expect(candleBarTime('STK', hm(10, 5, 0), 1)).toBe(hm(10, 6));
+        expect(candleBarTime('FUT', hm(9, 36, 0), 1)).toBe(hm(9, 37));
+        expect(candleBarTime('STK', hm(10, 4, 59.9), 1)).toBe(hm(10, 5));
+        expect(candleBarTime('STK', hm(10, 5, 0), 5)).toBe(hm(10, 10));
+    });
+    it('never clamps futures to 13:45 (long day products trade until 16:15)', () => {
+        expect(candleMinuteLabel('FUT', hm(13, 46, 10))).toBe(hm(13, 47));
+        expect(candleBarTime('FUT', hm(13, 46, 10), 1)).toBe(hm(13, 47));
+        expect(candleBarTime('FUT', hm(13, 46, 10), 5)).toBe(hm(13, 50));
+    });
+    it('daily bars follow the trade time (main)', () => {
+        expect(candleBarTime('FUT', hm(23, 59, 30), 1440)).toBe(D);
     });
 });
 

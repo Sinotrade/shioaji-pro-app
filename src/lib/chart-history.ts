@@ -50,7 +50,14 @@ interface CachedHistory {
     promise: Promise<KBars>;
 }
 const requests = new Map<string, CachedHistory>();
-const isoDay = (ms: number) => new Date(ms).toISOString().slice(0, 10);
+const TODAY_FMT = {
+    TW: new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Taipei', year: 'numeric', month: '2-digit', day: '2-digit' }),
+    US: new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }),
+};
+/** 商品所在市場的「今天」（台股台北、美股紐約），YYYY-MM-DD */
+function marketToday(contract: ContractBase, nowMs: number): string {
+    return TODAY_FMT[contract.region === 'US' ? 'US' : 'TW'].format(nowMs);
+}
 /** Presentation rebuilds reuse history, including failures and empty results
  * (ADR 0002). A manual revision or a new date range explicitly permits another
  * bounded fetchKbars attempt.
@@ -63,8 +70,8 @@ export function fetchChartHistory(contract: ContractBase, start: string, end: st
     const hit = requests.get(key);
     if (hit && !(hit.live && hit.hasData && nowMs - hit.at > LIVE_HISTORY_TTL_MS)) return hit.promise;
     const promise = fetchMinuteKbars(contract, start, end, opts);
-    // 台北／紐約日期和 UTC 最多差一天：end 在 UTC 兩天前以後都當成「含當日」
-    const entry: CachedHistory = { at: nowMs, live: end >= isoDay(nowMs - 2 * 86_400_000), hasData: false, promise };
+    // 範圍的結束日到了商品所在市場的今天，才算「含當日」
+    const entry: CachedHistory = { at: nowMs, live: end >= marketToday(contract, nowMs), hasData: false, promise };
     promise.then(
         (k) => {
             if ((k?.datetime?.length ?? 0) > 0) entry.hasData = true;

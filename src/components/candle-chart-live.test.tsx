@@ -232,3 +232,23 @@ describe('CandleChart price precision', () => {
         expect(updates().length).toBe(n + 1);
     });
 });
+
+describe('CandleChart TW buckets stay as main', () => {
+    it('a trade at exactly 10:05:00.000000 goes to the 10:06 bar', async () => {
+        fetchMock.mockResolvedValue(kbars([['2026-09-25T10:00:00', '2026-09-25T10:05:00', () => 100]]));
+        mount({ contract: stk, interval: '1m' });
+        await flush();
+        pushTick('2026-09-25', '10:05:00.000000', 101, 4);
+        expect(updates().at(-1)).toMatchObject({ time: T('2026-09-25T10:06:00'), close: 101 });
+    });
+
+    it('a long-day future trading at 13:46:10 goes to 13:47, not the 13:45 bar', async () => {
+        vi.setSystemTime(new Date('2026-09-25T13:47:00+08:00'));
+        const brf = { code: 'BRFR1', security_type: 'FUT', exchange: 'TAIFEX', target_code: 'BRFK6', root: 'BRF', underlying_kind: 'C' } as any;
+        fetchMock.mockResolvedValue(kbars([['2026-09-25T13:40:00', '2026-09-25T13:46:00', () => 70]]));
+        mount({ contract: brf, interval: '1m' });
+        await flush();
+        pushTick('2026-09-25', '13:46:10.000000', 71, 2, 'BRFR1');
+        expect(updates().at(-1)).toMatchObject({ time: T('2026-09-25T13:47:00'), close: 71 });
+    });
+});

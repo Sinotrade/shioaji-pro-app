@@ -1,12 +1,19 @@
 // src/lib/chart-trade.ts — 即時成交 → 圖表時間（K 線、走勢共用）
 //
-// 一筆成交進圖前要做的事都在這裡，兩種圖表用同一套，免得一邊修了另一邊沒修：
+// 一筆成交進圖前要做的事都在這裡，兩種圖表用同一套入口：
 // - 時間：牆鐘編碼秒數，保留小數秒（台股台北、美股紐約）
 // - 時段：美股只收一般盤＋收盤競價（isUsChartTrade）
-// - 1 分 K 標籤：close-label-right（ceil，整秒落在分界時歸自己那一分鐘），
-//   開盤那一刻的成交歸第一根，收盤後 CLOSE_GRACE 內的成交（收盤競價、
-//   美股 16:00:01 的 closing cross）歸最後一根
-// - N 分 K／日 K：由 1 分 K 標籤聚合，與 utils/kbars.aggregate 同一套
+// - 分鐘標籤（K 棒結束時間）：
+//   · 美股：close-label-right（ceil）；09:30 開盤那一刻歸 09:31，收盤後
+//     CLOSE_GRACE 內（16:00:01 的 closing cross）歸 16:00。美股時段固定
+//     09:30–16:00，收盤時間一定知道
+//   · 台股 K 線：沿用 main 的 [m, m+60) → m+60（kbars.ts 的慣例；與 21391
+//     歷史比對，盤中整秒成交如 TXF 09:36:00.000000 歸 09:37）。不做收盤
+//     夾回 — 期/選有日盤到 16:15 的商品（BRF、GDF、RHF…），SessionKind
+//     不知道個別合約的收盤時間
+//   · 台股走勢：沿用 main 的 tickBucket（在走勢元件內，依當段時段框架）
+// - N 分 K／日 K：美股由分鐘標籤聚合（與 utils/kbars.aggregate 同一套）；
+//   台股照 main（N 分 floor+N、日 K 依成交時間的日期）
 
 import { CLOSE_GRACE, isUsChartTrade, sessionWindowFor, tickBucket, type SessionKind } from './intraday-session';
 import { nyWallClockSec, type UsTickMeta } from './us/us-quotes';
@@ -35,15 +42,22 @@ export function usChartTrade(meta: Pick<UsTickMeta, 'ts' | 'tsUs' | 'session' | 
     return { time: t, price, volume: meta.volume };
 }
 
-/** 成交所屬的 1 分 K 標籤（含開盤／收盤夾回，見檔頭） */
-export function tradeMinuteLabel(kind: SessionKind, t: number): number {
-    // 收盤後的寬限內：歸剛收的那一段的最後一根
-    const prev = sessionWindowFor(kind, t - CLOSE_GRACE);
-    if (t > prev.end && t <= prev.end + CLOSE_GRACE) return prev.end;
-    const win = sessionWindowFor(kind, t);
+/** 美股成交所屬的 1 分 K 標籤（含開盤／收盤夾回） */
+export function usTradeMinuteLabel(t: number): number {
+    const win = sessionWindowFor('US', t);
+    if (t > win.end && t <= win.end + CLOSE_GRACE) return win.end;
     if (t >= win.start && t <= win.end) return tickBucket(win, t);
-    // 時段外（全盤模式的零星成交等）：照 close-label-right
     return Math.ceil(t / 60) * 60;
+}
+
+/** 台股 K 線的 1 分 K 標籤（main 慣例：[m, m+60) → m+60） */
+export function twCandleMinuteLabel(t: number): number {
+    return Math.floor(t / 60) * 60 + 60;
+}
+
+/** K 線：成交所屬的 1 分 K 標籤（「僅日盤」判斷、載入期間的涵蓋判斷用） */
+export function candleMinuteLabel(kind: SessionKind, t: number): number {
+    return kind === 'US' ? usTradeMinuteLabel(t) : twCandleMinuteLabel(t);
 }
 
 /** 1 分 K 標籤 → N 分 K／日 K 的標籤（與 aggregate 相同） */
@@ -52,4 +66,13 @@ export function barTimeOfLabel(label: number, minutes: number): number {
     if (minutes >= 1440) return Math.floor(label / 86400) * 86400;
     const bucketSec = minutes * 60;
     return Math.ceil(label / bucketSec) * bucketSec;
+}
+
+/** K 線：成交所屬的 K 棒標籤 */
+export function candleBarTime(kind: SessionKind, t: number, minutes: number): number {
+    if (kind === 'US') return barTimeOfLabel(usTradeMinuteLabel(t), minutes);
+    // 台股照 main：日 K 依成交時間的日期，N 分 K floor+N
+    if (minutes >= 1440) return Math.floor(t / 86400) * 86400;
+    const bucketSec = minutes * 60;
+    return Math.floor(t / bucketSec) * bucketSec + bucketSec;
 }

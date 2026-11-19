@@ -3,6 +3,7 @@
 import { Fragment, useCallback, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { Settings2 } from 'lucide-react';
 import { pickUsReference, usLiveChange, useUsSnapshot } from '../hooks/use-us-snapshot';
+import type { UsSnapshot } from '../lib/us/us-history';
 import { contractLinkKey } from '../lib/contract-key';
 import { usPriceDecimals } from '../lib/us/decimal';
 import { usHaltLabel, useUsHalt } from '../lib/us/us-halts';
@@ -148,6 +149,14 @@ const wallDate = (t: number) => new Date(t * 1000).toISOString().slice(0, 10);
 // 現價（成交價），開高低維持一般盤值。沒有漲跌停、試撮、產業分類，那幾格
 // 自然隱藏；時段（盤前／盤後）與停牌放在狀態徽章，版面與台股同一套階梯，
 // 欄位不會隨數值寬度換行跳動。
+/** 快照的延長時段成交相對參考價的漲跌；沒有參考價時用快照自己的基準（一般盤收盤 − 漲跌） */
+function usExtSnapChange(snap: UsSnapshot, ref: string | number | null | undefined): number | undefined {
+    const last = snap.lastPrice;
+    if (last === null || !(last > 0)) return undefined;
+    const base = Number(ref) > 0 ? Number(ref) : snap.close > 0 ? snap.close - snap.changePrice : NaN;
+    return Number.isFinite(base) && base > 0 ? last - base : undefined;
+}
+
 export function QuoteBoard({
     contract,
     snapshot: suppliedSnapshot,
@@ -198,11 +207,18 @@ export function QuoteBoard({
     const snapOnly = isIndex ? !index && !!snapshot : !tick && !!snapshot;
     // 指數與個股看板都依面板大小自動降級（標題列加看板不超過面板高度 1/5）
 
+    // 美股沒有即時成交、快照停在延長時段（盤前／盤後）：大字是延長時段的最新成交、旁邊掛時段徽章
+    //（和即時成交同一套）；快照的 close 是一般盤收盤，放進價格提示。沒有延長時段成交就照顯示一般盤收盤、不掛徽章
+    const usExtSnap =
+        isUs && !tick && usSnap?.session && usSnap.session !== 'Regular' && US_SESSION_LABEL[usSnap.session]
+        && usSnap.lastPrice !== null && usSnap.lastPrice > 0
+            ? usSnap
+            : null;
     const close = tick
         ? Number(tick.close)
         : index
           ? Number(index.close)
-          : isUs && !(Number(snapshot?.close) > 0) ? undefined : snapshot?.close;
+          : usExtSnap ? usExtSnap.lastPrice! : isUs && !(Number(snapshot?.close) > 0) ? undefined : snapshot?.close;
     // 參考價跟著報價自己推（現價減漲跌）：盤前開 App 或 App 跨夜開著時，合約已換成新交易日的參考價與漲跌停，
     // 快照或即時成交卻還是前一天的，拿新的參考價算漲跌幅、畫區間軌會對不上
     const derivedRef = tick
@@ -219,7 +235,11 @@ export function QuoteBoard({
     const usChg = isUs && tick ? usLiveChange(tick, usRef).priceChg : undefined;
     const chg = isUs
         // 沒有成交價（剛上市還沒成交）就沒有漲跌
-        ? tick ? (usChg !== undefined ? Number(usChg) : undefined) : close !== undefined ? snapshot?.change_price : undefined
+        ? tick
+            ? (usChg !== undefined ? Number(usChg) : undefined)
+            : usExtSnap
+              ? usExtSnapChange(usExtSnap, usRef)
+              : close !== undefined ? snapshot?.change_price : undefined
         : tick?.price_chg
         ? Number(tick.price_chg)
         : index
@@ -478,7 +498,9 @@ export function QuoteBoard({
     // 美股狀態徽章：停牌優先，其次延長時段（盤前／盤後）；放在試撮／快照同一個位置
     const usMeta = isUs && tick ? getUsTickMeta(quoteKey) : undefined;
     const usSession = usMeta && usMeta.session !== 'Regular' ? US_SESSION_LABEL[usMeta.session] || undefined
-        : !tick && usSnap?.session && usSnap.session !== 'Regular' ? US_SESSION_LABEL[usSnap.session] || undefined : undefined;
+        : usExtSnap ? US_SESSION_LABEL[usExtSnap.session!] || undefined : undefined;
+    // 行情不是即時（延遲／過時）：另一個徽章，和時段、停牌並列
+    const usFreshness = usMeta?.freshness === 'Delayed' ? '延遲' : usMeta?.freshness === 'Stale' ? '過時' : undefined;
     const usStatus = isUs ? (usHalt ? usHaltLabel(usHalt) : contract.trading_suspended ? '暫停交易' : usSession) : undefined;
     // 指數與個股各自記收合偏好
     const { tier, toggle } = useBoardTier(
@@ -491,6 +513,8 @@ export function QuoteBoard({
     const timeText = (isIndex ? index?.time : tick?.time)?.slice(0, 8);
     const priceTitle = [
         usStatus && usSession && usStatus === usSession ? `${usSession}成交價；開高低為一般盤` : undefined,
+        usExtSnap && usExtSnap.close > 0 ? `一般盤收盤 ${boardPrice(usExtSnap.close)}` : undefined,
+        usFreshness ? `行情${usFreshness}` : undefined,
         isUs && timeText ? '時間為美東時間' : undefined,
         sim ? '試撮揭示價，非成交價' : snapOnly ? `快照 ${snapshot?.datetime?.replace('T', ' ').slice(0, 19) ?? '時間未提供'}，尚未收到即時${isIndex ? '報價' : '成交'}` : undefined,
         timeText ? `更新 ${timeText}` : undefined,
@@ -752,6 +776,11 @@ export function QuoteBoard({
             {usStatus && (
                 <span className={`${styles.statusBadge} ${styles.statusKeep}`} data-testid='us-board-status'>
                     {usStatus}
+                </span>
+            )}
+            {usFreshness && (
+                <span className={`${styles.statusBadge} ${styles.statusKeep}`} data-testid='us-board-freshness'>
+                    {usFreshness}
                 </span>
             )}
             {atLimit && (

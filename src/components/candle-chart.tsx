@@ -170,7 +170,7 @@ import { contractLinkKey } from '../lib/contract-key';
 import { getUsTickMeta, subscribeUsSessionTicks } from '../lib/us/us-quotes';
 import { createPriceFormatSync } from '../lib/chart-price-format';
 import { emptyPending, mergePendingTrades, mergeTradeIntoBars, pushPending } from '../lib/chart-live-bars';
-import { barTimeOfLabel, tradeMinuteLabel, twChartTrade, usChartTrade, type ChartTrade } from '../lib/chart-trade';
+import { candleBarTime, candleMinuteLabel, twChartTrade, usChartTrade, type ChartTrade } from '../lib/chart-trade';
 
 // NOTE: the kbars API only serves 1-minute bars, so 1D aggregates a huge
 // payload (a year of TXF ≈ 280k bars / 18MB) — keep the range tight enough
@@ -1001,8 +1001,8 @@ export function CandleChart({
                 bars,
                 pend.trades,
                 coveredLabel,
-                (t) => tradeMinuteLabel(kind, t),
-                (label) => (dayOnly && !isDaySessionLabel(kind, label) ? null : barTimeOfLabel(label, tf.minutes)),
+                (t) => candleMinuteLabel(kind, t),
+                (label, t) => (dayOnly && !isDaySessionLabel(kind, label) ? null : candleBarTime(kind, t, tf.minutes)),
             );
         };
         // 沒有歷史（空結果／失敗）：載入期間的成交全部補上，有就清掉空狀態
@@ -1163,13 +1163,13 @@ export function CandleChart({
         const series = candleSeriesRef.current;
         if (!series) return;
         priceFmtRef.current.sync(contract, price);
-        const label = tradeMinuteLabel(kind, tickTime);
+        const label = candleMinuteLabel(kind, tickTime);
         // 僅日盤：夜盤/盤外成交不入圖（與歷史濾法同一套 label 判斷）
         if (dayOnly && !isDaySessionLabel(kind, label)) return;
         const bucketSec = tf.minutes * 60;
-        // close-label-right（與 aggregate/1 分 K 歷史同慣例）；收盤競價
-        //（收盤後 CLOSE_GRACE 內）歸最後一根
-        const bucket = barTimeOfLabel(label, tf.minutes);
+        // 分桶見 chart-trade：台股照 main（[m, m+60) → m+60），美股 close-label-
+        // right＋收盤競價歸 16:00
+        const bucket = candleBarTime(kind, tickTime, tf.minutes);
         const tail = lastBarRef.current;
         // live 桶與歷史尾端出現 3 個桶以上的斷層（換時段/上游資料晚發布）
         // → 排程一次歷史補抓把洞補起來；live 桶照常先畫，補抓完成後

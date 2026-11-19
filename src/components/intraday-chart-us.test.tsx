@@ -222,4 +222,14 @@ describe('IntradayChart (US)', () => {
         expect(price().options.baseValue).toMatchObject({ price: 2 });
         expect(price().options.priceFormat).toMatchObject({ precision: 4 });
     });
+
+    it('draws a US trade stamped exactly 09:30:00.000 into the 09:31 minute', async () => {
+        vi.setSystemTime(new Date('2026-11-19T14:31:00Z'));
+        fetchMock.mockResolvedValue(kbars([]));
+        snap.value = { tradeDate: '2026-11-19', reference: 99 };
+        mount({ contract: aapl });
+        await flush();
+        pushUs('2026-11-19T14:30:00.000', '100.5');
+        expect(lastUpdate()).toEqual({ time: T('2026-11-19T09:31:00'), value: 100.5 });
+    });
 });

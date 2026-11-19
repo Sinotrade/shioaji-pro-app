@@ -129,4 +129,43 @@ describe('QuoteBoard (US through the TW board)', () => {
         expect(t).toContain('停牌');
         expect(t).not.toContain('盤後');
     });
+
+    it('shows the delayed / stale feed badge on live US quotes', () => {
+        m.usSnap = usSnap();
+        m.quote = { tick: { code: 'US:AAPL', date: '2026-11-19', time: '13:00:01', close: '98.08', open: '84', high: '99', low: '82', total_volume: 10, volume: 1 } };
+        m.meta = { session: 'Regular', freshness: 'Delayed' };
+        mount();
+        expect(text()).toContain('us-board-freshness');
+        expect(text()).toContain('延遲');
+        act(() => view!.unmount());
+        m.meta = { session: 'Regular', freshness: 'Stale' };
+        mount();
+        expect(text()).toContain('過時');
+        act(() => view!.unmount());
+        m.meta = { session: 'Regular', freshness: 'Realtime' };
+        mount();
+        expect(text()).not.toContain('us-board-freshness');
+    });
+
+    it('without a live tick, an extended-session snapshot shows its last price with the session badge', () => {
+        const s = usSnap({ reference: 98, close: 100, changePrice: 2, changeRate: 2.04, session: 'PreMarket', lastPrice: 105 });
+        m.usSnap = s;
+        m.snapshot = usSnapshotToTw(s);
+        mount();
+        const t = text();
+        expect(t).toContain('105.00');
+        expect(t).toContain('盤前');
+        expect(t).toContain('+7.00'); // 105 − 參考 98
+        expect(t).toContain('一般盤收盤 100.00');
+    });
+
+    it('a snapshot with no extended-session price keeps the regular close and no session badge', () => {
+        const s = usSnap({ reference: 98, close: 100, changePrice: 2, changeRate: 2.04, session: 'PreMarket', lastPrice: null });
+        m.usSnap = s;
+        m.snapshot = usSnapshotToTw(s);
+        mount();
+        const t = text();
+        expect(t).toContain('100.00');
+        expect(t).not.toContain('us-board-status');
+    });
 });
