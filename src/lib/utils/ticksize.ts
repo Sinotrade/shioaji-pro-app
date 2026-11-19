@@ -8,6 +8,7 @@
 import { isWarrantContract } from '../contract-market';
 import { bandTickFor, prefetchTickBands } from '../tick-bands';
 import type { ContractBase, ContractInfo } from '../types/contract';
+import { usRoundToTick, usStepPrice, usTickSize } from '../us/us-tick';
 
 // 有 info metadata（tick_rule/tick）時走 server 級距；仍接受只有
 // ContractBase 的呼叫端（metadata 缺席 → 走舊 fallback）
@@ -41,9 +42,16 @@ function etfTick(price: number): number {
     return price < 50 ? 0.01 : 0.05;
 }
 
-// 美股（Reg NMS 612）：1 美元以上報價單位 0.01，未滿 1 美元 0.0001
+// 美股（Reg NMS 612）：級距規則只在 lib/us/us-tick 一處
 function usTick(price: number): number {
-    return Math.abs(price) < 1 ? 0.0001 : 0.01;
+    return Number(usTickSize(String(Math.abs(price))));
+}
+
+// 美股走 decimal 字串運算（us-tick），不合法或 ≤ 0 時回 null 讓呼叫端走通用路徑
+function usNumber(v: string | null): number | null {
+    if (v === null) return null;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
 }
 
 export function tickSizeFor(contract: TickContract, price: number): number {
@@ -72,10 +80,14 @@ export function tickSizeFor(contract: TickContract, price: number): number {
 }
 
 export function roundToTick(contract: TickContract, price: number): number {
+    if (contract.region === 'US' && Number.isFinite(price)) {
+        const us = usNumber(usRoundToTick(String(price)));
+        if (us !== null) return us;
+    }
     const tick = tickSizeFor(contract, price);
     const rounded = Math.round(price / tick) * tick;
-    // avoid float dust (0.1 steps)
-    return Number(rounded.toFixed(2));
+    // avoid float dust (0.1 steps)；小數位數跟著級距（至少 2 位，台股行為不變）
+    return Number(rounded.toFixed(Math.max(2, tickDecimals(tick))));
 }
 
 export function stepPrice(
@@ -83,10 +95,14 @@ export function stepPrice(
     price: number,
     steps: number,
 ): number {
+    if (contract.region === 'US' && Number.isSafeInteger(steps)) {
+        const us = usNumber(usStepPrice(String(price), steps));
+        if (us !== null) return us;
+    }
     let p = price;
     for (let i = 0; i < Math.abs(steps); i++) {
         const tick = tickSizeFor(contract, steps > 0 ? p : p - 0.0001);
-        p = Number((p + (steps > 0 ? tick : -tick)).toFixed(2));
+        p = Number((p + (steps > 0 ? tick : -tick)).toFixed(Math.max(2, tickDecimals(tick))));
     }
     return p;
 }

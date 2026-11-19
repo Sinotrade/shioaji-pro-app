@@ -39,16 +39,28 @@ function fetchMinuteKbars(contract: ContractBase, start: string, end: string, op
     return fetchKbars(contract, start, end, opts);
 }
 
-const requests = new Map<string, Promise<KBars>>();
+/** 範圍含近兩天（可能還在長的當日資料）的快取只用這麼久 */
+export const LIVE_HISTORY_TTL_MS = 60_000;
+
+const requests = new Map<string, { at: number; live: boolean; promise: Promise<KBars> }>();
+const isoDay = (ms: number) => new Date(ms).toISOString().slice(0, 10);
 /** Presentation rebuilds reuse history, including failures. A manual revision
- * or a new date range explicitly permits another bounded fetchKbars attempt. */
-export function fetchChartHistory(contract: ContractBase, start: string, end: string, opts?: { timeoutMs?: number; revision?: number }) {
+ * or a new date range explicitly permits another bounded fetchKbars attempt.
+ * 範圍碰到今天的查詢只快取 LIVE_HISTORY_TTL_MS：同一面板 A→B→A 隔了一段時間
+ * 再切回來時要重抓，否則歷史停在第一次查的時間點，中間的成交變成缺口。
+ * 純過去的範圍不會再變，照舊一直沿用。 */
+export function fetchChartHistory(contract: ContractBase, start: string, end: string, opts?: { timeoutMs?: number; revision?: number }, nowMs = Date.now()) {
     const key = JSON.stringify([getApiBase(), contract, start, end, opts?.revision ?? 0]);
-    let request = requests.get(key);
-    if (!request) {
-        request = fetchMinuteKbars(contract, start, end, opts);
-        requests.set(key, request);
-        if (requests.size > 100) requests.delete(requests.keys().next().value!);
-    }
-    return request;
+    const hit = requests.get(key);
+    if (hit && !(hit.live && nowMs - hit.at > LIVE_HISTORY_TTL_MS)) return hit.promise;
+    const promise = fetchMinuteKbars(contract, start, end, opts);
+    // 台北／紐約日期和 UTC 最多差一天：end 在 UTC 兩天前以後都當成「含當日」
+    requests.delete(key);
+    requests.set(key, { at: nowMs, live: end >= isoDay(nowMs - 2 * 86_400_000), promise });
+    if (requests.size > 100) requests.delete(requests.keys().next().value!);
+    return promise;
+}
+
+export function resetChartHistoryCacheForTest() {
+    requests.clear();
 }

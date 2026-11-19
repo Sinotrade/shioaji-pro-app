@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { getUsSessionTicks, normalizeUsBidAsk, normalizeUsTick, nyDateTime, recordUsTick, resetUsQuotesForTest, usSubscriptionBody, usTickChange, usChangeFrom, usReferenceFor, contractReferenceApplies, noteUsReference } from './us-quotes';
+import { getUsTickMeta, subscribeUsSessionTicks, normalizeUsBidAsk, normalizeUsTick, nyDateTime, recordUsTick, resetUsQuotesForTest, usSubscriptionBody, usTickChange, usChangeFrom, usReferenceFor, contractReferenceApplies, noteUsReference } from './us-quotes';
 
 // 2026-11-17 14:30:05 America/New_York（EST, UTC-5）
 const T = Date.UTC(2026, 10, 17, 19, 30, 5) * 1000;
@@ -51,12 +51,16 @@ describe('US quote adapter', () => {
     it('builds the flat subscribe body with the real exchange', () => {
         expect(usSubscriptionBody({ code: 'aapl', exchange: 'NASDAQ' }, 'Tick')).toEqual({ security_type: 'STK', exchange: 'NASDAQ', code: 'AAPL', quote_type: 'Tick' });
     });
-    it('keeps only the current session for the intraday line', () => {
-        const meta = (session: 'PreMarket' | 'Regular', s: number) => ({ key: 'US:AAPL', price: '1', session, freshness: null, ts: T / 1000 + s * 1000, volume: 1 });
+    it('notifies listeners per trade with that trade as the latest meta', () => {
+        const meta = (session: 'PreMarket' | 'Regular', s: number) => ({ key: 'US:AAPL', price: String(s), session, freshness: null, ts: T / 1000 + s * 1000, volume: 1 });
+        const seen: string[] = [];
+        const off = subscribeUsSessionTicks('US:AAPL', () => seen.push(getUsTickMeta('US:AAPL')!.price));
         recordUsTick(meta('PreMarket', 0));
-        recordUsTick(meta('PreMarket', 1));
         recordUsTick(meta('Regular', 2));
-        expect(getUsSessionTicks('US:AAPL')).toHaveLength(1);
+        off();
+        recordUsTick(meta('Regular', 3));
+        expect(seen).toEqual(['0', '2']);
+        expect(getUsTickMeta('US:AAPL')?.price).toBe('3');
     });
     it('formats New York local time', () => {
         expect(nyDateTime(T)).toEqual({ date: '2026-11-17', time: '14:30:05' });

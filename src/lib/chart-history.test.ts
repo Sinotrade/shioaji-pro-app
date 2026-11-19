@@ -35,4 +35,18 @@ describe('chart history request sharing', () => {
         mocks.base = 'other'; await fetchChartHistory(contract, '2026-09-01', '2026-09-13');
         expect(mocks.fetch).toHaveBeenCalledTimes(4);
     });
+    it('refetches a range that reaches today after the live TTL, keeps past ranges forever', async () => {
+        const { fetchChartHistory, LIVE_HISTORY_TTL_MS } = await import('./chart-history');
+        const now = Date.parse('2026-11-19T15:00:00Z');
+        // A → B → A 二十分鐘後：當日範圍要重抓，否則中間的成交變缺口
+        await fetchChartHistory(contract, '2026-11-15', '2026-11-20', undefined, now);
+        await fetchChartHistory(contract, '2026-11-15', '2026-11-20', undefined, now + LIVE_HISTORY_TTL_MS - 1);
+        expect(mocks.fetch).toHaveBeenCalledTimes(1);
+        await fetchChartHistory(contract, '2026-11-15', '2026-11-20', undefined, now + 20 * 60_000);
+        expect(mocks.fetch).toHaveBeenCalledTimes(2);
+        // 純過去的範圍不會再變
+        await fetchChartHistory(contract, '2026-09-01', '2026-09-12', undefined, now);
+        await fetchChartHistory(contract, '2026-09-01', '2026-09-12', undefined, now + 24 * 3600_000);
+        expect(mocks.fetch).toHaveBeenCalledTimes(3);
+    });
 });

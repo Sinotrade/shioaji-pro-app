@@ -22,6 +22,7 @@
 import { usLinkKey } from '../contract-key';
 import { decIsPositive, decNormalize, decSub } from './decimal';
 import type { SseBidAsk, SseTick } from '../types/market';
+import { wallClockToUtc } from '../utils/kbars';
 
 /** SSE 事件名稱與獨立串流路徑 */
 export const US_TICK_EVENT = 'us_tick';
@@ -87,6 +88,8 @@ export interface UsTickMeta {
     /** epoch µs（原值，成交明細顯示用） */
     tsUs?: number;
     volume: number;
+    /** SDK 的累計量（含哪些時段由 SDK 決定）；只拿前後兩筆的差判斷有沒有漏收 */
+    totalVolume?: number;
     /** 1 外盤／2 內盤／0 不明 */
     tickType?: number;
 }
@@ -104,6 +107,19 @@ export function nyDateTime(epochUs: number): { date: string; time: string } {
     const parts = Object.fromEntries(NY_PARTS.formatToParts(new Date(ms)).map(p => [p.type, p.value]));
     const hour = parts.hour === '24' ? '00' : parts.hour;
     return { date: `${parts.year}-${parts.month}-${parts.day}`, time: `${hour}:${parts.minute}:${parts.second}` };
+}
+
+/**
+ * epoch ms（UTC）→ 紐約牆鐘當 UTC 的秒數（圖表時間軸用，與台股的台北牆鐘
+ * 同一套編碼），保留小數秒；無效時間回 NaN。美股圖表與時段框架的「現在」
+ * 都用這一個轉換。
+ */
+export function nyWallClockSec(ms: number): number {
+    if (!Number.isFinite(ms)) return NaN;
+    const whole = Math.floor(ms / 1000) * 1000;
+    const { date, time } = nyDateTime(whole * 1000);
+    if (!date) return NaN;
+    return wallClockToUtc(`${date}T${time}`) + (ms - whole) / 1000;
 }
 
 const str = (v: string | null | undefined) => (v === null || v === undefined ? '' : String(v));
@@ -224,6 +240,7 @@ export function normalizeUsTick(raw: RawUsTick): { tick: SseTick; meta: UsTickMe
             ts: Math.floor(raw.datetime / 1000),
             tsUs: raw.datetime,
             volume: tick.volume,
+            totalVolume: tick.total_volume,
             tickType: tick.tick_type,
         },
     };
@@ -259,31 +276,16 @@ export function usSubscriptionBody(
     };
 }
 
-// ---- 當日 session 的逐筆（給走勢圖；只有訂閱後收到的，沒有歷史） ----
+// ---- 逐筆通知（K 線、走勢、成交明細逐筆接收；store 會合併 tick，量會少算） ----
 
-const SESSION_TICK_LIMIT = 20_000;
-const sessionTicks = new Map<string, UsTickMeta[]>();
 const lastMeta = new Map<string, UsTickMeta>();
 const sessionListeners = new Map<string, Set<() => void>>();
 
+/** 記下最新一筆並同步通知；監聽者在 callback 裡用 getUsTickMeta 讀這一筆 */
 export function recordUsTick(meta: UsTickMeta) {
-    const prev = lastMeta.get(meta.key);
     lastMeta.set(meta.key, meta);
-    let list = sessionTicks.get(meta.key);
-    // 換 session（盤前→盤中→盤後）或換日就重新開始
-    if (!list || (prev && (prev.session !== meta.session || nyDateTime(prev.ts * 1000).date !== nyDateTime(meta.ts * 1000).date))) {
-        list = [];
-        sessionTicks.set(meta.key, list);
-    }
-    list.push(meta);
-    if (list.length > SESSION_TICK_LIMIT) list.splice(0, list.length - SESSION_TICK_LIMIT);
     sessionListeners.get(meta.key)?.forEach(l => l());
 }
-
-export function getUsSessionTicks(key: string): readonly UsTickMeta[] {
-    return sessionTicks.get(key) ?? EMPTY;
-}
-const EMPTY: readonly UsTickMeta[] = [];
 
 export function getUsTickMeta(key: string): UsTickMeta | undefined {
     return lastMeta.get(key);
@@ -304,7 +306,6 @@ export const US_SESSION_LABEL: Record<UsTradingSession, string> = {
 };
 
 export function resetUsQuotesForTest() {
-    sessionTicks.clear();
     knownReferences.clear();
     lastMeta.clear();
     sessionListeners.clear();

@@ -33,8 +33,10 @@ import {
     getUsTickMeta,
     knownUsReference,
     nyDateTime,
+    nyWallClockSec,
     subscribeUsSessionTicks,
 } from '../lib/us/us-quotes';
+import { createPriceFormatSync } from '../lib/chart-price-format';
 import { colorWithOpacity } from '../lib/indicator-defs';
 import { limitStateOf } from '../lib/limit-state';
 import {
@@ -44,7 +46,7 @@ import {
     parseIntradaySessionMode,
     pastSessionReference,
     pickIntradayWindow,
-    isUsChartSession,
+    isUsChartTrade,
     sessionKindOf,
     sessionMinutes,
     sessionNow,
@@ -61,6 +63,7 @@ import { fmtPrice } from '../lib/utils/format';
 import {
     dateStrOffset,
     wallClockToUtc,
+    wallClockToUtcPrecise,
 } from '../lib/utils/kbars';
 import * as styles from './intraday-chart.css';
 import { AsyncStatus } from './async-status';
@@ -686,6 +689,7 @@ export function IntradayChart({
         chartRef.current = chart;
         priceSeriesRef.current = price;
         barSeriesRef.current = bars;
+        priceFmtRef.current.reset(); // 新 series：下一次 sync 一定套用
         pctSeriesRef.current = pct;
         avgSeriesRef.current = avg;
         volSeriesRef.current = vol;
@@ -706,6 +710,16 @@ export function IntradayChart({
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [themeKey]);
+
+    // 價格軸小數位：依目前商品與價位（美股未滿 1 美元 4 位；換回台股 2 位）
+    const priceFmtRef = useRef(createPriceFormatSync((priceFormat) => {
+        priceSeriesRef.current?.applyOptions({ priceFormat });
+        barSeriesRef.current?.applyOptions({ priceFormat });
+    }));
+    // 空框架開好時還沒有參考價（新上市、快照未到）：時段軸等參考價到了再撐開
+    const fillerPendingRef = useRef<SessionWindow | null>(null);
+    // 美股逐筆的上一筆累計量（判斷睡醒／斷線期間有沒有漏收）
+    const usPrevTotalRef = useRef<{ key: string; total: number }>({ key: '', total: 0 });
 
     // 價格/美國線/%/均價/量能資料清空（filler 時段軸另外處理）
     const clearSeries = () => {
@@ -736,18 +750,27 @@ export function IntradayChart({
             baseValue: { type: 'price', price: ref },
         });
         refLineRef.current?.applyOptions({ price: ref });
-        // 美股價格刻度位數跟著價位（未滿 1 美元 4 位），與報價板一致
-        if (isUs) {
-            const d = usPriceDecimals(ref);
-            const priceFormat = { type: 'price' as const, precision: d, minMove: 10 ** -d };
-            priceSeriesRef.current?.applyOptions({ priceFormat });
-            barSeriesRef.current?.applyOptions({ priceFormat });
+        priceFmtRef.current.sync(contract, ref);
+        const pendingWin = fillerPendingRef.current;
+        if (pendingWin && fillerSeriesRef.current) {
+            fillerPendingRef.current = null;
+            const minutes = sessionMinutes(pendingWin);
+            fillerSeriesRef.current.setData(
+                minutes.map((m, i) =>
+                    i === 0 || i === minutes.length - 1
+                        ? { time: m as UTCTimestamp, value: ref }
+                        : { time: m as UTCTimestamp },
+                ),
+            );
         }
     };
 
     // ---- history load: pick the last session present in the data ----
     useEffect(() => {
         const loadKey = `${contract.code}|${reloadSeq}|${optsKey}|${sessionMode}`;
+        // 換商品（美股 ↔ 台股）先回到這個商品的預設位數，參考價到了再細調
+        priceFmtRef.current.sync(contract, Number(contract.reference) || null);
+        fillerPendingRef.current = null;
         const now = sessionNow(sk);
         const current = sessionWindowFor(sk, now);
         const previousLoad = historyLoadRef.current;
@@ -882,8 +905,11 @@ export function IntradayChart({
                 pend,
             );
             const ref = isUs ? usSessionReference(win) : Number(contract.reference);
-            if (!Number.isFinite(ref) || ref <= 0) return;
-            applyRefPrice(ref);
+            const hasRef = Number.isFinite(ref) && ref > 0;
+            // 沒有參考價（新上市、快照還沒到）照樣把時段框架開好，讓晚到的
+            // 快照或第一筆成交接手；時段軸等參考價到了再撐開
+            if (hasRef) applyRefPrice(ref);
+            else fillerPendingRef.current = win;
             // 空框架沒有歷史可推參考價 — 已結束時段至少不畫漲跌停
             const past = isReviewingPastSession(
                 sk,
@@ -896,11 +922,13 @@ export function IntradayChart({
             pastRef.current = past;
             const minutes = sessionMinutes(win);
             fillerSeriesRef.current.setData(
-                minutes.map((m, i) =>
-                    i === 0 || i === minutes.length - 1
-                        ? { time: m as UTCTimestamp, value: ref }
-                        : { time: m as UTCTimestamp },
-                ),
+                hasRef
+                    ? minutes.map((m, i) =>
+                          i === 0 || i === minutes.length - 1
+                              ? { time: m as UTCTimestamp, value: ref }
+                              : { time: m as UTCTimestamp },
+                      )
+                    : [],
             );
             const lu = Number(contract.limit_up);
             const ld = Number(contract.limit_down);
@@ -1033,7 +1061,9 @@ export function IntradayChart({
                     last?.close ||
                     0;
                 if (!Number.isFinite(ref) || ref <= 0) {
-                    // 沒參考價也沒任何 bar（極端）— 空狀態等下次重載
+                    // 沒參考價也沒任何 bar（換時段目標還沒有資料）— 開空框架，
+                    // 讓晚到的參考價或第一筆成交接手
+                    scaffoldEmptyFrame();
                     setEmpty(true);
                     return;
                 }
@@ -1188,8 +1218,11 @@ export function IntradayChart({
     // 一筆成交（或指數 quote_idx）併進目前這分鐘。台股從行情 store 進來；
     // 美股從逐筆通知進來（見下方），tick 帶單筆量、不帶 price_chg
     type LiveTick = SseTick | NonNullable<typeof quote>['index'];
-    const processLiveRef = useRef<(lq: NonNullable<LiveTick>, tick: SseTick | undefined, index: NonNullable<typeof quote>['index']) => void>(() => {});
-    processLiveRef.current = (liveQuote, tick, index) => {
+    // opts.t：已算好的牆鐘秒數（美股用 µs 時間）；opts.missed：呼叫端自己
+    // 判斷過有沒有漏收（美股累計量的定義和走勢的一般盤量不同）
+    type LiveOpts = { t?: number; missed?: boolean };
+    const processLiveRef = useRef<(lq: NonNullable<LiveTick>, tick: SseTick | undefined, index: NonNullable<typeof quote>['index'], opts?: LiveOpts) => void>(() => {});
+    processLiveRef.current = (liveQuote, tick, index, opts) => {
         if (
             loadedKeyRef.current !==
             `${contract.code}|${reloadSeq}|${optsKey}|${sessionModeRef.current}`
@@ -1199,7 +1232,8 @@ export function IntradayChart({
         const win = sessionRef.current;
         const series = priceSeriesRef.current;
         if (!win || !series) return;
-        const t = wallClockToUtc(`${liveQuote.date}T${liveQuote.time}`);
+        // 保留小數秒：10:01:00.5 屬於 10:02 那根，09:30:00.x 的開盤成交不能被當成開盤前
+        const t = opts?.t ?? wallClockToUtcPrecise(`${liveQuote.date}T${liveQuote.time}`);
         const stale = lastLabelRef.current;
         const throttledReload = () => {
             if (Date.now() - lastReloadRef.current > 30_000) {
@@ -1246,9 +1280,10 @@ export function IntradayChart({
         // 時重載 — 冷門股每隔幾分鐘一筆成交是常態，不該筆筆重載
         if (stale > 0 && tickBucket(win, t) > stale + 180) {
             const missedVolume =
-                !tick ||
-                (tick.total_volume ?? 0) >
-                    cumVRef.current + (tick.volume ?? 0);
+                opts?.missed ??
+                (!tick ||
+                    (tick.total_volume ?? 0) >
+                        cumVRef.current + (tick.volume ?? 0));
             if (missedVolume) {
                 throttledReload();
                 return;
@@ -1266,6 +1301,9 @@ export function IntradayChart({
         } else if (index) {
             applyRefPrice(Number(index.reference));
         }
+        // 空框架還沒有參考價：第一筆成交先當基準，參考價（快照）到了會換掉
+        if (!(refPriceRef.current > 0)) applyRefPrice(p);
+        priceFmtRef.current.sync(contract, p);
         const ref = refPriceRef.current;
 
         const vol = tick?.volume ?? 0;
@@ -1361,14 +1399,24 @@ export function IntradayChart({
         if (!isUs) return;
         return subscribeUsSessionTicks(quoteKey, () => {
             const meta = getUsTickMeta(quoteKey);
-            if (!meta || !isUsChartSession(meta.session) || !(meta.volume > 0)) return;
+            if (!meta) return;
+            // 累計量前後兩筆的差比這筆量大＝中間有漏收（睡醒／斷線），所有
+            // 時段的成交都要記，盤前盤後的量才不會被誤判成漏收
+            const prev = usPrevTotalRef.current;
+            const total = meta.totalVolume ?? 0;
+            const missed = prev.key === quoteKey && prev.total > 0 && total > 0 && total - prev.total > meta.volume;
+            usPrevTotalRef.current = { key: quoteKey, total };
+            if (!(meta.volume > 0)) return;
+            const t = nyWallClockSec(meta.tsUs !== undefined ? meta.tsUs / 1000 : meta.ts);
+            // 一般盤＋收盤競價才畫；盤後成交不能動到一般盤的收盤與量
+            if (!isUsChartTrade(meta.session, t)) return;
             const { date, time } = nyDateTime(meta.tsUs ?? meta.ts * 1000);
             if (!date) return;
             const tick = {
                 code: quoteKey, date, time, close: meta.price, open: '', high: '', low: '',
                 volume: meta.volume, total_volume: 0, tick_type: meta.tickType ?? 0, simtrade: false,
             } as SseTick;
-            processLiveRef.current(tick, tick, undefined);
+            processLiveRef.current(tick, tick, undefined, { t, missed });
         });
     }, [isUs, quoteKey]);
     // 快照晚到：當天的參考價補上（只在畫的就是快照那個交易日時）

@@ -23,7 +23,7 @@ import { knownServerInfo } from '../server-info-store';
 import type { ContractBase } from '../types/contract';
 import type { Candle } from '../types/market';
 import { wallClockToUtc } from '../utils/kbars';
-import { nyDateTime, type UsTradingSession } from './us-quotes';
+import { nyDateTime, nyWallClockSec, type UsTradingSession } from './us-quotes';
 
 // ---- availability ----
 
@@ -131,12 +131,7 @@ export function usTimeToMs(v: unknown): number | null {
     return Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4] ?? 0), Number(m[5] ?? 0), Number(m[6] ?? 0)) + Math.floor(frac);
 }
 
-/** epoch ms（UTC）→ 紐約牆鐘當 UTC 的秒數（圖表時間軸用，與台股的台北牆鐘同一套編碼） */
-export function nyWallClockSec(ms: number): number {
-    const { date, time } = nyDateTime(ms * 1000);
-    if (!date) return NaN;
-    return wallClockToUtc(`${date}T${time}`);
-}
+export { nyWallClockSec } from './us-quotes';
 
 /** 現在的紐約日期（YYYY-MM-DD），往前 daysAgo 天 */
 export function nyDateStr(nowMs = Date.now(), daysAgo = 0): string {

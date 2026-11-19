@@ -46,7 +46,7 @@ import {
     dateStrOffset,
     kbarsToCandles,
     nowWallClockUtc,
-    wallClockToUtc,
+    wallClockToUtcPrecise,
 } from '../lib/utils/kbars';
 import {
     resolveScaleMode,
@@ -684,7 +684,7 @@ function MiniIntraday({
         const win = sessionRef.current;
         const series = priceRef.current;
         if (!win || !series) return;
-        const t = wallClockToUtc(`${liveQuote.date}T${liveQuote.time}`);
+        const t = wallClockToUtcPrecise(`${liveQuote.date}T${liveQuote.time}`);
         // 換時段（試搓 tick 也算數 — 08:30 就切新時段框架）
         if (t > win.end + CLOSE_GRACE) {
             const next = sessionWindowFor(contract.security_type, t);

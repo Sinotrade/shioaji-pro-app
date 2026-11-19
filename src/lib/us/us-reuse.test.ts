@@ -7,10 +7,11 @@ vi.mock('./us-history', async (orig) => ({ ...(await orig<object>()), fetchUsKba
 vi.mock('../shioaji', () => ({ fetchKbars }));
 
 import { fmtUsAvgPrice, fmtUsChange, fmtUsPrice, usPriceDecimals } from './decimal';
-import { tickDecimals, tickSizeFor } from '../utils/ticksize';
+import { roundToTick, stepPrice, tickDecimals, tickSizeFor } from '../utils/ticksize';
+import { nyWallClockSec } from './us-quotes';
 import {
     isDaySessionLabel,
-    isUsChartSession,
+    isUsChartTrade,
     nyWallClockNow,
     pickIntradayWindow,
     sessionKindOf,
@@ -59,6 +60,17 @@ describe('US price display', () => {
         expect(tickDecimals(tickSizeFor(US, 0.2))).toBe(4);
         expect(tickSizeFor(TW, 600)).toBe(1);
     });
+    it('rounds and steps US sub-dollar prices at 4 decimals (drawings keep 0.1234)', () => {
+        expect(roundToTick(US, 0.12344)).toBe(0.1234);
+        expect(roundToTick(US, 0.99996)).toBe(1);
+        expect(roundToTick(US, 98.083)).toBe(98.08);
+        expect(stepPrice(US, 0.9999, 1)).toBe(1);
+        expect(stepPrice(US, 1, -1)).toBe(0.9999);
+        expect(stepPrice(US, 0.1234, 2)).toBe(0.1236);
+        // 台股照舊
+        expect(roundToTick(TW, 101.3)).toBe(101.5);
+        expect(stepPrice(TW, 9.99, 1)).toBe(10);
+    });
 });
 
 describe('US session kind', () => {
@@ -84,11 +96,26 @@ describe('US session kind', () => {
         const w = pickIntradayWindow('US', times, 'auto', at('2026-11-19T07:00:00'));
         expect(w.start).toBe(at('2026-11-18T09:30:00'));
     });
-    it('only regular and closing prints enter the intraday chart', () => {
-        expect(isUsChartSession('Regular')).toBe(true);
-        expect(isUsChartSession('AfterHours')).toBe(true);
-        expect(isUsChartSession('PreMarket')).toBe(false);
-        expect(isUsChartSession(undefined)).toBe(false);
+    it('only regular trades and the closing cross enter the regular-session charts', () => {
+        expect(isUsChartTrade('Regular', at('2026-11-19T10:00:00'))).toBe(true);
+        // 收盤競價：SDK 標 AfterHours、時間 16:00:01（11/18 實測 AAPL 537 萬股 @352.45）
+        expect(isUsChartTrade('AfterHours', at('2026-11-19T16:00:01') + 0.445)).toBe(true);
+        // 之後的盤後成交不能動到一般盤的收盤與量
+        expect(isUsChartTrade('AfterHours', at('2026-11-19T16:00:15'))).toBe(false);
+        expect(isUsChartTrade('AfterHours', at('2026-11-19T16:01:00'))).toBe(false);
+        expect(isUsChartTrade('AfterHours', at('2026-11-19T19:59:00'))).toBe(false);
+        expect(isUsChartTrade('PreMarket', at('2026-11-19T09:29:59'))).toBe(false);
+        expect(isUsChartTrade(undefined, at('2026-11-19T10:00:00'))).toBe(false);
+    });
+    it('keeps fractional seconds so minute buckets match the 1-min kbars', () => {
+        const w = sessionWindowFor('US', at('2026-11-19T12:00:00'));
+        // 10:01:00.500 → 10:02 那根；09:30:00.026 的開盤成交 → 09:31（不被當成開盤前）
+        const t1 = nyWallClockSec(Date.UTC(2026, 10, 19, 15, 1, 0, 500));
+        expect(t1).toBe(at('2026-11-19T10:01:00') + 0.5);
+        expect(tickBucket(w, t1)).toBe(at('2026-11-19T10:02:00'));
+        const open = nyWallClockSec(Date.UTC(2026, 10, 19, 14, 30, 0, 26));
+        expect(open > w.start).toBe(true);
+        expect(tickBucket(w, open)).toBe(at('2026-11-19T09:31:00'));
     });
     it('New York wall clock handles EST and EDT', () => {
         expect(nyWallClockNow(Date.UTC(2026, 10, 19, 18, 0, 0))).toBe(at('2026-11-19T13:00:00')); // EST −5

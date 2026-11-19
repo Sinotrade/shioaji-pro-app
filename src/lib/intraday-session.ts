@@ -5,6 +5,7 @@
 // 08:45–13:45 yields labels 08:46 … 13:45.
 
 import type { Region, SecurityType } from './types/contract';
+import { nyWallClockSec } from './us/us-quotes';
 import { nowWallClockUtc } from './utils/kbars';
 
 // 時段框架的種類：台股依商品類別；美股（region US）一律 'US' — 紐約牆鐘
@@ -16,17 +17,9 @@ export function sessionKindOf(c: { security_type: SecurityType; region?: Region 
     return c.region === 'US' ? 'US' : c.security_type;
 }
 
-const NY_WALL = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'America/New_York',
-    year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
-});
-
-/** 紐約牆鐘當 UTC 編碼的秒數（美股圖表時間軸用） */
+/** 紐約牆鐘當 UTC 編碼的整數秒（美股圖表時間軸的「現在」） */
 export function nyWallClockNow(nowMs = Date.now()): number {
-    const p = Object.fromEntries(NY_WALL.formatToParts(new Date(nowMs)).map((x) => [x.type, x.value]));
-    const hour = p.hour === '24' ? 0 : Number(p.hour);
-    return Date.UTC(Number(p.year), Number(p.month) - 1, Number(p.day), hour, Number(p.minute), Number(p.second)) / 1000;
+    return Math.floor(nyWallClockSec(nowMs));
 }
 
 /** 這種時段框架的「現在」（牆鐘編碼）：台股台北、美股紐約 */
@@ -34,13 +27,23 @@ export function sessionNow(kind: SessionKind): number {
     return kind === 'US' ? nyWallClockNow() : nowWallClockUtc();
 }
 
+/** 收盤競價的成交標 AfterHours、時間在 16:00:01 左右；這段秒數內的 AfterHours 才算一般盤 */
+export const US_CLOSING_CROSS_SEC = 15;
+
 /**
- * 美股的哪些成交畫進走勢／K 線：一般盤，以及收盤競價（SDK 標 AfterHours，
- * 時間在 16:00 後幾秒，由 CLOSE_GRACE 併進最後一根）。盤前不畫 — 歷史 1 分 K
- * 沒有盤前，混進來會讓今天盤前的零星成交把前一天的走勢切成空框架。
+ * 美股一筆成交是否畫進一般盤的走勢／K 線（session 欄位為準）：
+ * - Regular：是
+ * - AfterHours：只有收盤競價那幾秒（16:00:00–16:00:15）— SDK 把收盤競價
+ *   （官方收盤價，量很大）標成 AfterHours，而歷史 1 分 K 的 16:00 那根有
+ *   包含它；之後的盤後成交一律不畫
+ * - PreMarket／Unknown：否（歷史 1 分 K 只有一般盤）
+ * wallSec 是紐約牆鐘編碼秒數（nyWallClockSec）。
  */
-export function isUsChartSession(session: string | null | undefined): boolean {
-    return session === 'Regular' || session === 'AfterHours';
+export function isUsChartTrade(session: string | null | undefined, wallSec: number): boolean {
+    if (session === 'Regular') return true;
+    if (session !== 'AfterHours' || !Number.isFinite(wallSec)) return false;
+    const close = Math.floor(wallSec / DAY) * DAY + 16 * H;
+    return wallSec >= close && wallSec < close + US_CLOSING_CROSS_SEC;
 }
 
 export interface SessionWindow {

@@ -14,6 +14,17 @@ export function wallClockToUtc(dt: string): number {
     return Date.UTC(y, mo - 1, d, h, mi, s) / 1000;
 }
 
+/**
+ * 同 wallClockToUtc，但保留小數秒（成交時間 10:01:00.5 → …:00.5）。即時成交
+ * 分桶要用它：截成整秒會讓 10:01:00.5 落進 10:01 那根、09:30:00.x 的開盤
+ * 成交被當成開盤前而丟掉。K 棒標籤等整分時間照用 wallClockToUtc。
+ */
+export function wallClockToUtcPrecise(dt: string): number {
+    const base = wallClockToUtc(dt);
+    const frac = /^.{19}(\.\d+)/.exec(dt)?.[1];
+    return frac ? base + Number(`0${frac}`) : base;
+}
+
 export function kbarsToCandles(k: KBars): Candle[] {
     const out: Candle[] = [];
     for (let i = 0; i < k.datetime.length; i++) {
