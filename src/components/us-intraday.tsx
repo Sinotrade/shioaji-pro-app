@@ -65,11 +65,8 @@ function useUsSessionHistory(contract: ContractInfo): HistoryState {
     return state;
 }
 
-const AXIS_LABELS = [
-    { label: '09:30', frac: 0 },
-    { label: '12:00', frac: 150 / 390 },
-    { label: '16:00', frac: 1 },
-];
+// 兩端與正中間（一般盤 390 分鐘的中點是 12:45），用 space-between 排
+const AXIS_LABELS = ['09:30', '12:45', '16:00'];
 
 export function UsIntraday({ contract }: { contract: ContractInfo }) {
     const key = contractLinkKey(contract);
@@ -95,7 +92,7 @@ export function UsIntraday({ contract }: { contract: ContractInfo }) {
                     <polyline points={path.points} className={up ? styles.lineUp : styles.lineDown} />
                 </svg>
                 <div className={styles.foot}>
-                    {AXIS_LABELS.map(a => <span key={a.label}>{a.label}</span>)}
+                    {AXIS_LABELS.map(a => <span key={a}>{a}</span>)}
                 </div>
                 <div className={styles.foot}>
                     <span>低 {fmtUsPrice(String(path.lo))}</span>
