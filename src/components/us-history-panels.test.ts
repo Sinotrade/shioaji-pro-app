@@ -52,6 +52,18 @@ describe('mergeUsTape', () => {
         const other = usTapeRowFromMeta({ key: 'US:AAPL', price: '352.05', session: 'Regular', freshness: null, ts: 1795012200000, tsUs: 1795012200000019, volume: 8 });
         expect(mergeUsTape([other], h)).toHaveLength(2);
     });
+    it('prefers exact microsecond matches over ±1 µs when live ticks arrive out of order', () => {
+        const t = 1795012200000016;
+        const mk = (us: number) => ({ ts: Math.floor(us / 1000), tsUs: us, time: '', price: 352.05, volume: 8, bid: null, ask: null, tickType: 0, session: 'Regular' as const, oddLot: false });
+        const h = usTapeRowsFromHistory([mk(t), mk(t + 2)]); // 歷史 [t+2, t]
+        const live = [t + 1, t + 2].map(us => usTapeRowFromMeta({ key: 'US:AAPL', price: '352.05', session: 'Regular', freshness: null, ts: Math.floor(us / 1000), tsUs: us, volume: 8 }));
+        expect(mergeUsTape(live, h)).toHaveLength(2);
+    });
+    it('shows history time from the same rounded microsecond used for dedupe', () => {
+        const parsed = parseUsTicks({ ts: [1795012200000016000], close: [1], volume: [1] })!;
+        expect(parsed[0]!.time.endsWith(`.${String(parsed[0]!.tsUs % 1_000_000).padStart(6, '0')}`)).toBe(true);
+        expect(parsed[0]!.time).toBe('09:30:00.000016');
+    });
     it('keeps a live row that only shares the timestamp', () => {
         const other = usTapeRowFromMeta({ key: 'US:AAPL', price: '352.02', session: 'Regular', freshness: null, ts: t0 + 2, tsUs: (t0 + 2) * 1000, volume: 99 });
         expect(mergeUsTape([other], hist)).toHaveLength(4);

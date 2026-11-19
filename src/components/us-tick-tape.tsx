@@ -69,13 +69,20 @@ export function mergeUsTape(live: readonly UsTapeRow[], hist: readonly UsTapeRow
         list.push(r.ts);
         pool.set(keyOf(r), list);
     }
-    const fresh = live.filter(r => {
-        const list = pool.get(keyOf(r));
-        const i = list ? list.findIndex(ts => Math.abs(ts - r.ts) <= TAPE_DEDUPE_TOLERANCE_US) : -1;
-        if (i < 0) return true;
-        list!.splice(i, 1);
-        return false;
-    });
+    // 先配完全相同的 µs，再配 ±1 µs 的剩餘列 — 即時列可能不按時間到達，
+    // 一次貪婪配對會讓近似配對搶走別人的完全配對
+    const matched = new Set<UsTapeRow>();
+    for (const tol of [0, TAPE_DEDUPE_TOLERANCE_US]) {
+        for (const r of live) {
+            if (matched.has(r)) continue;
+            const list = pool.get(keyOf(r));
+            const i = list ? list.findIndex(ts => Math.abs(ts - r.ts) <= tol) : -1;
+            if (i < 0) continue;
+            list!.splice(i, 1);
+            matched.add(r);
+        }
+    }
+    const fresh = live.filter(r => !matched.has(r));
     return [...fresh, ...hist].map((r, i) => [r, i] as const).sort((a, b) => b[0].ts - a[0].ts || a[1] - b[1]).map(([r]) => r).slice(0, max);
 }
 

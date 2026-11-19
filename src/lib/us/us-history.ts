@@ -38,14 +38,19 @@ export function sdkHasUsHistory(version: string | undefined | null): boolean | n
     return major > 1 || (major === 1 && minor >= 8);
 }
 
+/** 記錄與查詢用同一個正規化（URL origin：https://host:443 與 https://host 視為同一個） */
+function baseKey(base: string): string {
+    return originOf(base) ?? base;
+}
+
 export function usHistoryAvailable(): boolean {
-    if (unavailableBases.has(getApiBase())) return false;
+    if (unavailableBases.has(baseKey(getApiBase()))) return false;
     return sdkHasUsHistory(knownServerInfo()?.version) !== false;
 }
 
 /** base 是送出請求時的 sidecar；回應晚到時目前的 base 可能已經換了 */
 function markUnavailable(base: string) {
-    unavailableBases.add(base);
+    unavailableBases.add(baseKey(base));
 }
 
 export function resetUsHistoryForTest() {
@@ -249,15 +254,11 @@ function usTimeToUs(rawTime: unknown, ms: number): number {
 }
 
 /** 時間字串的小數秒（6 位）；數字時間用 ms 補零 */
-function nyTimeWithFraction(rawTime: unknown, ms: number): string {
-    const { time } = nyDateTime(ms * 1000);
-    let frac = '';
-    if (typeof rawTime === 'string') frac = /\.(\d+)/.exec(rawTime)?.[1] ?? '';
-    else if (typeof rawTime === 'number' && rawTime > 1e14) {
-        const us = rawTime > 1e17 ? Math.floor(rawTime / 1e3) : Math.floor(rawTime);
-        frac = String(us % 1_000_000).padStart(6, '0');
-    } else frac = String(ms % 1000).padStart(3, '0');
-    return `${time}.${frac.padEnd(6, '0').slice(0, 6)}`;
+/** epoch µs → 紐約時間 HH:MM:SS.ffffff（秒與小數都取自同一個 µs，與去重用的 tsUs 一致） */
+export function nyTimeFromUs(tsUs: number): string {
+    const sec = Math.floor(tsUs / 1_000_000);
+    const { time } = nyDateTime(sec * 1_000_000);
+    return `${time}.${String(tsUs - sec * 1_000_000).padStart(6, '0')}`;
 }
 
 /** 美股 ticks（UsTicks 或台股形狀）→ 依時間排序的列；形狀不對回 null */
@@ -278,12 +279,13 @@ export function parseUsTicks(raw: unknown): UsHistoryTick[] | null {
         const ms = usTimeToMs(times[i]);
         const price = num(close[i]);
         if (ms === null || !Number.isFinite(price)) continue;
+        const tsUs = usTimeToUs(times[i], ms);
         const b = bid[i] === null || bid[i] === undefined ? null : num(bid[i]);
         const a = ask[i] === null || ask[i] === undefined ? null : num(ask[i]);
         out.push({
             ts: ms,
-            tsUs: usTimeToUs(times[i], ms),
-            time: nyTimeWithFraction(times[i], ms),
+            tsUs,
+            time: nyTimeFromUs(tsUs),
             price,
             volume: num(volume[i]) || 0,
             bid: b !== null && Number.isFinite(b) && b > 0 ? b : null,

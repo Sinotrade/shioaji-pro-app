@@ -210,6 +210,18 @@ describe('availability and fetch', () => {
         expect(usHistoryAvailable()).toBe(false); // A 才是回應者
         m.base.mockReturnValue('http://127.0.0.1:21391');
     });
+    it('normalizes the sidecar base the same way when marking and looking up', async () => {
+        m.base.mockReturnValue('https://sidecar.test:443');
+        m.post.mockImplementationOnce(async (_p: string, _b: unknown, opts: { beforeDispatch?: (url?: string) => void }) => {
+            opts.beforeDispatch?.('https://sidecar.test/api/v1/data/snapshots');
+            throw Object.assign(new Error('404 Not Found'), { status: 404 });
+        });
+        await expect(fetchUsSnapshots([AAPL])).rejects.toSatisfy(isUsHistoryUnavailable);
+        expect(usHistoryAvailable()).toBe(false);
+        m.base.mockReturnValue('https://sidecar.test');
+        expect(usHistoryAvailable()).toBe(false);
+        m.base.mockReturnValue('http://127.0.0.1:21391');
+    });
     it('does not latch on 5xx', async () => {
         m.post.mockRejectedValueOnce(Object.assign(new Error('500 decode error'), { status: 500 }));
         await expect(fetchUsSnapshots([AAPL])).rejects.toThrow('500');
