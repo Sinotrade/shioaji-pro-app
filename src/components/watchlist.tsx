@@ -40,6 +40,7 @@ import type { ProductSuggestion } from '../lib/product-search';
 import { fmtPct, fmtPrice, fmtSigned } from '../lib/utils/format';
 import { contractLinkKey } from '../lib/contract-key';
 import { fmtUsPrice } from '../lib/us/decimal';
+import { usSnapshotQuote } from '../lib/us/us-history';
 import type { SseTick } from '../lib/types/market';
 import { Sparkline } from './sparkline';
 import { RefreshButton } from './refresh-button';
@@ -79,7 +80,7 @@ export function usLive(contract: ContractInfo, tick: SseTick | undefined) {
 // 美股：有即時價才有漲跌幅，沒有就是 0
 function pctOf(item: WatchItem): number {
     if (isUs(item.contract)) {
-        return usLive(item.contract, getQuote(contractLinkKey(item.contract))?.tick)?.pct ?? 0;
+        return usLive(item.contract, getQuote(contractLinkKey(item.contract))?.tick)?.pct ?? item.usSnapshot?.changeRate ?? 0;
     }
     const q = getQuote(item.contract.code);
     const ref = q?.index
@@ -135,7 +136,8 @@ const WatchRow = memo(function WatchRow({
     const quote = useQuote(rowKey);
     const tick = quote?.tick;
     const index = quote?.index;
-    const usQuote = us ? usLive(item.contract, tick) : null;
+    // 美股：即時成交優先；還沒有即時成交時用快照（最近一般盤價與漲跌）
+    const usQuote = us ? usLive(item.contract, tick) ?? (item.usSnapshot ? usSnapshotQuote(item.usSnapshot) : null) : null;
 
     const close = tick
         ? Number(tick.close)

@@ -32,7 +32,8 @@ const US_TIMEFRAMES: readonly { label: ChartInterval; minutes: number; days: num
     { label: '5m', minutes: 5, days: 10 },
     { label: '15m', minutes: 15, days: 20 },
     { label: '60m', minutes: 60, days: 60 },
-    { label: '1D', minutes: 1440, days: 240 },
+    // 美股 kbars 一次最多 30 天：日 K 由 1 分 K 聚合，抓 4 段約半年
+    { label: '1D', minutes: 1440, days: 119 },
 ];
 
 function tfOf(interval: unknown) {

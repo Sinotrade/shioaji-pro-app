@@ -18,8 +18,10 @@ import {
     parseUsTicks,
     resetUsHistoryForTest,
     sdkHasUsHistory,
+    splitDateRange,
     usBarBucket,
     usHistoryAvailable,
+    usSnapshotQuote,
     usTimeToMs,
 } from './us-history';
 import type { Candle } from '../types/market';
@@ -101,6 +103,16 @@ describe('parseUsSnapshots', () => {
         expect(rows.map(r => r?.code)).toEqual(['AAPL', 'MSFT']);
         expect(rows[0]).toMatchObject({ tradeDate: '2026-11-18', close: 352.45, reference: 350, buyPrice: null, sellPrice: 352.5, session: 'Regular' });
     });
+    it('reads a real pre-market row from the 1.8.0b1 sidecar (regular open/high/low still 0)', () => {
+        // POST /api/v1/data/snapshots，2026-11-19 美東盤前（ed7f77df build）
+        const row = { region: 'US', ts: 1795092423642980000, trade_date: '2026-11-19', code: 'AAPL', exchange: 'NASDAQ', open: 0.0, high: 0.0, low: 0.0, close: 352.45, reference: 352.45, tick_type: 'None', change_price: 0.0, change_rate: 0.0, change_type: 'Unchanged', average_price: 354.35, volume: 20, total_volume: 252160, amount: 7081.2, total_amount: 46853795.0, yesterday_volume: 34209928, volume_ratio: 0.0074, buy_price: 354.06, sell_price: 354.26, buy_volume: 120, sell_volume: 100, session: 'PreMarket', tradable_status: 1, last_price: 354.06, ext_close: 353.98, ext_high: 356.0, ext_low: 353.58 };
+        const tw = { region: 'TW', code: '2330', close: 2100 };
+        const rows = parseUsSnapshots([tw, row], 2)!;
+        expect(rows[0]).toBeNull();
+        expect(rows[1]).toMatchObject({ open: 0, close: 352.45, session: 'PreMarket', lastPrice: 354.06, tradeDate: '2026-11-19' });
+        expect(usSnapshotQuote(rows[1]!)).toEqual({ last: '352.45', close: 352.45, chg: 0, pct: 0 });
+        expect(usSnapshotQuote({ ...rows[1]!, close: 0 })).toBeNull();
+    });
     it('treats an all-Taiwan-shaped reply (old SDK) and a count mismatch as unsupported', () => {
         expect(parseUsSnapshots([{ code: 'AAPL', close: 1 }], 1)).toBeNull();
         expect(parseUsSnapshots([us], 2)).toBeNull();
@@ -131,9 +143,25 @@ describe('availability and fetch', () => {
         await fetchUsTicks(AAPL, '2026-11-18', { lastCnt: 120 });
         expect(m.post.mock.calls[0]![1]).toMatchObject({ date: '2026-11-18', query_type: 'LastCount', last_cnt: 120 });
     });
-    it('latches unavailable after a 4xx or a wrong shape, without retrying', async () => {
-        m.post.mockRejectedValueOnce(Object.assign(new Error('422 Unprocessable'), { status: 422 }));
-        await expect(fetchUsKbars(AAPL, 'a', 'b')).rejects.toSatisfy(isUsHistoryUnavailable);
+    it('splits kbars ranges into 30-day requests and merges them', async () => {
+        expect(splitDateRange('2026-11-01', '2026-11-19')).toEqual([['2026-11-01', '2026-11-19']]);
+        expect(splitDateRange('2026-07-23', '2026-11-19')).toEqual([
+            ['2026-07-23', '2026-08-21'], ['2026-08-22', '2026-09-20'], ['2026-09-21', '2026-10-20'], ['2026-10-21', '2026-11-19'],
+        ]);
+        const k = (dt: string) => ({ datetime: [dt], Open: [1], High: [1], Low: [1], Close: [1], Volume: [1] });
+        m.post.mockResolvedValueOnce(k('2026-09-01T14:31:00')).mockResolvedValueOnce(k('2026-10-01T14:31:00'));
+        const bars = await fetchUsKbars(AAPL, '2026-09-01', '2026-10-15');
+        expect(m.post).toHaveBeenCalledTimes(2);
+        expect(bars).toHaveLength(2);
+    });
+    it('keeps history available after a 400 parameter error', async () => {
+        m.post.mockRejectedValueOnce(Object.assign(new Error('400 Kbars date range must not exceed 30 days.'), { status: 400 }));
+        await expect(fetchUsKbars(AAPL, '2026-11-01', '2026-11-02')).rejects.toThrow('400');
+        expect(usHistoryAvailable()).toBe(true);
+    });
+    it('latches unavailable after a 404 or a wrong shape, without retrying', async () => {
+        m.post.mockRejectedValueOnce(Object.assign(new Error('404 Not Found'), { status: 404 }));
+        await expect(fetchUsKbars(AAPL, '2026-11-18', '2026-11-18')).rejects.toSatisfy(isUsHistoryUnavailable);
         await expect(fetchUsTicks(AAPL, 'a')).rejects.toSatisfy(isUsHistoryUnavailable);
         expect(m.post).toHaveBeenCalledTimes(1);
         resetUsHistoryForTest();

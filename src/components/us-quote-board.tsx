@@ -92,10 +92,14 @@ export function UsQuoteBoard({ contract }: { contract: ContractInfo }) {
                         <span className={us.dir[numDir(snap.changePrice)]}>{`${snap.changePrice > 0 ? '+' : ''}${fmtUsPrice(snap.changePrice)}`}</span>
                         <span className={us.dir[numDir(snap.changePrice)]}>{`${snap.changeRate > 0 ? '+' : ''}${snap.changeRate.toFixed(2)}%`}</span>
                     </span>
-                    <Stat label='開'>{fmtUsPrice(snap.open)}</Stat>
-                    <Stat label='高'>{fmtUsPrice(snap.high)}</Stat>
-                    <Stat label='低'>{fmtUsPrice(snap.low)}</Stat>
+                    {/* 一般盤還沒開（盤前）時開高低是 0 */}
+                    <Stat label='開'>{snap.open > 0 ? fmtUsPrice(snap.open) : '—'}</Stat>
+                    <Stat label='高'>{snap.high > 0 ? fmtUsPrice(snap.high) : '—'}</Stat>
+                    <Stat label='低'>{snap.low > 0 ? fmtUsPrice(snap.low) : '—'}</Stat>
                     <Stat label='總量'>{fmtInt(snap.totalVolume)}</Stat>
+                    {snap.session && snap.session !== 'Regular' && US_SESSION_LABEL[snap.session] && snap.lastPrice !== null && snap.lastPrice > 0 && (
+                        <Stat label={US_SESSION_LABEL[snap.session]}>{fmtUsPrice(snap.lastPrice)}</Stat>
+                    )}
                     <span className={us.meta}>快照{snap.tradeDate ? `（${snap.tradeDate}）` : ''}<br />尚無即時報價</span>
                 </>
             ) : (

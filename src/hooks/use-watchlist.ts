@@ -29,11 +29,16 @@ import { notify } from '../lib/trade';
 import { onWatchlistChanged, type WatchlistChangedDetail } from '../lib/watchlist-sync';
 import type { ContractInfo, SecurityType } from '../lib/types/contract';
 import type { Snapshot } from '../lib/types/market';
+import { fetchUsSnapshots, type UsSnapshot } from '../lib/us/us-history';
 
 export interface WatchItem {
     contract: ContractInfo;
     snapshot?: Snapshot;
+    /** 美股快照（SDK 1.8.0b1）：沒有即時成交前的價格與漲跌 */
+    usSnapshot?: UsSnapshot;
 }
+
+const US_SNAPSHOT_BATCH = 50;
 
 const DEFAULT_LIST_NAME = '我的自選';
 const DEFAULT_SYMBOLS: { code: string; type: SecurityType }[] = [
@@ -195,7 +200,23 @@ export function useWatchlist() {
     }, []);
 
     const attachSnapshots = useCallback((all: ContractInfo[]) => {
-        // 美股沒有快照（只有即時 tick 與前一日參考價），不送 fetchSnapshots
+        // 美股快照另外批次抓（只在載入／加入時一次，不輪詢）；舊 SDK 或非
+        // 正式環境拿不到就維持「參考價」顯示
+        const us = all.filter(isUsMember);
+        for (let i = 0; i < us.length; i += US_SNAPSHOT_BATCH) {
+            const batch = us.slice(i, i + US_SNAPSHOT_BATCH);
+            fetchUsSnapshots(batch)
+                .then((rows) => {
+                    const byKey = new Map<string, UsSnapshot>();
+                    batch.forEach((c, n) => { const row = rows[n]; if (row && row.close > 0) byKey.set(contractLinkKey(c), row); });
+                    if (byKey.size === 0) return;
+                    setItems((prev) => prev.map((i) => {
+                        const row = isUsMember(i.contract) ? byKey.get(contractLinkKey(i.contract)) : undefined;
+                        return row ? { ...i, usSnapshot: row } : i;
+                    }));
+                })
+                .catch(() => undefined);
+        }
         const contracts = all.filter((contract) => !isUsMember(contract));
         if (contracts.length === 0) return;
         fetchSnapshots(contracts)

@@ -75,8 +75,10 @@ async function usPost<T>(path: string, body: unknown, parse: (raw: unknown) => T
     } catch (e) {
         const status = (e as { status?: unknown })?.status;
         const msg = e instanceof Error ? e.message : String(e);
-        // 4xx：舊 SDK 不認 region US 等 — 記下不再打
-        if ((typeof status === 'number' && status >= 400 && status < 500) || /^4\d\d( |$)/.test(msg)) {
+        const code = typeof status === 'number' ? status : Number(/^(\d{3})( |$)/.exec(msg)?.[1]);
+        // 404／405／501：這個 sidecar 沒有這個端點的美股版本 — 記下不再打。
+        // 400／422 等參數錯誤（例如 kbars 區間超過 30 天）只讓這次失敗。
+        if (code === 404 || code === 405 || code === 501) {
             markUnavailable();
             throw new UsHistoryUnavailable();
         }
@@ -170,8 +172,34 @@ export function parseUsKbars(raw: unknown): Candle[] | null {
     return out;
 }
 
-export function fetchUsKbars(contract: Pick<ContractBase, 'code' | 'exchange'>, start: string, end: string, opts?: { timeoutMs?: number }): Promise<Candle[]> {
-    return usPost('/api/v1/data/kbars', { contract: usContractBody(contract), start, end }, parseUsKbars, opts);
+/** SDK 1.8.0b1：kbars 一次最多 30 天（超過回 400） */
+export const US_KBARS_MAX_DAYS = 30;
+
+const dayMs = 86_400_000;
+const isoDay = (ms: number) => new Date(ms).toISOString().slice(0, 10);
+
+/** [start, end]（YYYY-MM-DD，含兩端）切成每段最多 maxDays 天，舊到新 */
+export function splitDateRange(start: string, end: string, maxDays = US_KBARS_MAX_DAYS): [string, string][] {
+    const s = Date.parse(`${start}T00:00:00Z`);
+    const e = Date.parse(`${end}T00:00:00Z`);
+    if (!Number.isFinite(s) || !Number.isFinite(e) || e < s) return [[start, end]];
+    const out: [string, string][] = [];
+    for (let a = s; a <= e; a += maxDays * dayMs) {
+        out.push([isoDay(a), isoDay(Math.min(e, a + (maxDays - 1) * dayMs))]);
+    }
+    return out;
+}
+
+/** 美股 1 分 K；超過 30 天的區間依序分段抓再合併 */
+export async function fetchUsKbars(contract: Pick<ContractBase, 'code' | 'exchange'>, start: string, end: string, opts?: { timeoutMs?: number }): Promise<Candle[]> {
+    const parts: Candle[][] = [];
+    for (const [a, b] of splitDateRange(start, end)) {
+        parts.push(await usPost('/api/v1/data/kbars', { contract: usContractBody(contract), start: a, end: b }, parseUsKbars, opts));
+    }
+    if (parts.length === 1) return parts[0]!;
+    const byTime = new Map<number, Candle>();
+    for (const c of parts.flat()) byTime.set(c.time, c);
+    return [...byTime.values()].sort((x, y) => x.time - y.time);
 }
 
 // ---- ticks ----
@@ -276,6 +304,8 @@ export interface UsSnapshot {
     buyPrice: number | null;
     sellPrice: number | null;
     session: UsTradingSession | null;
+    /** 最新成交（含盤前／盤後）；close 是一般盤價 */
+    lastPrice: number | null;
 }
 
 const optNum = (v: unknown) => (v === null || v === undefined ? null : Number.isFinite(num(v)) ? num(v) : null);
@@ -304,7 +334,14 @@ export function parseUsSnapshotRow(row: unknown): UsSnapshot | null {
         buyPrice: optNum(r.buy_price),
         sellPrice: optNum(r.sell_price),
         session: sessionOf(r.session),
+        lastPrice: optNum(r.last_price),
     };
+}
+
+/** 快照 → 自選列的價格／漲跌（與 usLive 同形狀；只在沒有即時成交時用） */
+export function usSnapshotQuote(s: UsSnapshot): { last: string; close: number; chg: number; pct: number } | null {
+    if (!(s.close > 0)) return null;
+    return { last: String(s.close), close: s.close, chg: s.changePrice, pct: s.changeRate };
 }
 
 /** 美股 snapshots（依輸入順序；某列不是美股形狀則該位置為 null） */
