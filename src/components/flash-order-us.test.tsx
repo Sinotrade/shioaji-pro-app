@@ -92,7 +92,7 @@ beforeEach(() => {
 afterEach(async () => { await act(async () => view?.unmount()); vi.unstubAllGlobals(); });
 
 it('uses the snapshot reference over a stale contract reference, like the quote board', async () => {
-    mocks.snap = { reference: 188 };
+    mocks.snap = { reference: 188, tradeDate: '2026-11-19' };
     await render();
     expect(middle()).toBe('188');
     expect(text(view.root.find(n => n.props['data-testid'] === 'flash-us-ref'))).toBe('參考 188.00・尚無即時報價');

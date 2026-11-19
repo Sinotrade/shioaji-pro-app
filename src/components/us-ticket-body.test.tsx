@@ -26,7 +26,7 @@ vi.mock('../hooks/use-stream', () => ({
 }));
 vi.mock('../hooks/use-us-snapshot', async importOriginal => ({ ...(await importOriginal<object>()), useUsSnapshot: () => m.snap }));
 vi.mock('../lib/us/us-quotes', async importOriginal => ({
-    usTickReference: (await importOriginal<typeof import('../lib/us/us-quotes')>()).usTickReference,
+    ...(await importOriginal<typeof import('../lib/us/us-quotes')>()),
     getUsTickMeta: () => ({ session: 'Regular' }),
     US_SESSION_LABEL: { Unknown: '', PreMarket: '盤前', Regular: '盤中', AfterHours: '盤後' },
 }));
@@ -96,7 +96,7 @@ it('renders the US body inside the shared ticket, without TW-only fields', async
 });
 
 it('prefers the snapshot reference over a stale contract reference before the first tick', async () => {
-    m.snap = { reference: 231.5 };
+    m.snap = { reference: 231.5, tradeDate: '2026-11-19' };
     await mount();
     expect(all()).toContain('參考 231.50');
     expect(all()).not.toContain('230.10');

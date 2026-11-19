@@ -7,7 +7,7 @@
 
 import { useQuote } from '../hooks/use-stream';
 import type { UsSnapshot } from '../lib/us/us-history';
-import { pickUsReference, useUsSnapshot } from '../hooks/use-us-snapshot';
+import { pickUsReference, usLiveChange, useUsSnapshot } from '../hooks/use-us-snapshot';
 import { contractLinkKey } from '../lib/contract-key';
 import type { ContractInfo } from '../lib/types/contract';
 import { decCompare, fmtUsPrice } from '../lib/us/decimal';
@@ -48,20 +48,21 @@ const numDir = (v: number): 'up' | 'down' | 'flat' => (v > 0 ? 'up' : v < 0 ? 'd
 export function UsQuoteBoard({ contract }: { contract: ContractInfo }) {
     const key = contractLinkKey(contract);
     const quote = useQuote(key);
-    // 沒有即時成交、或即時成交沒有開高低（盤前／盤後）時抓一次快照補一般盤值
-    const snap = useUsSnapshot(contract, !quote?.tick || !quote.tick.open);
+    // 快照抓一次（與五檔、下單面板共用）：參考價的來源，也補盤前沒有的一般盤值
+    const snap = useUsSnapshot(contract, true);
     const halt = useUsHalt(contract);
     const tick = quote?.tick;
     const bid = quote?.bidask?.bid_price?.[0];
     const ask = quote?.bidask?.ask_price?.[0];
     const meta = tick ? getUsTickMeta(key) : undefined;
-    const dir = dirOf(tick?.price_chg);
-    // 「參考」與漲跌同一個基準：有即時成交時用成交價−漲跌（盤前／盤後即最近
-    // 一般盤收盤價），有快照時用快照的參考價，都沒有才用合約的前一日參考價
+    // 「參考」與漲跌同一個基準：當天交易日的快照 reference，其次是適用的合約檔
+    // 參考價（見 pickUsReference）；漲跌＝成交價 − 參考價，不知道參考價時用 SDK 值
     // 快照的一般盤開高低只在它與即時成交同一個美東交易日時才拿來補
     // （隔天盤前不可顯示前一天的開高低）
     const sameDaySnap = snap && tick && snapshotMatchesTradeDate(snap, tick.date) ? snap : null;
     const ref = pickUsReference(tick, snap, contract).price;
+    const change = tick ? usLiveChange(tick, ref) : {};
+    const dir = dirOf(change.priceChg);
 
     return (
         <div className={`${styles.board} ${us.board}`} aria-label='美股報價板' data-testid='us-quote-board'>
@@ -73,8 +74,8 @@ export function UsQuoteBoard({ contract }: { contract: ContractInfo }) {
                 <>
                     <span className={styles.bigPrice[dir]}>{fmtUsPrice(tick.close)}</span>
                     <span className={styles.changeBlock}>
-                        <span className={us.dir[dir]}>{tick.price_chg ? `${dir === 'up' ? '+' : ''}${fmtUsPrice(tick.price_chg)}` : '—'}</span>
-                        <span className={us.dir[dir]}>{tick.pct_chg ? `${dir === 'up' ? '+' : ''}${Number(tick.pct_chg).toFixed(2)}%` : ''}</span>
+                        <span className={us.dir[dir]}>{change.priceChg ? `${dir === 'up' ? '+' : ''}${fmtUsPrice(change.priceChg)}` : '—'}</span>
+                        <span className={us.dir[dir]}>{change.pctChg ? `${dir === 'up' ? '+' : ''}${Number(change.pctChg).toFixed(2)}%` : ''}</span>
                     </span>
                     {/* 盤前一般盤還沒開：開高低留空顯示「—」，有快照就用快照的一般盤值 */}
                     <Stat label='開'>{ohl(tick.open, sameDaySnap?.open)}</Stat>

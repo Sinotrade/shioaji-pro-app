@@ -33,6 +33,12 @@ describe('usDepthLevel', () => {
         expect(r.bid).toEqual({ price: '354.17', vol: 3 });
         expect(r.ask).toBeNull();
     });
+    it('never falls back to the snapshot once live data was seen for the contract', () => {
+        const empty = { bid_price: ['0'], bid_volume: [0], ask_price: ['0'], ask_volume: [0] };
+        expect(usDepthLevel(empty, snap, true)).toMatchObject({ bid: null, ask: null, spread: null, source: 'live' });
+        expect(usDepthLevel(undefined, snap, true).source).toBe('live');
+        expect(usDepthLevel(empty, snap, false).source).toBe('snapshot');
+    });
     it('shows empty without live or usable snapshot', () => {
         expect(usDepthLevel(undefined, null)).toMatchObject({ bid: null, ask: null, source: 'live' });
         expect(usDepthLevel(undefined, { buyPrice: 0, buyVolume: 0, sellPrice: null, sellVolume: null })).toMatchObject({ bid: null, ask: null, source: 'live' });

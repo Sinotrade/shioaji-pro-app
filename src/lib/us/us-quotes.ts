@@ -108,31 +108,78 @@ export function nyDateTime(epochUs: number): { date: string; time: string } {
 
 const str = (v: string | null | undefined) => (v === null || v === undefined ? '' : String(v));
 
+// ---- 參考價（漲跌基準）----
+//
+// 資料工程規則（cfvhub）：漲跌基準是 reference（調整後昨收 → 昨收 → 前一日
+// NOCP），SDK 的 price_chg／pct_chg 也用它。盤前／盤後的成交只更新
+// ext_close／ext_high／ext_low；us_tick 的 close 是最後一筆 updates_last 成交，
+// 不是官方收盤，不能拿來當基準。所以延長時段的漲跌＝成交價 − reference，
+// reference 取當天交易日的快照，或確定適用那天的合約檔參考價。
+
 /**
- * 漲跌與幅度。一般盤用 SDK 的 price_chg／pct_chg；盤前／盤後 SDK 送的是一般盤
- * 漲跌（盤前一律 0），改以最近一般盤收盤價（us_tick 的 close）計算延長時段漲跌，
- * 與美股報價慣例（Pre-Market +1.47 / +0.42%）一致。
+ * 合約檔參考價（reference_date＝收盤日）是否適用 tradeDate：收盤日是 tradeDate
+ * 的前一個平日（中間只隔週末）。遇到假日判定為不適用，改等快照。
  */
-export function usTickChange(raw: Pick<RawUsTick, 'close' | 'price_chg' | 'pct_chg' | 'session'>, price: string): { priceChg?: string; pctChg?: string } {
-    const extended = raw.session === 'PreMarket' || raw.session === 'AfterHours';
-    const close = str(raw.close);
-    if (extended && decIsPositive(close)) {
-        const chg = decSub(price, close);
-        if (chg !== null) {
-            return { priceChg: decNormalize(chg) ?? chg, pctChg: ((Number(chg) / Number(close)) * 100).toFixed(2) };
-        }
+export function contractReferenceApplies(referenceDate: string | undefined, tradeDate: string): boolean {
+    if (!referenceDate || !tradeDate || referenceDate >= tradeDate) return false;
+    const start = Date.parse(`${referenceDate}T00:00:00Z`);
+    const end = Date.parse(`${tradeDate}T00:00:00Z`);
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end - start > 7 * 86_400_000) return false;
+    for (let t = start + 86_400_000; t < end; t += 86_400_000) {
+        const dow = new Date(t).getUTCDay();
+        if (dow !== 0 && dow !== 6) return false;
     }
-    return { priceChg: str(raw.price_chg) || undefined, pctChg: str(raw.pct_chg) || undefined };
+    return true;
 }
 
 /**
- * 漲跌的基準價（成交價 − 漲跌）：一般盤是當日參考價，盤前／盤後是最近一般盤
- * 收盤價（見 usTickChange）。報價板的「參考」用它，才會與漲跌一致。
+ * tradeDate 這個交易日的參考價：同一天的快照 reference 優先，其次是適用的合約檔
+ * 參考價；都沒有回 null（不從成交價回推）。date 只在用合約檔時給。
  */
-export function usTickReference(tick: Pick<SseTick, 'close' | 'price_chg'> | undefined): string | null {
-    if (!tick?.price_chg || !decIsPositive(tick.close)) return null;
-    const ref = decSub(tick.close, tick.price_chg);
-    return ref !== null && decIsPositive(ref) ? decNormalize(ref) ?? ref : null;
+export function usReferenceFor(
+    tradeDate: string,
+    snap: { tradeDate: string; reference: number | null } | null | undefined,
+    contract: { us_reference?: string; reference_date?: string },
+): { price: string | null; date: string | null } {
+    if (snap && snap.tradeDate === tradeDate && snap.reference && snap.reference > 0) return { price: String(snap.reference), date: null };
+    if (contract.us_reference && decIsPositive(contract.us_reference) && contractReferenceApplies(contract.reference_date, tradeDate)) {
+        return { price: contract.us_reference, date: contract.reference_date ?? null };
+    }
+    return { price: null, date: null };
+}
+
+/** 成交價 − 參考價（decimal 字串）與幅度（%，兩位） */
+export function usChangeFrom(price: string, reference: string | null | undefined): { priceChg?: string; pctChg?: string } {
+    if (!reference || !decIsPositive(reference) || !decIsPositive(price)) return {};
+    const chg = decSub(price, reference);
+    if (chg === null) return {};
+    return { priceChg: decNormalize(chg) ?? chg, pctChg: ((Number(chg) / Number(reference)) * 100).toFixed(2) };
+}
+
+/** 已知的參考價（快照、自選清單抓到時記下），讓即時 tick 進來時就能算延長時段漲跌 */
+const knownReferences = new Map<string, { date: string; price: string }>();
+
+export function noteUsReference(key: string, tradeDate: string, price: number | string | null | undefined) {
+    if (!tradeDate || price === null || price === undefined || !(Number(price) > 0)) return;
+    const prev = knownReferences.get(key);
+    if (prev && prev.date > tradeDate) return;
+    knownReferences.set(key, { date: tradeDate, price: String(price) });
+}
+
+export function knownUsReference(key: string, tradeDate: string): string | null {
+    const r = knownReferences.get(key);
+    return r && r.date === tradeDate ? r.price : null;
+}
+
+/**
+ * 漲跌與幅度。一般盤用 SDK 的 price_chg／pct_chg（基準就是 reference）；
+ * 盤前／盤後 SDK 送的是一般盤漲跌，改以成交價 − reference 計算；不知道
+ * reference 時不給漲跌（畫面顯示「—」，等快照或合約檔補上再算）。
+ */
+export function usTickChange(raw: Pick<RawUsTick, 'price_chg' | 'pct_chg' | 'session'>, price: string, reference: string | null): { priceChg?: string; pctChg?: string } {
+    const extended = raw.session === 'PreMarket' || raw.session === 'AfterHours';
+    if (extended) return usChangeFrom(price, reference);
+    return { priceChg: str(raw.price_chg) || undefined, pctChg: str(raw.pct_chg) || undefined };
 }
 
 /** us_tick → SseTick（code＝US:CODE）＋美股資訊；沒有成交價回 null */
@@ -140,9 +187,9 @@ export function normalizeUsTick(raw: RawUsTick): { tick: SseTick; meta: UsTickMe
     // price 是這筆成交價（可含 sub-penny，例如零股或中價成交，照原值顯示）；close 是一般盤價
     const price = str(raw.price) || str(raw.close);
     if (!raw?.code || !price || !Number.isFinite(Number(price))) return null;
-    const change = usTickChange(raw, price);
     const key = usLinkKey(raw.code);
     const { date, time } = nyDateTime(raw.datetime);
+    const change = usTickChange(raw, price, knownUsReference(key, date));
     const tick: SseTick = {
         code: key,
         date,
@@ -281,6 +328,7 @@ export const US_SESSION_LABEL: Record<UsTradingSession, string> = {
 export function resetUsQuotesForTest() {
     sessionTicks.clear();
     regularLines.clear();
+    knownReferences.clear();
     lastMeta.clear();
     sessionListeners.clear();
 }

@@ -40,7 +40,8 @@ import type { ProductSuggestion } from '../lib/product-search';
 import { fmtPct, fmtPrice, fmtSigned } from '../lib/utils/format';
 import { contractLinkKey } from '../lib/contract-key';
 import { fmtUsPrice } from '../lib/us/decimal';
-import { usSnapshotQuote } from '../lib/us/us-history';
+import { usSnapshotQuote, type UsSnapshot } from '../lib/us/us-history';
+import { pickUsReference, usLiveChange } from '../hooks/use-us-snapshot';
 import type { SseTick } from '../lib/types/market';
 import { Sparkline } from './sparkline';
 import { RefreshButton } from './refresh-button';
@@ -63,24 +64,22 @@ const isUs = (contract: ContractInfo) => contract.region === 'US';
  * 漲跌與幅度用 tick 的 price_chg／pct_chg；沒有 pct_chg 時以前一日參考價推算。
  * 沒有即時價回 null（畫面顯示「參考 {us_reference}」）。
  */
-export function usLive(contract: ContractInfo, tick: SseTick | undefined) {
+export function usLive(contract: ContractInfo, tick: SseTick | undefined, snap?: UsSnapshot | null) {
     const close = tick ? Number(tick.close) : NaN;
     if (!tick || !Number.isFinite(close) || close <= 0) return null;
-    const chgRaw = tick.price_chg !== undefined && tick.price_chg !== '' ? Number(tick.price_chg) : NaN;
-    const ref = Number(contract.us_reference ?? contract.reference);
-    const chg = Number.isFinite(chgRaw) ? chgRaw : ref > 0 ? close - ref : undefined;
-    const pctRaw = tick.pct_chg !== undefined && tick.pct_chg !== '' ? Number(tick.pct_chg) : NaN;
-    const pct = Number.isFinite(pctRaw)
-        ? pctRaw
-        : chg !== undefined && close - chg > 0 ? (chg / (close - chg)) * 100 : undefined;
-    return { last: tick.close, close, chg, pct };
+    // 與報價板同一個參考價來源（當天快照 reference → 適用的合約檔參考價）
+    const ref = pickUsReference(tick, snap ?? null, contract).price;
+    const change = usLiveChange(tick, ref);
+    const chgRaw = change.priceChg !== undefined ? Number(change.priceChg) : NaN;
+    const pctRaw = change.pctChg !== undefined ? Number(change.pctChg) : NaN;
+    return { last: tick.close, close, chg: Number.isFinite(chgRaw) ? chgRaw : undefined, pct: Number.isFinite(pctRaw) ? pctRaw : undefined };
 }
 
 // live percent change for sorting — quote first, snapshot fallback
 // 美股：有即時價才有漲跌幅，沒有就是 0
 function pctOf(item: WatchItem): number {
     if (isUs(item.contract)) {
-        return usLive(item.contract, getQuote(contractLinkKey(item.contract))?.tick)?.pct ?? item.usSnapshot?.changeRate ?? 0;
+        return usLive(item.contract, getQuote(contractLinkKey(item.contract))?.tick, item.usSnapshot)?.pct ?? item.usSnapshot?.changeRate ?? 0;
     }
     const q = getQuote(item.contract.code);
     const ref = q?.index
@@ -137,7 +136,7 @@ const WatchRow = memo(function WatchRow({
     const tick = quote?.tick;
     const index = quote?.index;
     // 美股：即時成交優先；還沒有即時成交時用快照（最近一般盤價與漲跌）
-    const usQuote = us ? usLive(item.contract, tick) ?? (item.usSnapshot ? usSnapshotQuote(item.usSnapshot) : null) : null;
+    const usQuote = us ? usLive(item.contract, tick, item.usSnapshot) ?? (item.usSnapshot ? usSnapshotQuote(item.usSnapshot) : null) : null;
 
     const close = tick
         ? Number(tick.close)

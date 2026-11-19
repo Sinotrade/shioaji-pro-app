@@ -3,7 +3,8 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ContractInfo } from '../lib/types/contract';
 
-const m = vi.hoisted(() => ({ quote: undefined as unknown, halt: null as unknown }));
+const m = vi.hoisted(() => ({ quote: undefined as unknown, halt: null as unknown, snap: null as unknown }));
+vi.mock('../hooks/use-us-snapshot', async importOriginal => ({ ...(await importOriginal<object>()), useUsSnapshot: () => m.snap }));
 vi.mock('../hooks/use-stream', () => ({ useQuote: () => m.quote }));
 vi.mock('../lib/us/us-halts', () => ({ useUsHalt: () => m.halt, usHaltLabel: () => '停牌' }));
 
@@ -38,11 +39,16 @@ describe('UsQuoteBoard', () => {
 
 describe('UsQuoteBoard extended hours', () => {
     it('shows — for open/high/low before the regular open and the change base as 參考', () => {
-        m.quote = { tick: { close: '354.1244', price_chg: '1.6744', pct_chg: '0.48', open: '', high: '', low: '', total_volume: 255203 }, bidask: undefined };
+        // 盤前 tick 的 price_chg 是 SDK 的一般盤值（0）；漲跌改用成交價 − 當天快照 reference
+        m.snap = { tradeDate: '2026-11-19', reference: 352.45, open: 0, high: 0, low: 0, close: 352.46, changePrice: 0.01, changeRate: 0, totalVolume: 1, session: 'PreMarket', lastPrice: null };
+        m.quote = { tick: { date: '2026-11-19', close: '354.1244', price_chg: '0', pct_chg: '0', open: '', high: '', low: '', total_volume: 255203 }, bidask: undefined };
         act(() => { view = create(createElement(UsQuoteBoard, { contract: aapl })); });
         const t = text();
+        m.snap = null;
         expect(t).toContain('354.1244');
-        expect(t).toContain('352.45'); // 參考＝最近一般盤收盤價，與漲跌一致
+        expect(t).toContain('+1.6744');
+        expect(t).toContain('352.45'); // 參考＝快照 reference，與漲跌同一個基準
+        expect(t).not.toContain('352.46'); // 不拿最後一筆成交當基準
         expect(t).not.toContain('230.10'); // 不再顯示合約上較舊的參考價
         expect((t.match(/—/g) ?? []).length).toBeGreaterThanOrEqual(3);
     });

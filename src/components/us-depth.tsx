@@ -7,6 +7,7 @@
 // sell_price／sell_volume）墊底並標「快照」；即時 bidask 一到（任一邊有效）就
 // 整列改用即時，之後快照不再參與，舊快照不會蓋掉新的即時資料。
 
+import { useEffect, useState } from 'react';
 import { useQuote } from '../hooks/use-stream';
 import { useUsSnapshot } from '../hooks/use-us-snapshot';
 import { contractLinkKey } from '../lib/contract-key';
@@ -35,10 +36,13 @@ export function usBestLevel(bidask: BidAsk | undefined) {
     return withSpread(side(bidask?.bid_price?.[0], bidask?.bid_volume?.[0]), side(bidask?.ask_price?.[0], bidask?.ask_volume?.[0]));
 }
 
-/** 即時 bidask 有任一邊有效就用即時；否則用快照墊底。 */
-export function usDepthLevel(bidask: BidAsk | undefined, snap: Pick<UsSnapshot, 'buyPrice' | 'buyVolume' | 'sellPrice' | 'sellVolume'> | null) {
+/**
+ * 即時 bidask 有任一邊有效就用即時；否則用快照墊底。liveSeen：這個商品已經
+ * 收過有效的即時一檔 — 之後即時變成兩邊皆空也照顯示空，不再退回舊快照。
+ */
+export function usDepthLevel(bidask: BidAsk | undefined, snap: Pick<UsSnapshot, 'buyPrice' | 'buyVolume' | 'sellPrice' | 'sellVolume'> | null, liveSeen = false) {
     const live = usBestLevel(bidask);
-    if (live.bid || live.ask || !snap) return { ...live, source: 'live' as const };
+    if (live.bid || live.ask || liveSeen || !snap) return { ...live, source: 'live' as const };
     const seeded = withSpread(side(snap.buyPrice, snap.buyVolume), side(snap.sellPrice, snap.sellVolume));
     return { ...seeded, source: seeded.bid || seeded.ask ? ('snapshot' as const) : ('live' as const) };
 }
@@ -46,8 +50,14 @@ export function usDepthLevel(bidask: BidAsk | undefined, snap: Pick<UsSnapshot, 
 export function UsDepth({ contract }: { contract: ContractInfo }) {
     const quote = useQuote(contractLinkKey(contract));
     const hasLive = usBestLevel(quote?.bidask);
-    const snap = useUsSnapshot(contract, !hasLive.bid && !hasLive.ask);
-    const { bid, ask, spread, source } = usDepthLevel(quote?.bidask, snap);
+    const linkKey = contractLinkKey(contract);
+    // 每個商品記住「收過有效即時一檔」：換商品重新開始，同商品之後不再用快照
+    const [liveSeenKey, setLiveSeenKey] = useState<string | null>(null);
+    const liveNow = !!(hasLive.bid || hasLive.ask);
+    const liveSeen = liveSeenKey === linkKey || liveNow;
+    useEffect(() => { if (liveNow) setLiveSeenKey(linkKey); }, [liveNow, linkKey]);
+    const snap = useUsSnapshot(contract, !liveSeen);
+    const { bid, ask, spread, source } = usDepthLevel(quote?.bidask, snap, liveSeen);
     const maxVol = Math.max(1, bid?.vol ?? 0, ask?.vol ?? 0);
     const total = (bid?.vol ?? 0) + (ask?.vol ?? 0);
     const bidShare = total > 0 ? ((bid?.vol ?? 0) / total) * 100 : 50;

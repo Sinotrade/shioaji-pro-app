@@ -22,7 +22,8 @@ import {
     type ServerWatchlist,
     type ServerWatchlistContract,
 } from '../lib/shioaji';
-import { contractLinkKey, isUsKey } from '../lib/contract-key';
+import { contractLinkKey, isUsKey, usLinkKey } from '../lib/contract-key';
+import { noteUsReference } from '../lib/us/us-quotes';
 import { cachedUsInfo, loadUsInfo, resolveUsContract, toUsContractInfo } from '../lib/us/us-contracts';
 import { onContractEvent, registerCodeAlias } from '../lib/stream';
 import { notify } from '../lib/trade';
@@ -219,6 +220,7 @@ export function useWatchlist() {
                     if (byKey.size === 0) return;
                     setItems((prev) => prev.map((i) => {
                         const row = isUsMember(i.contract) ? byKey.get(contractLinkKey(i.contract)) : undefined;
+                        if (row?.tradeDate) noteUsReference(usLinkKey(row.code), row.tradeDate, row.reference);
                         return row && isNewerUsSnapshot(row, i.usSnapshot) ? { ...i, usSnapshot: row } : i;
                     }));
                 })
