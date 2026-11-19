@@ -81,6 +81,17 @@ Tag 觸發 `Release Desktop App` workflow：
 
 盯 CI：`gh run watch <run-id> --exit-status --interval 30`。
 
+### Pre-release
+
+- tag 帶 `-` 與純數字序號，例如 `v0.1.58-1`（Windows MSI 只接受純數字的
+  pre-release 號，不能用 `-beta.1`）。semver 上 `0.1.58-1` 小於 `0.1.58`，
+  之後的正式版會正常蓋過。
+- workflow 會把 release 標成 pre-release、`--latest=false`：
+  `releases/latest/download/latest.json` 仍指向正式版，現有使用者不會被
+  自動更新；要試用的人手動下載安裝檔。
+- `RELEASE_NOTES.md` 一樣要有這個 tag 的段落（`## v0.1.58-1 - ...`）。
+- 驗證時 `latest.json` 要確認**沒有**被換成 pre-release。
+
 ### 6. 驗證
 
 - `gh release view vX.Y.Z --json isDraft,name,assets`：非 draft、標題
