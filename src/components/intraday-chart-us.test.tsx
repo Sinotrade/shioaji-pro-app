@@ -181,4 +181,45 @@ describe('IntradayChart (US)', () => {
         await flush();
         expect(price().options.priceFormat).toMatchObject({ precision: 2, minMove: 0.01 });
     });
+
+    it('replays trades that arrive while history loads (once per minute), skipping what history covers', async () => {
+        let resolve!: (v: unknown) => void;
+        fetchMock.mockReturnValue(new Promise((r) => { resolve = r; }));
+        snap.value = { tradeDate: '2026-11-19', reference: 99 };
+        mount({ contract: aapl });
+        await flush();
+        pushUs('2026-11-19T14:59:30', '777', { total: 1_000 }); // 10:00 那根：歷史已含
+        pushUs('2026-11-19T15:00:10', '101', { total: 1_005 }); // 10:01
+        pushUs('2026-11-19T15:00:40', '102', { total: 1_010 });
+        pushUs('2026-11-19T15:01:10', '103', { total: 1_015 }); // 10:02
+        const before = price().update.mock.calls.length;
+        resolve(MORNING);
+        await flush();
+        const replayed = price().update.mock.calls.slice(before).map((c) => c[0]);
+        expect(replayed).toEqual([
+            { time: T('2026-11-19T10:01:00'), value: 102 },
+            { time: T('2026-11-19T10:02:00'), value: 103 },
+        ]);
+        // 補完之後的漏收判斷照常：累計量跳很多 → 重抓
+        const calls = fetchMock.mock.calls.length;
+        fetchMock.mockResolvedValue(MORNING);
+        vi.setSystemTime(new Date('2026-11-19T15:20:00Z'));
+        pushUs('2026-11-19T15:19:00', '101', { volume: 10, total: 501_010 });
+        await flush();
+        expect(fetchMock.mock.calls.length).toBeGreaterThan(calls);
+    });
+
+    it('derives precision from the current price, not the reference', async () => {
+        fetchMock.mockResolvedValue(kbars([['2026-11-19T09:30:00', '2026-11-19T10:00:00', () => 0.85]]));
+        snap.value = { tradeDate: '2026-11-19', reference: 1.5 };
+        mount({ contract: aapl });
+        await flush();
+        // 歷史最後一筆 0.85 < 1，參考價 1.5 ≥ 1 → 4 位
+        expect(price().options.priceFormat).toMatchObject({ precision: 4 });
+        pushUs('2026-11-19T15:05:10', '0.5123');
+        // 快照晚到（參考價 ≥ 1）不能蓋掉成交價定的 4 位
+        setSnapshot({ tradeDate: '2026-11-19', reference: 2 });
+        expect(price().options.baseValue).toMatchObject({ price: 2 });
+        expect(price().options.priceFormat).toMatchObject({ precision: 4 });
+    });
 });

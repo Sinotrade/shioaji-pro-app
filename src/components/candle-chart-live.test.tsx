@@ -66,6 +66,7 @@ function mount(props: any) {
 }
 const candles = () => created.filter((c) => c.kind === 'Candlestick').at(-1)!;
 const T = (s: string) => Date.parse(`${s}Z`) / 1000;
+const lastData = () => (candles().setData.mock.calls.at(-1)![0] as any[]);
 const updates = () => candles().update.mock.calls.map((c) => ({ ...(c[0] as any), historical: c[1] === true }));
 
 beforeEach(() => {
@@ -97,7 +98,7 @@ function deferred<T>() {
 }
 
 describe('CandleChart live trades', () => {
-    it('replays trades received while history loads, skipping what history already covers', async () => {
+    it('replays trades received while history loads in one setData, skipping what history already covers', async () => {
         const d = deferred<any>();
         fetchMock.mockReturnValue(d.promise);
         const r = mount({ contract: stk, interval: '1m' });
@@ -105,11 +106,21 @@ describe('CandleChart live trades', () => {
         await flush();
         pushTick('2026-09-25', '10:04:30', 999, 7); // 歷史 10:05 那根已含 → 不補
         pushTick('2026-09-25', '10:05:10', 101, 4); // 歷史之後 → 補成 10:06 那根
+        pushTick('2026-09-25', '10:05:40', 103, 1);
+        pushTick('2026-09-25', '10:06:10', 102, 2); // 10:07
+        const setDataBefore = candles().setData.mock.calls.length;
         d.resolve(kbars([['2026-09-25T10:00:00', '2026-09-25T10:05:00', () => 100]]));
         await flush();
-        const u = updates();
-        expect(u.some((b) => b.close === 999)).toBe(false);
-        expect(u.at(-1)).toMatchObject({ time: T('2026-09-25T10:06:00'), close: 101 });
+        // 暫存的成交先在記憶體併好，一次 setData 畫出，不逐筆 update
+        expect(updates()).toHaveLength(0);
+        expect(candles().setData.mock.calls.length).toBe(setDataBefore + 1);
+        const data = lastData();
+        expect(data.some((x) => x.close === 999)).toBe(false);
+        expect(data.find((x) => x.time === T('2026-09-25T10:05:00'))).toMatchObject({ close: 100 });
+        expect(data.slice(-2)).toMatchObject([
+            { time: T('2026-09-25T10:06:00'), open: 101, high: 103, close: 103 },
+            { time: T('2026-09-25T10:07:00'), close: 102 },
+        ]);
     });
 
     it('replays every buffered trade when history comes back empty or fails', async () => {
@@ -121,22 +132,60 @@ describe('CandleChart live trades', () => {
         pushTick('2026-09-25', '10:05:10', 101, 4);
         d.reject(new Error('offline'));
         await flush();
-        const u = updates();
-        expect(u.map((b) => b.time)).toEqual([T('2026-09-25T10:05:00'), T('2026-09-25T10:06:00')]);
+        expect(lastData().map((x) => x.time)).toEqual([T('2026-09-25T10:05:00'), T('2026-09-25T10:06:00')]);
+        // 之後的成交接著畫
+        pushTick('2026-09-25', '10:05:20', 105, 1);
+        expect(updates().at(-1)).toMatchObject({ time: T('2026-09-25T10:06:00'), close: 105 });
     });
 
-    it('a late trade for an older bucket updates that bar, never the latest one', async () => {
+    it('marks the chart for a history reload when the pending buffer overflows', async () => {
+        const d = deferred<any>();
+        fetchMock.mockReturnValue(d.promise);
+        vi.setSystemTime(new Date('2026-11-19T15:30:00Z'));
+        mount({ contract: aapl, interval: '1m' });
+        await flush();
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        const base = Date.parse('2026-11-19T15:00:00Z');
+        act(() => {
+            for (let i = 0; i < 50_001; i++) {
+                const ms = base + i;
+                recordUsTick({ key: 'US:AAPL', price: '350', session: 'Regular', freshness: null, ts: ms, tsUs: ms * 1000, volume: 1 });
+            }
+        });
+        fetchMock.mockResolvedValue(kbars([]));
+        d.resolve(kbars([['2026-11-19T14:31:00', '2026-11-19T14:59:00', () => 349]]));
+        await flush();
+        // 漏了的成交靠重抓歷史補回，不能就這樣消失
+        expect(fetchMock.mock.calls.length).toBeGreaterThan(1);
+    });
+
+    it('drops a late trade for an older bucket and leaves the history and tail untouched', async () => {
         fetchMock.mockResolvedValue(kbars([['2026-09-25T10:00:00', '2026-09-25T10:05:00', () => 100]]));
         mount({ contract: stk, interval: '1m' });
         await flush();
         pushTick('2026-09-25', '10:05:10', 101, 4); // 新的一根 10:06
-        pushTick('2026-09-25', '10:03:20', 90, 1); // 晚到：屬於 10:04 那根
-        const u = updates();
-        const late = u.at(-1)!;
-        expect(late).toMatchObject({ time: T('2026-09-25T10:04:00'), low: 90, close: 90, historical: true });
-        // 最新一根 10:06 沒被改
-        const tail = u.filter((b) => b.time === T('2026-09-25T10:06:00')).at(-1)!;
-        expect(tail).toMatchObject({ open: 101, low: 101, close: 101 });
+        const n = updates().length;
+        const setDataN = candles().setData.mock.calls.length;
+        pushTick('2026-09-25', '10:03:20', 90, 1); // 晚到：屬於 10:04 那根（歷史已含）
+        expect(updates().length).toBe(n);
+        expect(candles().setData.mock.calls.length).toBe(setDataN);
+        pushTick('2026-09-25', '10:05:30', 102, 1);
+        expect(updates().at(-1)).toMatchObject({ time: T('2026-09-25T10:06:00'), open: 101, low: 101, close: 102 });
+    });
+
+    it.each([
+        ['1m', '2026-11-19T16:00:00'],
+        ['5m', '2026-11-19T16:00:00'],
+        ['60m', '2026-11-19T16:00:00'],
+    ])('US closing cross lands in the 16:00 (NY) bar on %s', async (interval, expected) => {
+        vi.setSystemTime(new Date('2026-11-19T21:10:00Z'));
+        fetchMock.mockResolvedValue(kbars([['2026-11-19T15:50:00', '2026-11-19T15:58:00', () => 352]]));
+        mount({ contract: aapl, interval });
+        await flush();
+        pushUs('2026-11-19T20:59:59.500', '352.40', 100); // 15:59:59.5 → 16:00
+        pushUs('2026-11-19T21:00:01.445', '352.45', 5_000_000, 'AfterHours'); // 收盤競價
+        expect(updates().at(-1)).toMatchObject({ time: T(expected), close: 352.45 });
+        expect(updates().every((u) => u.time <= T(expected))).toBe(true);
     });
 
     it('drops a late trade that falls into a gap instead of touching the tail', async () => {

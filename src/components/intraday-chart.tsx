@@ -33,10 +33,11 @@ import {
     getUsTickMeta,
     knownUsReference,
     nyDateTime,
-    nyWallClockSec,
     subscribeUsSessionTicks,
 } from '../lib/us/us-quotes';
 import { createPriceFormatSync } from '../lib/chart-price-format';
+import { tradeMinuteLabel, usChartTrade } from '../lib/chart-trade';
+import { PENDING_TRADE_LIMIT } from '../lib/chart-live-bars';
 import { colorWithOpacity } from '../lib/indicator-defs';
 import { limitStateOf } from '../lib/limit-state';
 import {
@@ -46,12 +47,10 @@ import {
     parseIntradaySessionMode,
     pastSessionReference,
     pickIntradayWindow,
-    isUsChartTrade,
     sessionKindOf,
     sessionMinutes,
     sessionNow,
     sessionWindowFor,
-    tickBucket,
     type IntradaySessionMode,
     supportsSessionSplit,
     type SessionWindow,
@@ -720,6 +719,20 @@ export function IntradayChart({
     const fillerPendingRef = useRef<SessionWindow | null>(null);
     // 美股逐筆的上一筆累計量（判斷睡醒／斷線期間有沒有漏收）
     const usPrevTotalRef = useRef<{ key: string; total: number }>({ key: '', total: 0 });
+    // 歷史載入中收到的成交（key＝這次載入的 loadKey）：載入完成後補畫歷史
+    // 沒涵蓋的部分。不能丟 — 美股的漏收判斷基準（累計量）照樣往前走，丟了
+    // 就再也發現不了這段缺口
+    const livePendingRef = useRef<{ key: string; items: PendingLive[]; overflow: boolean }>({ key: '', items: [], overflow: false });
+    // 價格軸小數位依「目前價格」（最新成交／歷史最後一筆）決定；還沒有價格
+    // 才用參考價。參考價（快照晚到、price_chg 回推）不能蓋掉成交價定的位數
+    const syncPricePrecision = () => {
+        const live = liveRef.current?.price;
+        const ref = refPriceRef.current;
+        priceFmtRef.current.sync(
+            contract,
+            live !== undefined && live > 0 ? live : ref > 0 ? ref : Number(contract.reference) || null,
+        );
+    };
 
     // 價格/美國線/%/均價/量能資料清空（filler 時段軸另外處理）
     const clearSeries = () => {
@@ -750,7 +763,7 @@ export function IntradayChart({
             baseValue: { type: 'price', price: ref },
         });
         refLineRef.current?.applyOptions({ price: ref });
-        priceFmtRef.current.sync(contract, ref);
+        syncPricePrecision();
         const pendingWin = fillerPendingRef.current;
         if (pendingWin && fillerSeriesRef.current) {
             fillerPendingRef.current = null;
@@ -768,8 +781,9 @@ export function IntradayChart({
     // ---- history load: pick the last session present in the data ----
     useEffect(() => {
         const loadKey = `${contract.code}|${reloadSeq}|${optsKey}|${sessionMode}`;
-        // 換商品（美股 ↔ 台股）先回到這個商品的預設位數，參考價到了再細調
+        // 換商品（美股 ↔ 台股）先回到這個商品的預設位數，價格到了再細調
         priceFmtRef.current.sync(contract, Number(contract.reference) || null);
+        livePendingRef.current = { key: loadKey, items: [], overflow: false };
         fillerPendingRef.current = null;
         const now = sessionNow(sk);
         const current = sessionWindowFor(sk, now);
@@ -888,6 +902,26 @@ export function IntradayChart({
         // 空白＋spinner：直接把「空的時段框架」開好 — 參考價/停板/時段
         // 軸都來自 contract 與現在時間，並讓 loadedKey 成立，live tick
         // 立刻開始作畫；手動更新歷史後整段覆蓋
+        // 載入期間暫存的成交：1 分 K 標籤比歷史最後一根新的才補，併好後每
+        // 分鐘只畫一次、legend 只更新一次。暫存滿過 → 重抓歷史補回
+        const replayPending = () => {
+            const pend = livePendingRef.current;
+            livePendingRef.current = { key: '', items: [], overflow: false };
+            if (pend.key !== loadKey) return;
+            if (pend.overflow) setReloadSeq(nextChartHistoryRevision());
+            const covered = lastLabelRef.current;
+            const sink = new Map<number, () => void>();
+            for (const it of pend.items) {
+                const t = it.opts?.t ?? wallClockToUtcPrecise(`${it.lq.date}T${it.lq.time}`);
+                if (covered > 0 && tradeMinuteLabel(sk, t) <= covered) continue;
+                processLiveRef.current(it.lq, it.tick, it.index, { ...it.opts, t, sink });
+            }
+            if (sink.size === 0) return;
+            for (const draw of sink.values()) draw();
+            setEmpty(false);
+            setHistoryError(false);
+            bumpLegendRef.current();
+        };
         const scaffoldEmptyFrame = () => {
             if (!priceSeriesRef.current || !fillerSeriesRef.current) return;
             // 空框架＝沒有這段的歷史（零 kbars/載入失敗/403）— 先清掉
@@ -1002,6 +1036,7 @@ export function IntradayChart({
                     // 零 kbars — 開空框架讓 live 直接畫，60s 後補歷史
                     scaffoldEmptyFrame();
                     setEmpty(true);
+                    replayPending();
                     return;
                 }
                 // 資料驅動選時段；但換時段重載帶著目標時段時（試搓/
@@ -1065,6 +1100,7 @@ export function IntradayChart({
                     // 讓晚到的參考價或第一筆成交接手
                     scaffoldEmptyFrame();
                     setEmpty(true);
+                    replayPending();
                     return;
                 }
                 applyRefPrice(ref);
@@ -1185,8 +1221,10 @@ export function IntradayChart({
                 cumVRef.current = cumV;
                 cumPVRef.current = cumPV;
                 loadedKeyRef.current = loadKey;
+                syncPricePrecision();
                 chartRef.current?.timeScale().fitContent();
                 bumpLegendRef.current();
+                replayPending();
             })
             .catch(() => {
                 if (cancelled) return;
@@ -1195,6 +1233,7 @@ export function IntradayChart({
                 scaffoldEmptyFrame();
                 setEmpty(true);
                 setHistoryError(true);
+                replayPending();
             })
             .finally(() => {
                 if (!cancelled) setLoading(false);
@@ -1220,13 +1259,20 @@ export function IntradayChart({
     type LiveTick = SseTick | NonNullable<typeof quote>['index'];
     // opts.t：已算好的牆鐘秒數（美股用 µs 時間）；opts.missed：呼叫端自己
     // 判斷過有沒有漏收（美股累計量的定義和走勢的一般盤量不同）
-    type LiveOpts = { t?: number; missed?: boolean };
+    // opts.sink：補畫載入期間的成交時用 — 圖表更新先收進 sink（每分鐘留最後
+    // 一次），呼叫端最後一次畫出
+    type LiveOpts = { t?: number; missed?: boolean; sink?: Map<number, () => void> };
+    type PendingLive = { lq: NonNullable<LiveTick>; tick: SseTick | undefined; index: NonNullable<typeof quote>['index']; opts?: LiveOpts };
     const processLiveRef = useRef<(lq: NonNullable<LiveTick>, tick: SseTick | undefined, index: NonNullable<typeof quote>['index'], opts?: LiveOpts) => void>(() => {});
     processLiveRef.current = (liveQuote, tick, index, opts) => {
-        if (
-            loadedKeyRef.current !==
-            `${contract.code}|${reloadSeq}|${optsKey}|${sessionModeRef.current}`
-        ) {
+        const liveKey = `${contract.code}|${reloadSeq}|${optsKey}|${sessionModeRef.current}`;
+        if (loadedKeyRef.current !== liveKey) {
+            // 歷史還沒到：暫存，載入完成後補（見 replayPending）
+            const pend = livePendingRef.current;
+            if (!opts?.sink && pend.key === liveKey) {
+                if (pend.items.length >= PENDING_TRADE_LIMIT) pend.overflow = true;
+                else pend.items.push({ lq: liveQuote, tick, index, opts });
+            }
             return;
         }
         const win = sessionRef.current;
@@ -1278,7 +1324,7 @@ export function IntradayChart({
         if (!Number.isFinite(p) || p <= 0) return;
         // 斷圖 >3 分鐘：僅在 total_volume 顯示真有漏量（睡醒/斷線補洞）
         // 時重載 — 冷門股每隔幾分鐘一筆成交是常態，不該筆筆重載
-        if (stale > 0 && tickBucket(win, t) > stale + 180) {
+        if (stale > 0 && tradeMinuteLabel(sk, t) > stale + 180) {
             const missedVolume =
                 opts?.missed ??
                 (!tick ||
@@ -1290,7 +1336,8 @@ export function IntradayChart({
             }
         }
         if (t <= win.start) return;
-        const label = tickBucket(win, t);
+        // 與 K 線同一套分鐘標籤（收盤競價歸最後一根）
+        const label = Math.min(tradeMinuteLabel(sk, t), win.end);
         if (label < lastLabelRef.current) return; // out-of-order tick
         if (simRef.current) simRef.current = null; // 開盤了 — 試搓讀值退場
 
@@ -1303,7 +1350,6 @@ export function IntradayChart({
         }
         // 空框架還沒有參考價：第一筆成交先當基準，參考價（快照）到了會換掉
         if (!(refPriceRef.current > 0)) applyRefPrice(p);
-        priceFmtRef.current.sync(contract, p);
         const ref = refPriceRef.current;
 
         const vol = tick?.volume ?? 0;
@@ -1356,28 +1402,32 @@ export function IntradayChart({
             total: Math.max(prev?.total ?? 0, total),
         };
 
+        syncPricePrecision();
+
         const time = label as UTCTimestamp;
-        try {
-            series.update({ time, value: p });
-            const ohlc = minOhlcRef.current;
-            if (ohlc) {
-                barSeriesRef.current?.update({ time, ...ohlc });
+        const ohlc = minOhlcRef.current ? { ...minOhlcRef.current } : null;
+        const minuteVol = minuteVolRef.current;
+        const volColor = p >= prevMinCloseRef.current ? colors.upVol : colors.downVol;
+        const draw = () => {
+            try {
+                series.update({ time, value: p });
+                if (ohlc) {
+                    barSeriesRef.current?.update({ time, ...ohlc });
+                }
+                pctSeriesRef.current?.update({ time, value: p });
+                if (avg !== null) {
+                    avgSeriesRef.current?.update({ time, value: avg });
+                }
+                volSeriesRef.current?.update({ time, value: minuteVol, color: volColor });
+            } catch {
+                // series torn down mid-update (symbol/theme switch) — ignore
             }
-            pctSeriesRef.current?.update({ time, value: p });
-            if (avg !== null) {
-                avgSeriesRef.current?.update({ time, value: avg });
-            }
-            volSeriesRef.current?.update({
-                time,
-                value: minuteVolRef.current,
-                color:
-                    p >= prevMinCloseRef.current
-                        ? colors.upVol
-                        : colors.downVol,
-            });
-        } catch {
-            // series torn down mid-update (symbol/theme switch) — ignore
+        };
+        if (opts?.sink) {
+            opts.sink.set(label, draw);
+            return;
         }
+        draw();
         // 空時段框架（試搓切換後等開盤）收到第一筆成交 → 清空狀態
         // chip；同值 setState React 會 bail out，逐筆呼叫無代價
         setEmpty(false);
@@ -1406,10 +1456,10 @@ export function IntradayChart({
             const total = meta.totalVolume ?? 0;
             const missed = prev.key === quoteKey && prev.total > 0 && total > 0 && total - prev.total > meta.volume;
             usPrevTotalRef.current = { key: quoteKey, total };
-            if (!(meta.volume > 0)) return;
-            const t = nyWallClockSec(meta.tsUs !== undefined ? meta.tsUs / 1000 : meta.ts);
             // 一般盤＋收盤競價才畫；盤後成交不能動到一般盤的收盤與量
-            if (!isUsChartTrade(meta.session, t)) return;
+            const trade = usChartTrade(meta);
+            if (!trade) return;
+            const t = trade.time;
             const { date, time } = nyDateTime(meta.tsUs ?? meta.ts * 1000);
             if (!date) return;
             const tick = {

@@ -79,8 +79,8 @@ import { IndicatorInstanceContext } from '../lib/indicator-instance-context';
 import {
     daySessionLabel,
     filterDaySession,
-    isDaySessionTick,
-    isUsChartTrade,
+    isDaySessionLabel,
+    sessionKindOf,
     parseChartSessionMode,
     type ChartSessionMode,
     supportsSessionSplit,
@@ -152,7 +152,6 @@ import {
     aggregate,
     dateStrOffset,
     kbarsToCandles,
-    wallClockToUtc
 } from '../lib/utils/kbars';
 import { roundToTick, tickDecimals, tickSizeFor } from '../lib/utils/ticksize';
 import { createOhlcStore } from '../lib/ohlc-legend';
@@ -169,9 +168,9 @@ import { WARRANT_FLASH_TEXT, warrantMarketOrderBlock } from '../lib/warrant-rule
 import { orderStatusWithNumber } from '../lib/order-status-label';
 import { contractLinkKey } from '../lib/contract-key';
 import { getUsTickMeta, subscribeUsSessionTicks } from '../lib/us/us-quotes';
-import { nyWallClockSec } from '../lib/us/us-history';
 import { createPriceFormatSync } from '../lib/chart-price-format';
-import { mergeTradeIntoBars, type PendingTrade, replayPendingTrades } from '../lib/chart-live-bars';
+import { emptyPending, mergePendingTrades, mergeTradeIntoBars, pushPending } from '../lib/chart-live-bars';
+import { barTimeOfLabel, tradeMinuteLabel, twChartTrade, usChartTrade, type ChartTrade } from '../lib/chart-trade';
 
 // NOTE: the kbars API only serves 1-minute bars, so 1D aggregates a huge
 // payload (a year of TXF ≈ 280k bars / 18MB) — keep the range tight enough
@@ -266,9 +265,9 @@ export function CandleChart({
     // 價格軸小數位：每次載入與每筆成交依「目前商品＋價格」決定（美股未滿
     // 1 美元 4 位；換回台股恢復 2 位）
     const priceFmtRef = useRef(createPriceFormatSync((priceFormat) => candleSeriesRef.current?.applyOptions({ priceFormat })));
-    // 歷史載入中收到的成交（key＝這次載入的 loadKey）：歷史回來後補上
-    // 歷史沒涵蓋的部分，空結果或載入失敗時整批補上
-    const pendingTradesRef = useRef<{ key: string; trades: PendingTrade[] }>({ key: '', trades: [] });
+    // 歷史載入中收到的成交（key＝這次載入的 loadKey）：歷史回來後併進
+    // 歷史沒涵蓋的部分，空結果或載入失敗時整批補上；暫存滿了改重抓歷史
+    const pendingTradesRef = useRef(emptyPending());
     const [localTfIdx, setLocalTfIdx] = useState(
         () => timeframeIndex(intervalProp) ?? DEFAULT_TF_IDX,
     );
@@ -332,6 +331,7 @@ export function CandleChart({
     // 轉接美股 kbars、即時成交逐筆併入（見下方美股 effect）；圖上下單、委託線、
     // 觸價警示是台股功能，美股不顯示
     const isUs = contract.region === 'US';
+    const kind = sessionKindOf(contract);
     const quoteKey = contractLinkKey(contract);
     const quote = useQuote(quoteKey);
     const tf = (isUs ? US_TIMEFRAMES : TIMEFRAMES)[tfIdx] ?? TIMEFRAMES[DEFAULT_TF_IDX]!;
@@ -952,7 +952,7 @@ export function CandleChart({
         let cancelled = false;
         const loadKey = `${contractLinkKey(contract)}|${tf.minutes}|${dayOnly}`;
         loadedKeyRef.current = ''; // freeze tick updates while loading — 期間的成交先暫存
-        pendingTradesRef.current = { key: loadKey, trades: [] };
+        pendingTradesRef.current = emptyPending(loadKey);
         const toRaw = (k: Parameters<typeof kbarsToCandles>[0]) => {
             const raw = kbarsToCandles(k);
             return dayOnly
@@ -989,15 +989,32 @@ export function CandleChart({
             priceFmtRef.current.sync(contract, lastPriceRef.current);
             loadedKeyRef.current = loadKey; // live bars may build from here
         };
-        // 載入期間暫存的成交：只補歷史最後一根 1 分 K 結束時間（含）之後的
-        //（之前的已在歷史裡）
-        const flushPending = (coveredUntil: number) => {
+        // 載入期間暫存的成交：1 分 K 標籤比歷史最後一根新的才補（之前的已在
+        // 歷史裡），先在記憶體併成 K 棒，回傳整組讓呼叫端一次畫出。暫存滿過
+        //（中間有成交沒記到）→ 排一次歷史重抓，不讓缺的量就這樣掉了
+        const takePending = (bars: Candle[], coveredLabel: number): Candle | null => {
             const pend = pendingTradesRef.current;
-            pendingTradesRef.current = { key: '', trades: [] };
-            if (pend.key !== loadKey) return;
-            for (const t of replayPendingTrades(pend.trades, coveredUntil)) {
-                applyTradeRef.current(t.time, t.price, t.volume);
-            }
+            pendingTradesRef.current = emptyPending();
+            if (pend.key !== loadKey) return bars[bars.length - 1] ?? null;
+            if (pend.overflow) setHistorySeq(nextChartHistoryRevision());
+            return mergePendingTrades(
+                bars,
+                pend.trades,
+                coveredLabel,
+                (t) => tradeMinuteLabel(kind, t),
+                (label) => (dayOnly && !isDaySessionLabel(kind, label) ? null : barTimeOfLabel(label, tf.minutes)),
+            );
+        };
+        // 沒有歷史（空結果／失敗）：載入期間的成交全部補上，有就清掉空狀態
+        const drawPendingOnly = () => {
+            const bars: Candle[] = [];
+            const tail = takePending(bars, -Infinity);
+            if (!tail) return;
+            priceFmtRef.current.sync(contract, tail.close);
+            applyBars(bars);
+            lastBarRef.current = tail;
+            setEmpty(false);
+            setHistoryError(false);
         };
         const applyBars = (bars: Candle[]) => {
             candleSeriesRef.current?.setData(
@@ -1085,16 +1102,16 @@ export function CandleChart({
                     clearSeries();
                     setEmpty(true);
                     loadMoreRef.current = loadMore; // history may still exist
-                    flushPending(-Infinity); // 沒有歷史：載入期間的成交全部補上
+                    drawPendingOnly();
                     return;
                 }
                 rawRef.current = raw;
-                priceFmtRef.current.sync(contract, bars[bars.length - 1]!.close);
+                // 1 分 K 標籤是結束時間：標籤 ≤ 歷史最後一根的成交都已在歷史裡
+                const tail = takePending(bars, raw[raw.length - 1]!.time);
+                priceFmtRef.current.sync(contract, tail?.close ?? null);
                 applyBars(bars);
-                lastBarRef.current = bars[bars.length - 1] ?? null;
+                lastBarRef.current = tail;
                 loadedKeyRef.current = loadKey;
-                // 1 分 K 標籤是結束時間：最後一根 label 之前的成交都已在歷史裡
-                flushPending(raw.length > 0 ? raw[raw.length - 1]!.time : -Infinity);
                 loadMoreRef.current = loadMore;
                 chartRef.current?.timeScale().scrollToRealTime();
                 // a manual price-axis drag disables autoScale and pins the
@@ -1112,7 +1129,7 @@ export function CandleChart({
                 setEmpty(true);
                 setHistoryError(true);
                 // 失敗也照畫即時：載入期間的成交全部補上（有成交就會清掉空狀態）
-                flushPending(-Infinity);
+                drawPendingOnly();
             })
             .finally(() => {
                 if (!cancelled) setLoading(false);
@@ -1130,35 +1147,29 @@ export function CandleChart({
         if (Number.isFinite(p)) lastPriceRef.current = p;
     }
     // 一筆成交併進目前的 K 棒（台股從行情 store、美股從逐筆通知進來）。
-    // tickTime 是牆鐘編碼秒數（台股台北、美股紐約）
-    const applyTradeRef = useRef<(tickTime: number, price: number, volume: number) => void>(() => {});
-    applyTradeRef.current = (tickTime, price, volume) => {
+    // 時間、時段與分桶都由 chart-trade 決定（與走勢圖同一套）
+    const applyTradeRef = useRef<(trade: ChartTrade) => void>(() => {});
+    applyTradeRef.current = (trade) => {
+        const { time: tickTime, price, volume } = trade;
         if (!Number.isFinite(price) || !Number.isFinite(tickTime)) return;
         const liveKey = `${quoteKey}|${tf.minutes}|${dayOnly}`;
         // history for this (symbol, timeframe) not in place yet — 暫存，
-        // 載入完成後補（見 flushPending）
+        // 載入完成後補（見 takePending）；滿了會標 overflow 並重抓歷史
         if (loadedKeyRef.current !== liveKey) {
             const pend = pendingTradesRef.current;
-            if (pend.key === liveKey && pend.trades.length < 50_000) {
-                pend.trades.push({ time: tickTime, price, volume });
-            }
+            if (pend.key === liveKey) pushPending(pend, trade);
             return;
         }
         const series = candleSeriesRef.current;
         if (!series) return;
         priceFmtRef.current.sync(contract, price);
+        const label = tradeMinuteLabel(kind, tickTime);
         // 僅日盤：夜盤/盤外成交不入圖（與歷史濾法同一套 label 判斷）
-        if (dayOnly && !isDaySessionTick(contract.security_type, tickTime)) {
-            return;
-        }
+        if (dayOnly && !isDaySessionLabel(kind, label)) return;
         const bucketSec = tf.minutes * 60;
-        // close-label-right（與 aggregate/1 分 K 歷史同慣例）：成交 τ 屬
-        // 於哪個「收盤 label」桶 — floor 會把 live 桶標早一格，1 分 K
-        // 時甚至會併進前一分鐘的歷史 bar
-        const bucket =
-            tf.minutes >= 1440
-                ? Math.floor(tickTime / 86400) * 86400
-                : Math.floor(tickTime / bucketSec) * bucketSec + bucketSec;
+        // close-label-right（與 aggregate/1 分 K 歷史同慣例）；收盤競價
+        //（收盤後 CLOSE_GRACE 內）歸最後一根
+        const bucket = barTimeOfLabel(label, tf.minutes);
         const tail = lastBarRef.current;
         // live 桶與歷史尾端出現 3 個桶以上的斷層（換時段/上游資料晚發布）
         // → 排程一次歷史補抓把洞補起來；live 桶照常先畫，補抓完成後
@@ -1171,26 +1182,12 @@ export function CandleChart({
             gapReloadAtRef.current = Date.now();
             setHistorySeq(nextChartHistoryRevision());
         }
-        // 比尾端舊的桶（亂序或晚到的成交）只更新它自己那一根，不能改到
-        // 最新一根；找不到那一根（落在缺口裡）就丟掉，等歷史補抓
+        // 比尾端舊的桶（亂序或晚到的成交）丟掉：舊 K 棒已含在歷史裡，
+        // 尾端也不能動
         const merged = mergeTradeIntoBars(barsRef.current, tail, bucket, price, volume);
         if (!merged) return;
         const bar = merged.bar;
         if (merged.kind === 'new') setDataVersion((v) => v + 1);
-        if (merged.kind === 'older') {
-            try {
-                series.update({ time: bar.time as UTCTimestamp, open: bar.open, high: bar.high, low: bar.low, close: bar.close }, true);
-                volSeriesRef.current?.update({
-                    time: bar.time as UTCTimestamp,
-                    value: bar.volume,
-                    color: bar.close >= bar.open ? colors.upVol : colors.downVol,
-                }, true);
-            } catch {
-                // 歷史更新失敗不影響最新一根；下次重載會對齊
-            }
-            ohlcStore.bump();
-            return;
-        }
         lastBarRef.current = bar;
         try {
             series.update({
@@ -1223,23 +1220,18 @@ export function CandleChart({
         // 試撮 (simtrade) 揭示價可以是漲跌停天地價 — 畫進 K 棒會把
         // Y 軸尺度撐爆（issue #5），一律排除
         if ('simtrade' in liveQuote && liveQuote.simtrade) return;
-        applyTradeRef.current(
-            wallClockToUtc(`${liveQuote.date}T${liveQuote.time}`),
-            Number(liveQuote.close),
-            quote?.tick?.volume ?? 0,
-        );
+        const trade = twChartTrade(liveQuote.date, liveQuote.time, Number(liveQuote.close), quote?.tick?.volume ?? 0);
+        if (trade) applyTradeRef.current(trade);
     }, [liveQuote, quote?.tick?.volume, quoteKey, isUs, tf.minutes, dayOnly]);
-    // 美股：每筆成交（recordUsTick 的通知，帶 session 與單筆量）只併一般盤 —
-    // 歷史 1 分 K 只有一般盤，盤前／盤後的零星成交混進來會畫出孤立的 K 棒
+    // 美股：每筆成交（recordUsTick 的通知，帶 session 與單筆量）只併一般盤
+    // ＋收盤競價 — 歷史 1 分 K 只有這段，盤前／盤後的零星成交混進來會畫出
+    // 孤立的 K 棒
     useEffect(() => {
         if (!isUs) return;
         return subscribeUsSessionTicks(quoteKey, () => {
             const meta = getUsTickMeta(quoteKey);
-            if (!meta || !(meta.volume > 0)) return;
-            const t = nyWallClockSec(meta.tsUs !== undefined ? meta.tsUs / 1000 : meta.ts);
-            // 一般盤＋收盤競價（與歷史 1 分 K 同範圍）；盤前盤後不畫
-            if (!isUsChartTrade(meta.session, t)) return;
-            applyTradeRef.current(t, Number(meta.price), meta.volume);
+            const trade = meta ? usChartTrade(meta) : null;
+            if (trade) applyTradeRef.current(trade);
         });
     }, [isUs, quoteKey]);
 
