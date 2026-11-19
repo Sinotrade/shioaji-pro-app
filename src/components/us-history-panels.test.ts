@@ -45,6 +45,13 @@ describe('usDepthLevel', () => {
     });
 });
 
+describe('ANT IPO snapshot (21391, 2026-11-19)', () => {
+    it('seeds a locked 100/100 best level with no spread', () => {
+        const r = usDepthLevel(undefined, { buyPrice: 100, buyVolume: 100, sellPrice: 100, sellVolume: 100 });
+        expect(r).toMatchObject({ bid: { price: '100', vol: 100 }, ask: { price: '100', vol: 100 }, spread: null, source: 'snapshot' });
+    });
+});
+
 describe('usTapeDayBreaks', () => {
     it('labels the day where today\'s pre-market rows meet the previous session', () => {
         const rows = [{ date: '2026-11-19' }, { date: '2026-11-19' }, { date: '2026-11-18' }, { date: '2026-11-18' }];

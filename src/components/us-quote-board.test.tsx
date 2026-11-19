@@ -8,7 +8,7 @@ vi.mock('../hooks/use-us-snapshot', async importOriginal => ({ ...(await importO
 vi.mock('../hooks/use-stream', () => ({ useQuote: () => m.quote }));
 vi.mock('../lib/us/us-halts', () => ({ useUsHalt: () => m.halt, usHaltLabel: () => '停牌' }));
 
-import { snapshotMatchesTradeDate, UsQuoteBoard } from './us-quote-board';
+import { snapshotMatchesTradeDate, usBoardBidAsk, UsQuoteBoard } from './us-quote-board';
 import { usIntradayPath } from './us-intraday';
 
 const aapl = { region: 'US', exchange: 'NASDAQ', code: 'AAPL', name: 'Apple', security_type: 'STK', target_code: null, currency: 'USD', reference: 230, us_reference: '230.10', reference_date: '2026-11-17', limit_up: 0, limit_down: 0 } as unknown as ContractInfo;
@@ -51,6 +51,25 @@ describe('UsQuoteBoard extended hours', () => {
         expect(t).not.toContain('352.46'); // 不拿最後一筆成交當基準
         expect(t).not.toContain('230.10'); // 不再顯示合約上較舊的參考價
         expect((t.match(/—/g) ?? []).length).toBeGreaterThanOrEqual(3);
+    });
+});
+
+describe('usBoardBidAsk', () => {
+    it('uses the snapshot best level until a live side arrives', () => {
+        const snap = { buyPrice: 100, sellPrice: 100 };
+        expect(usBoardBidAsk(undefined, snap)).toEqual({ bid: '100', ask: '100' });
+        expect(usBoardBidAsk({ bid_price: ['0'], ask_price: [] }, snap)).toEqual({ bid: '100', ask: '100' });
+        expect(usBoardBidAsk({ bid_price: ['101.5'], ask_price: [] }, snap)).toEqual({ bid: '101.5', ask: undefined });
+        expect(usBoardBidAsk(undefined, null)).toEqual({ bid: undefined, ask: undefined });
+    });
+    it('renders an IPO snapshot without a trade: no price, bid/ask shown', () => {
+        m.snap = { code: 'ANT', exchange: '', ts: null, tradeDate: '2026-11-19', open: 0, high: 0, low: 0, close: 0, reference: 0, changePrice: 0, changeRate: 0, totalVolume: 0, buyPrice: 100, sellPrice: 100, buyVolume: 100, sellVolume: 100, session: 'Unknown', lastPrice: 0 };
+        m.quote = undefined;
+        act(() => { view = create(createElement(UsQuoteBoard, { contract: { ...aapl, code: 'ANT', name: 'Anthropic' } })); });
+        const t = text();
+        m.snap = null;
+        expect(t).toContain('100.00');
+        expect(t).not.toContain('0.00%');
     });
 });
 
