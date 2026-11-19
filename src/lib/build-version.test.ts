@@ -13,6 +13,8 @@ describe('App build display identity', () => {
     it('uses the release tag only for a tagged build, never a dev server', () => {
         expect(buildVersionLabel({ command: 'build', refType: 'tag', refName: 'v0.1.47' })).toBe('v0.1.47');
         expect(buildVersionLabel({ command: 'serve', refType: 'tag', refName: 'v0.1.47' })).toBe('dev · unknown');
+        expect(buildVersionLabel({ command: 'build', refType: 'tag', refName: 'v0.1.58-1' })).toBe('v0.1.58-1');
+        expect(buildVersionLabel({ command: 'build', refType: 'tag', refName: 'v0.1.58-beta.1' })).toBe('dev · unknown');
     });
     it('does not substitute an old version when provenance is unavailable or invalid', () => {
         expect(buildVersionLabel({ command: 'build', refType: 'tag', refName: 'not-a-release' })).toBe('dev · unknown');
