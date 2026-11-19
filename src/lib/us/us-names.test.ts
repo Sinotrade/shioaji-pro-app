@@ -14,7 +14,8 @@ describe('us-names.json', () => {
             expect(code).toMatch(/^[A-Z][A-Z0-9.-]{0,9}$/);
             expect(en.trim()).not.toBe('');
             expect(zh === '' || /[一-鿿]/.test(zh)).toBe(true);
-            expect([1, 2, 3]).toContain(indexCount);
+            // 0 是人工補的熱門 ETF 與 ADR（不在三個指數裡），排在成分股後面
+            expect([0, 1, 2, 3]).toContain(indexCount);
         }
     });
 
@@ -101,13 +102,13 @@ describe('searchUsNames', () => {
 
     it('ranks name-prefix before word-prefix, then by how many indexes hold the stock, then by name length', () => {
         // 名稱開頭是 Micro：MU、MCHP 三個指數都有（Micron 名稱較短在前），MSFT 兩個，MSTR 一個；
-        // Advanced Micro Devices 只是單字開頭，排最後
-        expect(searchUsNames('micro', 10)).toEqual(['MU', 'MCHP', 'MSFT', 'MSTR', 'AMD']);
+        // Advanced Micro Devices、United Microelectronics 只是單字開頭，排後面；同級裡成分股（AMD）先於人工補的 ADR（UMC）
+        expect(searchUsNames('micro', 10)).toEqual(['MU', 'MCHP', 'MSFT', 'MSTR', 'AMD', 'UMC']);
     });
 
     it('filters with accept before cutting to the limit', () => {
         const without = new Set(['MU', 'MCHP', 'MSFT', 'MSTR']);
-        expect(searchUsNames('micro', 4, code => !without.has(code))).toEqual(['AMD']);
+        expect(searchUsNames('micro', 1, code => !without.has(code))).toEqual(['AMD']);
         expect(searchUsNames('micro', 2, code => code !== 'MU')).toEqual(['MCHP', 'MSFT']);
     });
 
@@ -152,6 +153,32 @@ describe('searchUsNames', () => {
     it('returns nothing for names it does not know', () => {
         expect(searchUsNames('zzzzqqq')).toEqual([]);
         expect(searchUsNames('不存在的公司')).toEqual([]);
+    });
+});
+
+describe('popular ETFs and ADRs', () => {
+    it('finds ETFs by issuer or theme words', () => {
+        expect(searchUsNames('vanguard s&p')).toEqual(['VOO']);
+        expect(searchUsNames('semiconductor bull')).toEqual(['SOXL']);
+        expect(searchUsNames('bitcoin')).toEqual(['IBIT']);
+        expect(searchUsNames('ishares', 10)).toEqual(expect.arrayContaining(['IVV', 'SOXX', 'TLT', 'IBIT']));
+    });
+
+    it('finds ADRs by their Chinese names', () => {
+        expect(searchUsNames('阿里巴巴')).toEqual(['BABA']);
+        expect(searchUsNames('聯電')).toEqual(['UMC']);
+        expect(searchUsNames('日月光')).toEqual(['ASX']);
+        expect(searchUsNames('中華電信')).toEqual(['CHT']);
+        expect(searchUsNames('蔚來')).toEqual(['NIO']);
+        expect(searchUsNames('蝦皮')).toEqual(['SE']);
+        expect(searchUsNames('alibaba')).toEqual(['BABA']);
+    });
+
+    it('ranks index members ahead of hand-picked ETFs in the same tier', () => {
+        // Semiconductor 開頭：成分股（無）→ 單字開頭的成分股 → ETF；成分股的 indexCount 較高
+        const hits = searchUsNames('semiconductor', 10);
+        expect(hits.slice(0, 2)).not.toContain('SOXL');
+        expect(hits).toContain('SOXX');
     });
 });
 
