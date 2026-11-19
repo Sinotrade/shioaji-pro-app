@@ -81,14 +81,15 @@ describe('parseUsTicks', () => {
             tick_type: [0, 1], session: ['AfterHours', 'Regular'], updates_last: [true, true], odd_lot: [false, true],
         })!;
         expect(rows.map(r => r.price)).toEqual([352.4, 352.45]);
-        expect(rows[0]).toMatchObject({ bid: 352.39, ask: 352.41, tickType: 1, session: 'Regular', oddLot: true, time: '15:59:59.000000' });
+        expect(rows[0]).toMatchObject({ bid: 352.39, ask: 352.41, tickType: 1, session: 'Regular', oddLot: true, time: '15:59:59.000000', tsUs: t0 * 1000 });
+        expect(rows[1]!.tsUs).toBe((t0 + 500) * 1000);
         expect(rows[1]).toMatchObject({ bid: null, ask: null, session: 'AfterHours', oddLot: false, time: '15:59:59.500000' });
     });
     it('reads the Taiwan-shaped reply (datetime strings in UTC) and numeric sessions', () => {
         const rows = parseUsTicks({
             datetime: ['2026-11-18T14:30:00.026450'], close: [352.05], volume: [8], bid_price: [351.84], bid_volume: [20], ask_price: [352.17], ask_volume: [1], tick_type: [0], session: [2],
         })!;
-        expect(rows[0]).toMatchObject({ time: '09:30:00.026450', price: 352.05, session: 'Regular' });
+        expect(rows[0]).toMatchObject({ time: '09:30:00.026450', price: 352.05, session: 'Regular', tsUs: Date.UTC(2026, 10, 18, 14, 30) * 1000 + 26450 });
         expect(parseUsTicks({ datetime: ['2026-11-18T14:30:00'], close: [1], volume: [1] })![0]!.session).toBeNull();
     });
     it('rejects a wrong shape', () => {
@@ -183,6 +184,19 @@ describe('availability and fetch', () => {
         expect(usHistoryAvailable()).toBe(false);
         m.base.mockReturnValue('http://127.0.0.1:21391');
     });
+    it('marks the sidecar the request was actually dispatched to (boot gate rebase)', async () => {
+        m.base.mockReturnValue('http://a');
+        m.post.mockImplementationOnce(async (_p: string, _b: unknown, opts: { beforeDispatch?: () => void }) => {
+            m.base.mockReturnValue('http://b'); // 啟動閘門改派到 B
+            opts.beforeDispatch?.();
+            throw Object.assign(new Error('404 Not Found'), { status: 404 });
+        });
+        await expect(fetchUsSnapshots([AAPL])).rejects.toSatisfy(isUsHistoryUnavailable);
+        expect(usHistoryAvailable()).toBe(false); // B
+        m.base.mockReturnValue('http://a');
+        expect(usHistoryAvailable()).toBe(true);
+        m.base.mockReturnValue('http://127.0.0.1:21391');
+    });
     it('does not latch on 5xx', async () => {
         m.post.mockRejectedValueOnce(Object.assign(new Error('500 decode error'), { status: 500 }));
         await expect(fetchUsSnapshots([AAPL])).rejects.toThrow('500');
@@ -205,21 +219,31 @@ describe('availability and fetch', () => {
 });
 
 describe('replayUsTrades', () => {
-    it('adds trades from the load window only into buckets newer than the history tail', () => {
+    it('skips trades before the last 1-minute bar end and adds the rest', () => {
         const bars: Candle[] = [{ time: wall('2026-11-18T09:31:00'), open: 10, high: 11, low: 9, close: 10, volume: 5 }];
         const changed = replayUsTrades(bars, [
-            { wall: wall('2026-11-18T09:30:40'), price: 50, volume: 9 }, // 同一桶：歷史已含，不重複
+            { wall: wall('2026-11-18T09:30:40'), price: 50, volume: 9 }, // 歷史已含，不重複
             { wall: wall('2026-11-18T09:31:05'), price: 12, volume: 2 },
             { wall: wall('2026-11-18T09:31:30'), price: 13, volume: 3 },
-        ], 1);
+        ], 1, wall('2026-11-18T09:31:00'));
         expect(changed).toBe(true);
         expect(bars[0]).toMatchObject({ high: 11, volume: 5 });
         expect(bars[1]).toMatchObject({ time: wall('2026-11-18T09:32:00'), open: 12, high: 13, close: 13, volume: 5 });
     });
     it('builds bars from scratch when history is empty', () => {
         const bars: Candle[] = [];
-        replayUsTrades(bars, [{ wall: wall('2026-11-18T09:30:10'), price: 1, volume: 1 }], 5);
+        replayUsTrades(bars, [{ wall: wall('2026-11-18T09:30:10'), price: 1, volume: 1 }], 5, -Infinity);
         expect(bars).toHaveLength(1);
+    });
+    it('merges a trade into the aggregated tail bar when history ends mid-bucket (5m, 1D)', () => {
+        // 5 分 K：歷史 1 分 K 到 09:32（聚合標籤 09:35），09:32:10 的成交要併進 09:35 那根
+        const five: Candle[] = [{ time: wall('2026-11-18T09:35:00'), open: 10, high: 11, low: 9, close: 10, volume: 5 }];
+        replayUsTrades(five, [{ wall: wall('2026-11-18T09:32:10'), price: 12, volume: 2 }], 5, wall('2026-11-18T09:32:00'));
+        expect(five).toHaveLength(1);
+        expect(five[0]).toMatchObject({ high: 12, close: 12, volume: 7 });
+        const day: Candle[] = [{ time: wall('2026-11-18T00:00:00'), open: 10, high: 11, low: 9, close: 10, volume: 5 }];
+        replayUsTrades(day, [{ wall: wall('2026-11-18T10:00:30'), price: 8, volume: 1 }], 1440, wall('2026-11-18T10:00:00'));
+        expect(day[0]).toMatchObject({ low: 8, close: 8, volume: 6 });
     });
 });
 

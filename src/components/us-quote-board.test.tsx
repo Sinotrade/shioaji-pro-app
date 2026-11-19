@@ -7,7 +7,7 @@ const m = vi.hoisted(() => ({ quote: undefined as unknown, halt: null as unknown
 vi.mock('../hooks/use-stream', () => ({ useQuote: () => m.quote }));
 vi.mock('../lib/us/us-halts', () => ({ useUsHalt: () => m.halt, usHaltLabel: () => '停牌' }));
 
-import { UsQuoteBoard } from './us-quote-board';
+import { snapshotMatchesTradeDate, UsQuoteBoard } from './us-quote-board';
 import { usIntradayPath } from './us-intraday';
 
 const aapl = { region: 'US', exchange: 'NASDAQ', code: 'AAPL', name: 'Apple', security_type: 'STK', target_code: null, currency: 'USD', reference: 230, us_reference: '230.10', reference_date: '2026-11-17', limit_up: 0, limit_down: 0 } as unknown as ContractInfo;
@@ -45,6 +45,15 @@ describe('UsQuoteBoard extended hours', () => {
         expect(t).toContain('352.45'); // 參考＝最近一般盤收盤價，與漲跌一致
         expect(t).not.toContain('230.10'); // 不再顯示合約上較舊的參考價
         expect((t.match(/—/g) ?? []).length).toBeGreaterThanOrEqual(3);
+    });
+});
+
+describe('snapshotMatchesTradeDate', () => {
+    it('uses snapshot open/high/low only for the same US trade date as the tick', () => {
+        expect(snapshotMatchesTradeDate({ tradeDate: '2026-11-19' }, '2026-11-19')).toBe(true);
+        expect(snapshotMatchesTradeDate({ tradeDate: '2026-11-18' }, '2026-11-19')).toBe(false);
+        expect(snapshotMatchesTradeDate({ tradeDate: '' }, '2026-11-19')).toBe(false);
+        expect(snapshotMatchesTradeDate({ tradeDate: '2026-11-19' }, undefined)).toBe(false);
     });
 });
 

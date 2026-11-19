@@ -143,8 +143,8 @@ export function UsCandleChart({ contract, interval, onIntervalChange }: {
         candleRef.current?.setData([]);
         volRef.current?.setData([]);
         setState('loading');
-        const apply = (bars: Candle[]) => {
-            replayUsTrades(bars, pendingRef.current, tf.minutes);
+        const apply = (bars: Candle[], coveredUntil: number) => {
+            replayUsTrades(bars, pendingRef.current, tf.minutes, coveredUntil);
             pendingRef.current = [];
             barsRef.current = bars;
             const { candles, volume } = toSeries(bars, colorsRef.current);
@@ -158,13 +158,14 @@ export function UsCandleChart({ contract, interval, onIntervalChange }: {
             .then((raw) => {
                 if (cancelled) return;
                 const bars = aggregate(raw, tf.minutes);
-                apply(bars);
+                // 歷史涵蓋到最後一根 1 分 K 的結束時間（聚合前）
+                apply(bars, raw.length ? raw[raw.length - 1]!.time : -Infinity);
                 setState(barsRef.current.length ? 'ready' : 'empty');
             })
             .catch((e) => {
                 if (cancelled) return;
                 // 舊 SDK：只畫即時一般盤逐筆；其他錯誤可重試
-                apply([]);
+                apply([], -Infinity);
                 setState(isUsHistoryUnavailable(e) ? 'unavailable' : 'error');
             });
         return () => { cancelled = true; };

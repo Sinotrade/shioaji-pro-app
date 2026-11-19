@@ -49,6 +49,10 @@ function useUsSnapshot(contract: ContractInfo, enabled: boolean): UsSnapshot | n
     return snap?.key === key ? snap.row : null;
 }
 
+export function snapshotMatchesTradeDate(snap: Pick<UsSnapshot, 'tradeDate'>, tickDate: string | undefined): boolean {
+    return !!snap.tradeDate && !!tickDate && snap.tradeDate === tickDate;
+}
+
 /** 開高低：即時值 → 快照一般盤值 → 「—」 */
 function ohl(live: string | undefined, snap: number | undefined): string {
     if (live && Number(live) > 0) return fmtUsPrice(live);
@@ -71,6 +75,9 @@ export function UsQuoteBoard({ contract }: { contract: ContractInfo }) {
     const dir = dirOf(tick?.price_chg);
     // 「參考」與漲跌同一個基準：有即時成交時用成交價−漲跌（盤前／盤後即最近
     // 一般盤收盤價），有快照時用快照的參考價，都沒有才用合約的前一日參考價
+    // 快照的一般盤開高低只在它與即時成交同一個美東交易日時才拿來補
+    // （隔天盤前不可顯示前一天的開高低）
+    const sameDaySnap = snap && tick && snapshotMatchesTradeDate(snap, tick.date) ? snap : null;
     const ref = (tick ? usTickReference(tick) : null)
         ?? (!tick && snap?.reference ? String(snap.reference) : null)
         ?? contract.us_reference;
@@ -89,9 +96,9 @@ export function UsQuoteBoard({ contract }: { contract: ContractInfo }) {
                         <span className={us.dir[dir]}>{tick.pct_chg ? `${dir === 'up' ? '+' : ''}${Number(tick.pct_chg).toFixed(2)}%` : ''}</span>
                     </span>
                     {/* 盤前一般盤還沒開：開高低留空顯示「—」，有快照就用快照的一般盤值 */}
-                    <Stat label='開'>{ohl(tick.open, snap?.open)}</Stat>
-                    <Stat label='高'>{ohl(tick.high, snap?.high)}</Stat>
-                    <Stat label='低'>{ohl(tick.low, snap?.low)}</Stat>
+                    <Stat label='開'>{ohl(tick.open, sameDaySnap?.open)}</Stat>
+                    <Stat label='高'>{ohl(tick.high, sameDaySnap?.high)}</Stat>
+                    <Stat label='低'>{ohl(tick.low, sameDaySnap?.low)}</Stat>
                     <Stat label='總量'>{fmtInt(tick.total_volume)}</Stat>
                     <Stat label='買'>{bid ? fmtUsPrice(bid) : '—'}</Stat>
                     <Stat label='賣'>{ask ? fmtUsPrice(ask) : '—'}</Stat>

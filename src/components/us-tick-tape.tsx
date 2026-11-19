@@ -21,7 +21,7 @@ const BIG_LOT_FACTOR = 3;
 
 interface UsTapeRow {
     id: number;
-    /** epoch ms（去重與排序用） */
+    /** epoch µs（去重與排序用，保留原始精度） */
     ts: number;
     time: string;
     price: string;
@@ -41,7 +41,7 @@ export function usTapeRowsFromHistory(ticks: readonly UsHistoryTick[], max = MAX
     const out: UsTapeRow[] = [];
     for (let i = ticks.length - 1; i >= 0 && out.length < max; i--) {
         const t = ticks[i]!;
-        out.push({ id: rowSeq++, ts: t.ts, time: fmtTime(t.time), price: String(t.price), volume: t.volume, tickType: t.tickType });
+        out.push({ id: rowSeq++, ts: t.tsUs, time: fmtTime(t.time), price: String(t.price), volume: t.volume, tickType: t.tickType });
     }
     return out;
 }
@@ -50,11 +50,11 @@ export function usTapeRowsFromHistory(ticks: readonly UsHistoryTick[], max = MAX
 export function usTapeRowFromMeta(meta: UsTickMeta): UsTapeRow {
     const us = meta.tsUs ?? meta.ts * 1000;
     const { time } = nyDateTime(us);
-    return { id: rowSeq++, ts: meta.ts, time: `${time}.${String(Math.floor(us) % 1_000_000).padStart(6, '0')}`, price: meta.price, volume: meta.volume, tickType: meta.tickType ?? 0 };
+    return { id: rowSeq++, ts: Math.floor(us), time: `${time}.${String(Math.floor(us) % 1_000_000).padStart(6, '0')}`, price: meta.price, volume: meta.volume, tickType: meta.tickType ?? 0 };
 }
 
 /**
- * 歷史回來時與載入期間收到的即時列合併：即時列若與歷史同一筆（同時間、價、量）
+ * 歷史回來時與載入期間收到的即時列合併：即時列若與歷史同一筆（同一微秒、價、量）
  * 就丟掉，避免重複；合併後依時間新到舊、取前 max 筆。
  */
 export function mergeUsTape(live: readonly UsTapeRow[], hist: readonly UsTapeRow[], max = MAX_ROWS): UsTapeRow[] {

@@ -70,10 +70,12 @@ function usContractBody(c: Pick<ContractBase, 'code' | 'exchange'>) {
 
 async function usPost<T>(path: string, body: unknown, parse: (raw: unknown) => T | null, opts?: { timeoutMs?: number }): Promise<T> {
     if (!usHistoryAvailable()) throw new UsHistoryUnavailable();
-    const base = getApiBase();
+    // 實際送出的 sidecar：啟動閘門可能在送出前把請求改派到另一個 base，
+    // 所以在送出那一刻（beforeDispatch，改派之後）才記下
+    let base = getApiBase();
     let raw: unknown;
     try {
-        raw = await apiPost<unknown>(path, body, { timeoutMs: opts?.timeoutMs ?? 20_000 });
+        raw = await apiPost<unknown>(path, body, { timeoutMs: opts?.timeoutMs ?? 20_000, beforeDispatch: () => { base = getApiBase(); } });
     } catch (e) {
         const status = (e as { status?: unknown })?.status;
         const msg = e instanceof Error ? e.message : String(e);
@@ -209,6 +211,8 @@ export async function fetchUsKbars(contract: Pick<ContractBase, 'code' | 'exchan
 export interface UsHistoryTick {
     /** epoch ms（UTC） */
     ts: number;
+    /** epoch µs（UTC；去重用，保留原始精度） */
+    tsUs: number;
     /** 紐約時間 HH:MM:SS.ffffff */
     time: string;
     price: number;
@@ -226,6 +230,15 @@ function sessionOf(v: unknown): UsTradingSession | null {
     if (typeof v === 'number') return SESSIONS[v] ?? 'Unknown';
     if (typeof v === 'string') return (SESSIONS as readonly string[]).includes(v) ? v as UsTradingSession : 'Unknown';
     return null;
+}
+
+/** 時間欄位 → epoch µs（ns 數字取整到 µs；字串取小數秒前 6 位） */
+function usTimeToUs(rawTime: unknown, ms: number): number {
+    if (typeof rawTime === 'number' && rawTime > 1e17) return Math.floor(rawTime / 1e3);
+    if (typeof rawTime === 'number' && rawTime > 1e14) return Math.floor(rawTime);
+    const frac = typeof rawTime === 'string' ? /\.(\d+)/.exec(rawTime)?.[1] : undefined;
+    if (frac) return Math.floor(ms / 1000) * 1_000_000 + Number(frac.padEnd(6, '0').slice(0, 6));
+    return ms * 1000;
 }
 
 /** 時間字串的小數秒（6 位）；數字時間用 ms 補零 */
@@ -262,6 +275,7 @@ export function parseUsTicks(raw: unknown): UsHistoryTick[] | null {
         const a = ask[i] === null || ask[i] === undefined ? null : num(ask[i]);
         out.push({
             ts: ms,
+            tsUs: usTimeToUs(times[i], ms),
             time: nyTimeWithFraction(times[i], ms),
             price,
             volume: num(volume[i]) || 0,
@@ -394,14 +408,15 @@ export interface UsLiveTrade {
 }
 
 /**
- * 歷史載入期間收到的成交補進 K 棒：只補比歷史最後一根還新的桶（同一桶視為
- * 已含在歷史裡，避免重複計量）。回傳是否有變動。
+ * 歷史載入期間收到的成交補進 K 棒。coveredUntil 是歷史最後一根「1 分 K」的
+ * 結束時間（牆鐘秒）：早於它的成交已含在歷史裡，跳過；之後的成交照常併入，
+ * 落在聚合後最後一根的同一桶時就更新那一根（例如 5 分 K 09:35 那根只含到
+ * 09:32 的歷史）。回傳是否有變動。
  */
-export function replayUsTrades(bars: Candle[], pending: readonly UsLiveTrade[], minutes: number): boolean {
-    const lastTime = bars.length ? bars[bars.length - 1]!.time : -Infinity;
+export function replayUsTrades(bars: Candle[], pending: readonly UsLiveTrade[], minutes: number, coveredUntil: number): boolean {
     let changed = false;
     for (const t of pending) {
-        if (usBarBucket(t.wall, minutes) <= lastTime) continue;
+        if (t.wall < coveredUntil) continue;
         if (mergeUsTickIntoBars(bars, t.wall, t.price, t.volume, minutes)) changed = true;
     }
     return changed;
