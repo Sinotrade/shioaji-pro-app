@@ -232,6 +232,38 @@ it('a background-engine futures New without full_code is projected with the engi
     expect(projectOrderReport([], order(future, 'New'), [future], 'MXFJ6')![0]!.contract.code).toBe('TXFI6');
 });
 
+it('a replayed parked deal only adds its detail when a read-back row already counts it', () => {
+    // Read-back row (quantity 3): deal_quantity counted, details possibly missing.
+    const read = (dealQuantity: number, seqs: string[] = []) => projectOrderReport([], order(), [stock])!.map(t => ({ ...t,
+        status: { ...t.status, status: dealQuantity >= 3 ? 'Filled' as const : 'PartFilled' as const, deal_quantity: dealQuantity,
+            deals: seqs.map(seq => ({ seq, ts: 1789200001, quantity: 1, price: 101 })) } }));
+    const rows = read(1);
+    const backfilled = projectTradeDeal(rows, deal(), true)!;
+    expect(backfilled[0]!.status).toMatchObject({ status: 'PartFilled', deal_quantity: 1 });
+    expect(backfilled[0]!.status.deals).toEqual([{ seq: 'fill-1', ts: 1789200001, quantity: 1, price: 101 }]);
+    // the unlisted quantity is used up: a second replayed deal adds
+    expect(projectTradeDeal(backfilled, deal(stock, { exchange_seq: 'fill-2' }), true)![0]!.status.deal_quantity).toBe(2);
+    // a live deal always adds, even on a row with unlisted quantity
+    expect(projectTradeDeal(rows, deal())![0]!.status).toMatchObject({ status: 'PartFilled', deal_quantity: 2 });
+    // not (fully) counted by the read: adds as before
+    expect(projectTradeDeal(read(0), deal(), true)![0]!.status.deal_quantity).toBe(1);
+    expect(projectTradeDeal(read(1), deal(stock, { quantity: 2 }), true)![0]!.status).toMatchObject({ status: 'Filled', deal_quantity: 3 });
+    // detail already listed: unchanged, even with other unlisted quantity
+    const listed = read(2, ['fill-1']);
+    expect(projectTradeDeal(listed, deal(), true)).toBe(listed);
+    // Filled row without details: detail only, not an overfill
+    const filled = projectTradeDeal(read(3), deal(), true)!;
+    expect(filled[0]!.status).toMatchObject({ status: 'Filled', deal_quantity: 3 });
+    expect(filled[0]!.status.deals.map(d => d.seq)).toEqual(['fill-1']);
+});
+
+it('a replayed deal the read did not count adds, even when the listed details are multi-lot', () => {
+    // order 3, read: dq 2 is one listed 2-lot detail; the replayed 1-lot fill was not counted yet
+    const rows = projectOrderReport([], order(), [stock])!.map(t => ({ ...t, status: { ...t.status, status: 'PartFilled' as const,
+        deal_quantity: 2, deals: [{ seq: 'fill-0', ts: 1789200001, quantity: 2, price: 101 }] } }));
+    expect(projectTradeDeal(rows, deal(), true)![0]!.status).toMatchObject({ status: 'Filled', deal_quantity: 3 });
+});
+
 // PR #400 review P1: 委託合計要靠 order_cond 判斷回補，不能把缺欄位當成現股
 describe('stock order conditions on projected rows', () => {
     it('carries order_cond from a stock order report and never invents daytrade_short', () => {
@@ -245,5 +277,12 @@ describe('stock order conditions on projected rows', () => {
         const bare = rows.map(t => ({ ...t, order: { ...t.order, order_cond: undefined } }));
         expect(projectTradeDeal(bare, deal(stock, { order_cond: 'MarginTrading' }))![0]!.order.order_cond).toBe('MarginTrading');
         expect(projectTradeDeal(rows, deal(stock, { order_cond: 'MarginTrading' }))![0]!.order.order_cond).toBe('Cash');
+    });
+    it('a replayed deal that only adds its detail also fills a missing order_cond', () => {
+        const rows = projectOrderReport([], order(), [stock])!.map(t => ({ ...t, order: { ...t.order, order_cond: undefined },
+            status: { ...t.status, status: 'PartFilled' as const, deal_quantity: 1, deals: [] } }));
+        const next = projectTradeDeal(rows, deal(stock, { order_cond: 'MarginTrading' }), true)![0]!;
+        expect(next.status.deal_quantity).toBe(1);
+        expect(next.order.order_cond).toBe('MarginTrading');
     });
 });

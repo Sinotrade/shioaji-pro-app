@@ -5,8 +5,11 @@ import { expect, it, vi } from 'vitest';
 import type { Account } from '../lib/types/portfolio';
 import type { ContractInfo } from '../lib/types/contract';
 const mocks = vi.hoisted(() => ({ notify: vi.fn() }));
-const accounts: Account[] = ['9816502', '9151121'].map(account_id => ({ account_type: 'S', broker_id: '9A95', account_id, signed: true, person_id: '', username: '王小明' }));
-vi.mock('../lib/account-store', () => ({ ensureAccounts: () => undefined, useAccounts: () => ({ loaded: true, accounts, selectedStock: accounts[0], selectedFutures: undefined }) }));
+const accounts: Account[] = vi.hoisted(() => ['9816502', '9151121'].map(account_id => ({ account_type: 'S', broker_id: '9A95', account_id, signed: true, person_id: '', username: '王小明' })));
+vi.mock('../lib/account-store', () => {
+    const state = () => ({ loaded: true, loadError: false, accounts, selectedStock: accounts[0], selectedFutures: null });
+    return { ensureAccounts: () => undefined, useAccounts: state, getAccountState: state, subscribeAccounts: () => () => undefined };
+});
 vi.mock('../hooks/use-stream', () => ({ useQuote: () => undefined, useTradingLive: () => true }));
 vi.mock('../hooks/use-display-book', () => ({ useDisplayBook: () => ({ quote: undefined, snapshot: { close: 2400 }, book: undefined }) }));
 vi.mock('../lib/shioaji', () => ({ cancelOrder: vi.fn(), cancelOrders: vi.fn() }));

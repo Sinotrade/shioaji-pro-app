@@ -40,7 +40,8 @@ import {
     Star,
     X,
 } from 'lucide-react';
-import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { createPortal } from 'react-dom';
 import {
     DEFAULT_CHART_INTERVAL,
     isChartInterval,
@@ -62,6 +63,15 @@ import {
     useDrawingsSaveFailed,
 } from '../lib/chart-drawings';
 import { useQuote } from '../hooks/use-stream';
+import { useChartFills } from '../hooks/use-chart-fills';
+import { highLowAvoid } from '../lib/chart-fill-marks';
+import {
+    chartFillColors, isLightColor, useChartFillBuy, useChartFillColor, useChartFillScope, useChartFillSell, useChartFillShape, useChartFillStyle,
+    type ChartFillsState,
+} from '../lib/chart-fill-prefs';
+import { ChartFillDetails } from './chart-fill-details';
+import { ChartFillSettings, FILL_SHAPE_GLYPH } from './chart-fill-settings';
+import * as fillStyles from './chart-fill-details.css';
 import {
     colorWithOpacity,
     DEF_BY_TYPE,
@@ -133,7 +143,7 @@ import { flashAccountLabels } from '../lib/flash-display';
 import { usePrivacyMode } from '../lib/privacy';
 import { getRiskSettings, setRiskSettings, subscribeRiskSettings } from '../lib/risk';
 import type { Account } from '../lib/types/portfolio';
-import { ChartOrderButton, type ChartOrderAccountView } from './chart-order-popover';
+import { ChartOrderButton, chartAccountLabel, type ChartOrderAccountView } from './chart-order-popover';
 import { isCancelUnconfirmed } from '../lib/cancel-verification';
 import { cancellationSummary } from '../lib/trade-mutations';
 import {
@@ -159,7 +169,7 @@ import { HighLowLayer, type HighLowStyle } from '../lib/chart-highlow';
 import type { ChartColors } from '../lib/theme-store';
 import { OhlcLegend } from './ohlc-legend';
 import * as styles from './candle-chart.css';
-import { ChartDrawingOverlays, ChartDrawingTools, ChartObjectList } from './chart-drawing-tools';
+import { ChartDrawingOverlays, ChartDrawingTools, ChartObjectList, Popover } from './chart-drawing-tools';
 import { toolDef } from '../lib/chart-drawings';
 import { AsyncStatus } from './async-status';
 import * as panel from './panel.css';
@@ -199,6 +209,12 @@ const TRADE_MODES: { key: TradeMode; label: string }[] = [
 
 // keep paging until this floor — one page per fetch, spans widen with tf
 const MAX_HISTORY_DAYS = 1095; // ~3 years
+// 明細「這根 K 棒」：提示框停留這麼久才算查看那根
+const FILL_DWELL_MS = 300;
+
+// 成交待確認時的處置：小視窗沒有委託分頁，要指回主視窗
+const REFRESH_HINT = typeof location !== 'undefined' && new URLSearchParams(location.search).has('popout')
+    ? '可到主視窗的委託分頁按更新' : '可到委託分頁按更新';
 
 export type { ChartSessionMode };
 
@@ -217,6 +233,13 @@ export function CandleChart({
     onShowOhlcChange,
     showHighLow: showHighLowProp,
     onShowHighLowChange,
+    fills: fillsProp,
+    onFillsChange,
+    fillsReady = false,
+    fillsNote,
+    fillsHint,
+    fillsRetain = false,
+    fillsEnv = null,
 }: {
     panelId?: string;
     contract: ContractBase;
@@ -242,6 +265,19 @@ export function CandleChart({
     // 可見範圍最高／最低標記（#240）：存法同 K 棒讀值。缺省 = 顯示
     showHighLow?: boolean;
     onShowHighLowChange?: (show: boolean) => void;
+    // 成交標記在這張圖的狀態（on 顯示／hidden 暫時隱藏、圖例列留著／off 已移除、從「指標」加回）：存法同 K 棒讀值。缺省 = on
+    fills?: ChartFillsState;
+    onFillsChange?: (state: ChartFillsState) => void;
+    // LiveCandleChart 以共享 owner 的環境證據與對帳狀態傳入；沒傳就視為尚未確認（不畫標記）。
+    fillsReady?: boolean;
+    // 成交來源未確認（fillsReady 為 false）時顯示在工具列的原因，例如「成交待對帳：串流中斷」
+    fillsNote?: string;
+    // 未確認時的處置說明；沒傳就請使用者到委託分頁按更新
+    fillsHint?: string;
+    // 待確認時可保留上次確認的淡色標記（LiveCandleChart 傳入；彈出視窗的主視窗鏡像失效時為 false）。沒傳就不保留
+    fillsRetain?: boolean;
+    // 目前的交易環境（null = 暫時未知）：換成另一個已知環境時清掉保留的標記
+    fillsEnv?: string | null;
 }) {
     const hostRef = useRef<HTMLDivElement>(null);
     const chartRef = useRef<IChartApi | null>(null);
@@ -287,6 +323,52 @@ export function CandleChart({
         onShowHighLowChange?.(!showHighLow);
     };
     const highLowRef = useRef<HighLowLayer | null>(null);
+    const [localFills, setLocalFills] = useState<ChartFillsState>(fillsProp ?? 'on');
+    const fills = onFillsChange ? fillsProp ?? 'on' : localFills;
+    const showFills = fills === 'on';
+    const setFills = (state: ChartFillsState) => {
+        setLocalFills(state);
+        onFillsChange?.(state);
+    };
+    // 設定面板（圖例列「成交」或「指標」打開）：錨點是圖例列，用 state 存元素，剛加回來那一列掛上後才定位
+    const [fillSettingsOpen, setFillSettingsOpen] = useState(false);
+    const [fillLegendEl, setFillLegendEl] = useState<HTMLElement | null>(null);
+    // 要調外觀就要看得到：隱藏中或已移除時先恢復顯示
+    const openFillSettings = () => {
+        if (fills !== 'on') setFills('on');
+        setFillSettingsOpen(true);
+    };
+    const toggleFillSettings = () => (fillSettingsOpen ? setFillSettingsOpen(false) : openFillSettings());
+    const setFillsClosing = (state: ChartFillsState) => {
+        setFillSettingsOpen(false);
+        setFills(state);
+    };
+    // 從「指標」打開設定會當場拿掉全視窗遮罩：雙擊那一列的第二下不能穿到底下的閃電下單、刪單鈕或已武裝的圖。
+    // 按圖例列的 × 會整列移除，下面的委託列移到游標下：雙擊 × 的第二下不能按到 CANCEL（直接刪單、不經確認）。
+    // 透明遮罩接住雙擊間隔內的點擊；在 window 就攔下，剛打開的設定面板也不會當成點外面而關掉
+    const [clickShield, setClickShield] = useState(false);
+    useEffect(() => {
+        if (!clickShield) return;
+        const swallow = (e: Event) => {
+            // 鍵盤按下按鈕產生的 click（detail 0）不是雙擊的第二下：放行，剛打開的面板可以馬上用鍵盤操作
+            if (e.type === 'click' && (e as MouseEvent).detail === 0) return;
+            // 第二下按在遮罩上：擋掉預設的焦點移動，面板裡的焦點才不會掉到 body
+            if (e.type === 'mousedown') e.preventDefault();
+            e.stopPropagation();
+        };
+        const types = ['pointerdown', 'pointerup', 'mousedown', 'mouseup', 'click', 'dblclick'];
+        types.forEach((t) => window.addEventListener(t, swallow, true));
+        const timer = setTimeout(() => setClickShield(false), 500);
+        return () => {
+            clearTimeout(timer);
+            types.forEach((t) => window.removeEventListener(t, swallow, true));
+        };
+    }, [clickShield]);
+    const [fillListOpen, setFillListOpen] = useState(false);
+    // 明細「這根 K 棒」：最近查看的那根（提示框停留夠久才算，移到工具列途中掠過的別根不算；render 時寫 ref，不多 render；用一次就忘，不設時間限制）
+    const lastFillBarRef = useRef<{ scope: string; time: number } | null>(null);
+    // 目前提示框是哪一根、從什麼時候開始顯示（換根或消失時才判斷停留夠不夠久）
+    const tipBarRef = useRef<{ scope: string; time: number; since: number } | null>(null);
     // 讀值列自己訂閱這個 store：讀值變動只重繪讀值列
     const ohlcStore = useMemo(createOhlcStore, []);
     const [hostWidth, setHostWidth] = useState(0);
@@ -1633,6 +1715,58 @@ export function CandleChart({
         chart.timeScale().fitContent();
     };
 
+    // 與圖例列「成交」、工具列「明細」同一條件：不能下單的圖表（指數、組合）不畫也不留清單。
+    // 權證也先不畫：對帳後的權證委託可能標成 STK，和 WRT 圖的投影範圍對不上，會少畫又不顯示缺漏
+    const fillsEnabled = !isCombo && !!orderMarket && !warrant;
+    // 標記被外面收起（工作區改成隱藏／移除、換成不能畫成交的商品）時一併關掉設定面板：
+    // 不然 aria-expanded 還是開著，恢復顯示時面板會自己彈出來。只在「顯示 → 不顯示」那一下關，
+    // 隱藏中按設定（先交回 on、工作區稍後才回傳）不受影響
+    const fillsShown = showFills && fillsEnabled;
+    const [fillsShownBefore, setFillsShownBefore] = useState(fillsShown);
+    if (fillsShownBefore !== fillsShown) {
+        setFillsShownBefore(fillsShown);
+        if (fillsShownBefore) setFillSettingsOpen(false);
+    }
+    const fillStyle = useChartFillStyle();
+    // 全部帳戶：同一市場（股票 → 證券、期貨／選擇權 → 期貨）的所有可交易帳戶，合併成點、明細逐筆保留帳戶
+    const fillScope = useChartFillScope();
+    const fillColorMode = useChartFillColor();
+    const fillShape = useChartFillShape();
+    const fillBuy = useChartFillBuy();
+    const fillSell = useChartFillSell();
+    // 進出點的顏色：預設藍買橘賣，和 K 棒的紅綠分開（設定可改回同 K 棒）
+    // 深淺色組看標籤底色的亮度：自訂主題的起始底色是深色、面板卻改成淺色時也挑對
+    const fillColors = chartFillColors((isLightColor(colors.labelBg) ?? baseMode(themeSettings) === 'light') ? 'light' : 'dark', colors, fillColorMode, { buy: fillBuy, sell: fillSell });
+    const fillAccounts = fillScope === 'all' ? orderAccountView.eligible : undefined;
+    const fillContext = `${contract.security_type}:${contract.exchange}:${contract.code}:${contract.target_code}|${tf.minutes}|${dayOnly}|${currentProtectionEnv()}`;
+    const fillBarsKey = `${contract.code}|${tf.minutes}|${dayOnly}`;
+    // 換組時先清圖再抓歷史：K 棒回來前不能說成「沒有成交」（同組重載保留舊 K 棒，不算）
+    const fillBarsLoading = drawnKeyRef.current !== fillBarsKey || (loading && barsRef.current.length === 0);
+    const fillListId = useId();
+    const fillView = useChartFills({
+        chartRef, seriesRef: candleSeriesRef, trades, contract, account: orderAccountView.active, accounts: fillAccounts,
+        bars: barsRef.current, dataVersion, minutes: tf.minutes, dayOnly, visible: showFills && fillsEnabled,
+        ready: fillsReady && drawnKeyRef.current === fillBarsKey, retain: fillsRetain, env: fillsEnv,
+        context: fillContext, style: fillStyle, shape: fillShape, priceDecimals: ohlcDecimals, up: fillColors.buy, down: fillColors.sell, labelBg: colors.labelBg,
+        // 成交標籤避開最高／最低標記
+        avoid: () => highLowAvoid(highLowRef.current?.marks() ?? [], chartRef.current?.paneSize() ?? { width: 0, height: 0 }),
+    });
+    // 不要在 handler 裡直接用 fillView：V8 同一 scope 的閉包共用 context，會讓這次 render 的所有 handler 留住整份成交
+    const fillFocusRef = useRef(fillView.focusBar);
+    fillFocusRef.current = fillView.focusBar;
+    // 成交明細缺漏（數量對不上）也當成未確認，處置一律是重新讀回委託。來源本身還沒確認時先講來源
+    // （例如連線尚未就緒），來源確認了、明細對不上才講缺漏。
+    const fillsOk = fillsReady && !fillView.incomplete;
+    const fillGap = fillsReady && fillView.incomplete;
+    const fillNote = fillGap ? '成交待對帳：成交明細缺漏' : fillsNote;
+    const fillHint = fillGap ? REFRESH_HINT : fillsHint ?? REFRESH_HINT;
+    // 明細筆數含圖上沒有對應 K 棒的成交（清單一起列）
+    const fillCount = fillsOk && !fillBarsLoading ? fillView.fills.length + fillView.unplaced.length : '…';
+    // 保留中：圖上畫的是上次確認的淡色標記，明細不列
+    const fillPendingNote = `${fillNote ?? '成交待確認'}${fillView.retained ? '（顯示的是上次確認的成交）' : ''}`;
+    // 有範圍才提示待確認；斷線時帳戶暫時解析不出來、但圖上畫著保留的淡色標記，也要提示
+    const fillScoped = !!fillAccounts || !!orderAccountView.active || fillView.retained;
+
     // draw working-order price lines (buy=up color / sell=down color)
     const orderKey = JSON.stringify(
         workingOrders.map((t) => [
@@ -2197,6 +2331,14 @@ export function CandleChart({
             </div>
         </div>
     ) : null;
+    const fillTip = showFills && fillsEnabled && !fillListOpen && shownMode === 'observe' && !drawings.tool && fillView.hoveredFills.length > 0;
+    // 換根或提示框消失時，停留夠久的那根才寫進 lastFillBarRef
+    const tipTime = fillTip ? fillView.hoveredFills[0]!.time : null;
+    if ((tipBarRef.current?.time ?? null) !== tipTime || (fillTip && tipBarRef.current?.scope !== fillView.scope)) {
+        const tip = tipBarRef.current, now = performance.now();
+        if (tip && now - tip.since >= FILL_DWELL_MS) lastFillBarRef.current = tip;
+        tipBarRef.current = tipTime === null ? null : { scope: fillView.scope, time: tipTime, since: now };
+    }
     return (
         <div className={styles.wrap}
             onPointerDownCapture={() => { if (panelService && panelId) panelService.focus(panelId); }}
@@ -2317,6 +2459,22 @@ export function CandleChart({
                         contractLabel={`${contract.code}${(contract as { name?: string }).name ? ` ${(contract as { name?: string }).name}` : ''}`}
                     />
                 )}
+                {fillsEnabled && <>
+                    {showFills && <button className={styles.tfBtn[fillListOpen ? 'active' : 'normal']}
+                        aria-label={`成交明細 ${fillCount}`} aria-expanded={fillListOpen} aria-controls={fillListOpen ? fillListId : undefined}
+                        onPointerDownCapture={drawings.onInteraction} onKeyDownCapture={drawings.onInteraction}
+                        onClick={() => {
+                            // 打開時標示最近查看的那根（用過就忘；滑鼠還停在那根、已停夠久時就是那根，例如用鍵盤按「明細」）；關掉時一併取消
+                            const tip = tipBarRef.current;
+                            fillFocusRef.current(fillListOpen ? null : tip && performance.now() - tip.since >= FILL_DWELL_MS ? tip : lastFillBarRef.current);
+                            lastFillBarRef.current = tipBarRef.current = null;
+                            setFillListOpen(!fillListOpen);
+                        }}
+                        title={fillsOk ? '已載入 K 線範圍內的逐筆成交' : `${fillPendingNote}。${fillView.retained ? '確認前不列明細' : '確認前不顯示標記'}；${fillHint}。`}>
+                        明細 {fillCount}
+                    </button>}
+                    {showFills && !fillsOk && fillScoped && <span className={fillStyles.pendingNote} role='status' title={fillHint}>{fillPendingNote}</span>}
+                </>}
                 <button
                     className={
                         styles.indicatorBtn[
@@ -2332,12 +2490,25 @@ export function CandleChart({
                         instances={instances}
                         onAdd={addIndicator}
                         onClose={() => setPickerOpen(false)}
+                        fills={fillsEnabled ? {
+                            added: fills !== 'off', colors: fillColors,
+                            // 和圖例列一樣，動到成交標記就先解除點價武裝（對話框關掉後點圖不會下單）
+                            onOpen: () => {
+                                drawings.onInteraction();
+                                setPickerOpen(false);
+                                setClickShield(true);
+                                openFillSettings();
+                            },
+                            // 「移除」消失後整列按鈕移到游標下：遮罩接住雙擊的第二下，不會剛移除又加回來
+                            onRemove: () => { drawings.onInteraction(); setClickShield(true); setFillsClosing('off'); },
+                        } : undefined}
                         onSaveDefaults={panelService ? () => {
                             saveInstances(savedInstances);
                             notify({ kind: 'info', title: '已儲存指標預設', body: '新圖與回測圖表使用此設定；其他現有面板維持原設定。' });
                         } : undefined}
                     />
                 )}
+                {clickShield && createPortal(<div className={fillStyles.clickShield} data-click-shield='' aria-hidden />, document.body)}
                 {settingsInst && (
                     <IndicatorSettingsModal
                         inst={settingsInst}
@@ -2358,6 +2529,10 @@ export function CandleChart({
             <div className={styles.chartRow}>
             <ChartDrawingTools api={drawings} />
             <div ref={hostRef} className={styles.chartHost}>
+                {fillTip && <ChartFillDetails
+                    fills={fillView.hoveredFills} bar={fillView.hoveredBar} accountId={orderAccountView.active?.account_id} allAccounts={!!fillAccounts}
+                    privacy={privacy} up={fillColors.buy} down={fillColors.sell} decimalsFor={ohlcDecimals} tooltip compact={hostWidth > 0 && hostWidth < 380} dateless={hostWidth > 0 && hostWidth < 380 && tf.minutes < 1440}
+                />}
                 {loading && (
                     <div className={styles.emptyMsg}>
                         <AsyncStatus phase='loading' text={`載入 ${tf.label} K 線…`} className={panel.mono} />
@@ -2374,7 +2549,8 @@ export function CandleChart({
                     modeHintEl ||
                     workingOrders.length > 0 ||
                     triggers.length > 0 ||
-                    instances.length > 0) && (
+                    instances.length > 0 ||
+                    (fillsEnabled && fills !== 'off')) && (
                     <div className={styles.triggerList}>
                         {showOhlc && (
                             <OhlcLegend
@@ -2384,6 +2560,50 @@ export function CandleChart({
                                 width={hostWidth}
                                 colors={colors}
                             />
+                        )}
+                        {/* 成交圖例列排在武裝提示之前：按它會解除武裝、提示收起，排在後面的話整列上移，
+                            第一下落空、再按就按到移上來的委託列 CANCEL 或觸價 × */}
+                        {fillsEnabled && fills !== 'off' && (
+                            // 成交標記的圖例列（同指標）：名稱或齒輪開設定、眼睛暫時隱藏、× 從這張圖移除（從「指標」加回）。
+                            // 操作前先解除點價武裝；控制鈕一直顯示，第一次用的人才看得到設定在哪
+                            // 隱藏時整列不變淡（圖示會淡到找不到），只把名稱轉灰、眼睛換成劃掉的。
+                            // data-drawing-overlay：這列在圖表區裡，按在上面的那一下屬於它，不能被委託線拖曳或畫圖工具接走
+                            <div ref={setFillLegendEl} data-fills-legend data-drawing-overlay='' className={styles.legendItem.normal}
+                                onPointerDownCapture={drawings.onInteraction} onKeyDownCapture={drawings.onInteraction}>
+                                <button className={`${styles.legendLabel} ${showFills ? fillStyles.legendName : fillStyles.muted}`}
+                                    aria-haspopup='dialog' aria-expanded={fillSettingsOpen} title='實際成交標記：點一下設定形狀、標籤與顏色'
+                                    onClick={toggleFillSettings}>
+                                    成交
+                                </button>
+                                {showFills && (
+                                    // 只有形狀上色，「買」「賣」兩字用前景色：自選的淺色也讀得到
+                                    <span className={styles.legendVals} aria-hidden>
+                                        <span className={styles.legendVal}><span style={{ color: fillColors.buy }}>{FILL_SHAPE_GLYPH[fillShape][0]}</span>買</span>
+                                        <span className={styles.legendVal}><span style={{ color: fillColors.sell }}>{FILL_SHAPE_GLYPH[fillShape][1]}</span>賣</span>
+                                    </span>
+                                )}
+                                {showFills && <span className={fillStyles.muted}>{fillCount} 筆</span>}
+                                <span className={fillStyles.legendCtrls}>
+                                    <button className={styles.legendCtrlBtn} aria-label={showFills ? '隱藏成交標記' : '顯示成交標記'} title={showFills ? '隱藏' : '顯示'}
+                                        onClick={() => setFillsClosing(showFills ? 'hidden' : 'on')}>
+                                        {showFills ? <Eye size={11} /> : <EyeOff size={11} />}
+                                    </button>
+                                    <button className={styles.legendCtrlBtn} aria-label='成交標記設定' title='設定' aria-haspopup='dialog'
+                                        aria-expanded={fillSettingsOpen} onClick={toggleFillSettings}>
+                                        <Settings2 size={11} />
+                                    </button>
+                                    <button className={styles.legendCtrlBtn} aria-label='移除成交標記' title='移除（之後可從「指標」加回來）'
+                                        onClick={() => { setClickShield(true); setFillsClosing('off'); }}>
+                                        <X size={11} />
+                                    </button>
+                                </span>
+                            </div>
+                        )}
+                        {fillSettingsOpen && fillsEnabled && showFills && fillLegendEl && (
+                            <Popover anchor={fillLegendEl} label='成交標記設定' onClose={() => setFillSettingsOpen(false)} onInteraction={drawings.onInteraction}>
+                                <ChartFillSettings shape={fillShape} style={fillStyle} color={fillColorMode} scope={fillScope} colors={fillColors}
+                                    custom={{ buy: fillBuy, sell: fillSell }} account={chartAccountLabel(orderAccountView)} returnTo={fillLegendEl} />
+                            </Popover>
                         )}
                         {modeHintEl}
                         {mainLegendInsts.map((inst) =>
@@ -2516,6 +2736,11 @@ export function CandleChart({
             </div>
             <ChartObjectList api={drawings} />
             </div>
+            {showFills && fillsEnabled && fillListOpen && <ChartFillDetails id={fillListId}
+                fills={fillView.fills} unplaced={fillView.unplaced} accountId={orderAccountView.active?.account_id} allAccounts={!!fillAccounts} retained={fillView.retained}
+                privacy={privacy} up={fillColors.buy} down={fillColors.sell} pending={!fillsOk} note={fillView.retained ? fillPendingNote : fillNote} hint={fillHint} barsLoading={fillBarsLoading}
+                focus={fillView.focus} onClearFocus={fillView.clearFocus} decimalsFor={ohlcDecimals}
+            />}
         </div>
     );
 }

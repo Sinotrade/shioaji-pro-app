@@ -93,6 +93,7 @@ import { loadOrderLotPreference, saveOrderLotPreference, QUICK_ORDER_LOTS } from
 import type { ChartOrderPanelState } from '../lib/chart-order-settings';
 import { resetCreditEnquireCache } from '../lib/credit-eligibility';
 import { getRiskSettings, setRiskSettings } from '../lib/risk';
+import { escStackDepth } from '../hooks/use-esc-close';
 
 const S1 = { account_type: 'S', broker_id: 'B', account_id: '1111121', signed: true, person_id: '', username: '' } as Account;
 const S2 = { ...S1, account_id: '2222207' } as Account;
@@ -123,7 +124,9 @@ async function mount(props: Record<string, unknown>) {
                 },
                 removeEventListener: events.removeEventListener.bind(events), parentElement: scope,
                 contains: (n: unknown) => !m.dragEvents || n === node, hasAttribute: () => true, closest: () => wrapScope,
-                focus: () => { if (m.dragEvents) (document as any).activeElement = node; }, style: {} };
+                focus: () => { if (m.dragEvents) (document as any).activeElement = node; }, style: {},
+                // 成交標記設定面板打開後下一幀會在根節點上找選中的形狀鈕來移焦點
+                querySelector: () => null };
             nodes.add(node);
             if (element?.props?.['aria-label'] === '委託線鎖定') toolbarNodes.add(node);
             return node;
@@ -745,7 +748,8 @@ describe('chart order settings button', () => {
         if (action === '解鎖') await act(async () => drawingApi().setLocked(id, true));
         await act(async () => drawingApi().setObjectListOpen(true));
         await act(async () => button(view.root, side!).props.onClick());
-        const target = view.root.findAll(n => n.type === 'button' && String(n.props['aria-label'] ?? '').startsWith(action!))[0]!;
+        const controls = view.root.findByType(action === '清除全部' ? ChartDrawingTools : ChartObjectList);
+        const target = controls.findAll(n => n.type === 'button' && String(n.props['aria-label'] ?? '').startsWith(action!))[0]!;
         expect(target).toBeDefined();
         await act(async () => {
             capture(target, 'PointerDown');
@@ -758,6 +762,131 @@ describe('chart order settings button', () => {
         await act(async () => button(view.root, side!).props.onClick());
         await clickChart();
         expect(m.place).toHaveBeenCalledTimes(1); // 新武裝可正常下單
+    });
+
+    // 成交標記的圖例列（data-fills-legend：名稱、眼睛、齒輪、×）與它打開的設定面板
+    const fillLegend = () => view.root.findAll(n => typeof n.type === 'string' && n.props['data-fills-legend'])[0];
+    const fillPanel = () => view.root.findAll(n => n.props.role === 'dialog' && n.props['aria-label'] === '成交標記設定')[0];
+
+    it('成交圖例列排在武裝提示之前：按它解除武裝、提示收起時，往上移的是排在下面的指標、委託與觸價列，游標下仍是圖例列（不會變成 CANCEL）', async () => {
+        const trade = { contract: stk, order: { id: 'legend-order', action: 'Buy', price: 100, quantity: 1 },
+            status: { status: 'Submitted', deal_quantity: 0, cancel_quantity: 0, modified_price: 0 } };
+        await mount({ contract: stk, trades: [trade] });
+        await act(async () => { button(view.root, '點價買').props.onClick(); });
+        const list = fillLegend()!.parent!;
+        expect(list.props.className).toBe(styles.triggerList);
+        const rows = list.children as ReactTestInstance[];
+        const slot = rows.findIndex(r => typeof r !== 'string' && r.props.className === styles.hintSlot);
+        const orderRow = rows.findIndex(r => typeof r !== 'string' && r.findAll(n => n.type === 'button' && text(n) === 'CANCEL').length > 0);
+        expect(slot).toBeGreaterThan(rows.indexOf(fillLegend()!));
+        expect(orderRow).toBeGreaterThan(slot);
+    });
+
+    it.each(['點價買', '點價賣'].flatMap(side => ['成交', '隱藏成交標記', '成交標記設定', '移除成交標記', '成交明細']
+        .flatMap(label => (['PointerDown', 'KeyDown'] as const).map(kind => [side, label, kind] as const))))
+    ('武裝%s後操作成交控制項%s的%s，先解除武裝且重新武裝才能下單', async (side, label, kind) => {
+        await mount({ contract: stk });
+        await act(async () => button(view.root, side).props.onClick());
+        expect(text(view.root)).toContain('交易模式 ·');
+        // 圖例列的名稱鈕沒有 aria-label（名稱就是文字「成交」）；明細鈕的名稱帶筆數（「成交明細 N」），所以用前綴比對
+        const target = label === '成交' ? button(fillLegend()!, label)
+            : view.root.findAll(n => n.type === 'button' && String(n.props['aria-label'] ?? '').startsWith(label))[0]!;
+        expect(target).toBeDefined();
+        await act(async () => {
+            capture(target, kind);
+            // 先送同一事件內的 chart click，不能依賴下一次 render 才解除武裝。
+            m.click.at(-1)!({ point: { x: 10, y: 10 } });
+            target.props.onClick();
+        });
+        expect(text(view.root)).not.toContain('交易模式 ·');
+        await clickChart();
+        expect(m.place).not.toHaveBeenCalled();
+        await act(async () => button(view.root, side).props.onClick());
+        await clickChart();
+        expect(m.place).toHaveBeenCalledTimes(1);
+    });
+
+    it.each(['點價買', '點價賣'].flatMap(side => (['PointerDown', 'KeyDown'] as const).map(kind => [side, kind] as const)))
+    ('成交標記設定面板開著時武裝%s，在面板裡的%s先解除武裝且重新武裝才能下單', async (side, kind) => {
+        await mount({ contract: stk });
+        await act(async () => button(fillLegend()!, '成交').props.onClick());
+        await act(async () => button(view.root, side).props.onClick());
+        expect(text(view.root)).toContain('交易模式 ·');
+        // 點目前選中的形狀：偏好不變，只驗面板本身（不在圖例列裡）在 capture 階段解除武裝
+        const target = fillPanel()!.findAll(n => n.type === 'button' && n.props['aria-pressed'] === true)[0]!;
+        expect(text(target)).toContain('三角形');
+        await act(async () => {
+            capture(target, kind);
+            m.click.at(-1)!({ point: { x: 10, y: 10 } });
+            target.props.onClick();
+        });
+        expect(text(view.root)).not.toContain('交易模式 ·');
+        await clickChart();
+        expect(m.place).not.toHaveBeenCalled();
+        expect(fillPanel()).toBeDefined(); // 面板還開著
+        await act(async () => button(view.root, side).props.onClick());
+        await clickChart();
+        expect(m.place).toHaveBeenCalledTimes(1);
+        expect(m.place.mock.calls[0]![1]).toBe(side === '點價買' ? 'Buy' : 'Sell');
+    });
+
+    it.each(['點價買', '點價賣'].flatMap(side => (['移除', '打開設定'] as const).map(how => [side, how] as const)))
+    ('武裝%s後從「指標」對話框%s成交標記，先解除武裝：關掉對話框再點圖不會下單', async (side, how) => {
+        await mount({ contract: stk });
+        await act(async () => button(view.root, side).props.onClick());
+        expect(text(view.root)).toContain('交易模式 ·');
+        await act(async () => button(view.root, '指標').props.onClick());
+        // 對話框那一列整列是 <button>（文字以「成交標記」開頭），「移除」是列裡的 span role=button
+        const row = view.root.findAll(n => n.type === 'button' && text(n).startsWith('成交標記'))[0]!;
+        const remove = view.root.findAll(n => n.type === 'span' && n.props.role === 'button' && n.props['aria-label'] === '移除成交標記')[0]!;
+        await act(async () => (how === '移除' ? remove.props.onClick({ stopPropagation() {} }) : row.props.onClick()));
+        expect(text(view.root)).not.toContain('交易模式 ·');
+        await clickChart(); // 測試直接呼叫圖表的 click：等同關掉對話框後點圖
+        expect(m.place).not.toHaveBeenCalled();
+    });
+
+    it('成交標記設定面板開著時按 Esc 只關面板：這一下被 preventDefault（不算進 Esc×2 全部刪單）、Esc 堆疊回到 0，圖例列與顯示狀態不變', async () => {
+        const target = new EventTarget();
+        const w = window as any;
+        const saved = { add: w.addEventListener, remove: w.removeEventListener, dispatch: w.dispatchEvent };
+        w.addEventListener = (...a: Parameters<EventTarget['addEventListener']>) => target.addEventListener(...a);
+        w.removeEventListener = target.removeEventListener.bind(target);
+        w.dispatchEvent = target.dispatchEvent.bind(target);
+        onTestFinished(() => { w.addEventListener = saved.add; w.removeEventListener = saved.remove; w.dispatchEvent = saved.dispatch; });
+        const esc = async () => {
+            const event = Object.assign(new Event('keydown', { cancelable: true }), { key: 'Escape' });
+            await act(async () => { window.dispatchEvent(event); });
+            return event;
+        };
+        const onFillsChange = vi.fn();
+        await mount({ contract: stk, fills: 'on', onFillsChange });
+        expect(escStackDepth()).toBe(0);
+        await act(async () => button(fillLegend()!, '成交').props.onClick());
+        expect(fillPanel()).toBeDefined();
+        expect(escStackDepth()).toBe(1);
+        expect((await esc()).defaultPrevented).toBe(true);
+        expect(fillPanel()).toBeUndefined();
+        expect(escStackDepth()).toBe(0);
+        // 只關面板：圖例列還在、仍是顯示中，沒有交回新的狀態
+        expect(button(fillLegend()!, '成交').props['aria-expanded']).toBe(false);
+        expect(fillLegend()!.findAll(n => n.type === 'button').map(n => n.props['aria-label'])).toContain('隱藏成交標記');
+        expect(onFillsChange).not.toHaveBeenCalled();
+        // 面板關了以後的 Esc 沒有人攔，留給 Esc×2
+        expect((await esc()).defaultPrevented).toBe(false);
+    });
+
+    it('武裝中開關圖表下單設定會保留武裝，點圖照常下單；設定裡沒有分頁，也沒有「成交標記」', async () => {
+        await mount({ contract: stk });
+        await act(async () => button(view.root, '點價買').props.onClick());
+        await act(async () => chip().props.onClick());
+        expect(pop()!.props['aria-label']).toBe('圖表下單設定');
+        expect(pop()!.findAll(n => n.props.role === 'group' && n.props['aria-label'] === '設定分頁')).toHaveLength(0);
+        expect(button(pop()!, '成交標記')).toBeUndefined();
+        expect(text(view.root)).toContain('交易模式 ·');
+        await act(async () => button(pop()!, '完成').props.onClick());
+        expect(text(view.root)).toContain('交易模式 ·');
+        await clickChart();
+        expect(m.place).toHaveBeenCalledTimes(1);
     });
 
     it.each(['PointerDown', 'KeyDown'] as const)('武裝後設定對話框的%s即使沒有改物件，也使後續空白點擊不下單', async (kind) => {

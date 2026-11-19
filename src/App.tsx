@@ -14,7 +14,7 @@ import { useWorkspaceGrid } from './hooks/use-workspace-grid';
 import * as styles from './App.css';
 import { BottomDock } from './components/bottom-dock';
 import { AsyncStatus, type AsyncPhase } from './components/async-status';
-import { CandleChart } from './components/candle-chart';
+import { LiveCandleChart } from './components/live-candle-chart';
 import { ChainMap } from './components/chain-map';
 import { PortfolioSectorPanel } from './components/portfolio-sector-panel';
 import { ChipsCard } from './components/chips-card';
@@ -340,10 +340,9 @@ function BlockBody({
                         fields={block.quoteBoard}
                         onFieldsChange={(quoteBoard) => onSessionConfigChange(block.id, { quoteBoard })}
                     />
-                    <CandleChart
+                    <LiveCandleChart
                         panelId={block.id}
                         contract={contract}
-                        trades={dockProps.trades}
                         onOrdersChanged={dockProps.onTradesChanged}
                         sessionMode={block.chartSession}
                         onSessionModeChange={(chartSession) =>
@@ -364,6 +363,10 @@ function BlockBody({
                         showHighLow={block.chartHighLow !== false}
                         onShowHighLowChange={(show) =>
                             onSessionConfigChange(block.id, { chartHighLow: show ? undefined : false })
+                        }
+                        fills={block.chartFills === 'off' ? 'off' : block.chartFills === false ? 'hidden' : 'on'}
+                        onFillsChange={(state) =>
+                            onSessionConfigChange(block.id, { chartFills: state === 'on' ? undefined : state === 'off' ? 'off' : false })
                         }
                     />
                 </>
@@ -906,9 +909,8 @@ function PopoutView({
                 body = (
                     <>
                         <QuoteBoard contract={contract} sessionMode={chartSession} fields={popoutSession.quoteBoard} />
-                        <CandleChart
+                        <LiveCandleChart
                             contract={contract}
-                            trades={tradesState.data ?? []}
                             onOrdersChanged={tradesState.refresh}
                             sessionMode={chartSession}
                             onSessionModeChange={setChartSession}

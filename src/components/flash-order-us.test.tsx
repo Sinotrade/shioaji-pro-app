@@ -20,14 +20,17 @@ const mocks = vi.hoisted(() => ({
     notify: vi.fn(),
     confirm: vi.fn(),
 }));
-const H: Account = { account_type: 'H', broker_id: '9A95', account_id: '1234567', signed: true, person_id: 'P', username: 'U' } as Account;
-const H2: Account = { ...H, account_id: '7654321' } as Account;
-const S: Account = { account_type: 'S', broker_id: '9A95', account_id: '1234567', signed: true, person_id: 'P', username: 'U' } as Account;
+const { H, H2, S } = vi.hoisted(() => {
+    const H = { account_type: 'H', broker_id: '9A95', account_id: '1234567', signed: true, person_id: 'P', username: 'U' } as Account;
+    const H2 = { ...H, account_id: '7654321' } as Account;
+    const S = { account_type: 'S', broker_id: '9A95', account_id: '1234567', signed: true, person_id: 'P', username: 'U' } as Account;
+    return { H, H2, S };
+});
 vi.mock('../hooks/use-stream', () => ({ useQuote: () => mocks.quote, useTradingLive: () => mocks.live }));
-vi.mock('../lib/account-store', () => ({
-    ensureAccounts: () => undefined,
-    useAccounts: () => ({ loaded: true, accounts: [S, H, H2], selectedStock: S, selectedFutures: null, selectedIntl: H }),
-}));
+vi.mock('../lib/account-store', () => {
+    const state = () => ({ loaded: true, accounts: [S, H, H2], selectedStock: S, selectedFutures: null, selectedIntl: H });
+    return { ensureAccounts: () => undefined, useAccounts: state, getAccountState: state, subscribeAccounts: () => () => undefined };
+});
 vi.mock('../hooks/use-us-snapshot', async importOriginal => ({ ...(await importOriginal<object>()), useUsSnapshot: () => mocks.snap }));
 vi.mock('../lib/privacy', () => ({ usePrivacyMode: () => false, maskAccountId: (id: string) => id, maskName: (n: string) => n, usePrivacyMoney: () => false, maskMoney: (v: string) => v }));
 vi.mock('../lib/risk', () => ({ checkUsOrderAllowed: () => mocks.locked, getRiskSettings: () => ({ confirmManualOrders: mocks.confirmManual }) }));

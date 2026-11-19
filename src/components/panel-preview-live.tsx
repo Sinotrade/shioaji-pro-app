@@ -50,7 +50,7 @@ const CONTRACT_PREVIEWS: Partial<
     Record<BlockType, (contract: ContractInfo) => ReactElement>
 > = {
     chart: (contract) => (
-        <CandleChart contract={contract} trades={[]} onOrdersChanged={noop} />
+        <CandleChart contract={contract} trades={[]} fillsReady onOrdersChanged={noop} />
     ),
     intraday: (contract) => <IntradayChart contract={contract} />,
     depth: (contract) => <DepthLadder contract={contract} code={contract.code} />,

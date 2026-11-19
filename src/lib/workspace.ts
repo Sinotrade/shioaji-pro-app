@@ -139,6 +139,8 @@ export interface Block {
     chartOhlc?: boolean;
     // 可見範圍最高／最低標記（#240）— false = 隱藏；缺省 = 顯示
     chartHighLow?: boolean;
+    // 實際成交標記；缺省 = 顯示，false = 隱藏（圖例列留著），'off' = 已移除（從「指標」加回）。逐筆成交不存進工作區。
+    chartFills?: boolean | 'off';
     // 報價欄自訂欄位（顯示哪些格子、區塊與格子的順序；指數與個股各一組）— 缺省 = 預設
     quoteBoard?: import('./quote-board-fields').QuoteBoardFieldsConfig;
     // 產業鏈資金流向的視圖／類型、持股族群的呈現／分組（內建版面可指定）—
@@ -246,6 +248,7 @@ export type SessionConfigPatch = Partial<
         | 'chartOrder'
         | 'chartOhlc'
         | 'chartHighLow'
+        | 'chartFills'
         | 'quoteBoard'
         | 'chainView'
         | 'chainKind'

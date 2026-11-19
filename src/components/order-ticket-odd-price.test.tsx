@@ -11,7 +11,7 @@ const h = vi.hoisted(() => {
 });
 vi.mock('../lib/account-store', () => {
     const state = () => ({ accounts: h.accounts, selectedStock: h.account, selectedFutures: null, loaded: true });
-    return { useAccounts: state, getAccountState: state, selectAccount: vi.fn() };
+    return { useAccounts: state, getAccountState: state, subscribeAccounts: () => () => undefined, selectAccount: vi.fn() };
 });
 vi.mock('../lib/order-confirm', () => ({ requestOrderConfirm: m.confirm, accountConfirmLabel: (a: Account) => `${a.broker_id}-${a.account_id}` }));
 vi.mock('../lib/risk', () => ({ checkOrderAllowed: m.risk, getRiskSettings: () => ({ confirmManualOrders: true }) }));

@@ -88,7 +88,13 @@ export function projectOrderReport(rows: AccountedTrade[], report: OrderEventRep
     return old ? rows.map(t => t === old ? next : t) : [...rows, next];
 }
 
-export function projectTradeDeal(rows: AccountedTrade[], report: OrderEventReport): AccountedTrade[] | null {
+/** `replayed`: a parked deal applied later. It reached us before the row it
+ * now meets was read back (cache, update_status, order response), so that
+ * row may already count it in deal_quantity while `deals` omits its detail.
+ * Report-built rows keep deal_quantity equal to the listed deals; quantity
+ * beyond them came from such a read. When it covers this deal, only add the
+ * detail: quantity and status already include it. Live deals always add. */
+export function projectTradeDeal(rows: AccountedTrade[], report: OrderEventReport, replayed = false): AccountedTrade[] | null {
     if (report.kind !== 'deal' || report.market === 'us' || !report.ts || report.quantity <= 0 || report.price <= 0) return null;
     const body = reportBody(report);
     const seq = body?.exchange_seq;
@@ -98,15 +104,21 @@ export function projectTradeDeal(rows: AccountedTrade[], report: OrderEventRepor
     if (!old) return null;
     const code = report.market === 'futures' ? (body?.full_code || body?.code) : body?.code;
     if (code !== (old.contract.target_code || old.contract.code)) return null;
-    if (old.status.deals.some(d => d.seq === seq)) return rows;
+    const held = old.status.deals ?? [];
+    if (held.some(d => d.seq === seq)) return rows;
+    const detail = { seq, ts: report.ts, quantity: report.quantity, price: report.price };
+    // 股票成交回報也帶 order_cond：委託列還沒有時補上
+    const cond = report.market === 'stock' && typeof body?.order_cond === 'string' && body.order_cond && !old.order.order_cond ? body.order_cond : undefined;
+    // Before the overfill check: a Filled read-back row is not an overfill.
+    if (replayed && old.status.deal_quantity - held.reduce((sum, d) => sum + d.quantity, 0) >= report.quantity) {
+        return rows.map(t => t !== old ? t : { ...t, ...(cond ? { order: { ...t.order, order_cond: cond } } : {}), status: { ...t.status, deals: [...held, detail] } });
+    }
     const quantity = old.status.deal_quantity + report.quantity;
     // Trade.order.quantity is the original quantity (cancels accumulate in
     // cancel_quantity). HTTP status.order_quantity is not: 1.7.6 simulation
     // returns 0 for filled and reduced rows from both refresh modes.
     if (quantity + old.status.cancel_quantity > old.order.quantity) return null;
-    // 股票成交回報也帶 order_cond：委託列還沒有時補上
-    const cond = report.market === 'stock' && typeof body?.order_cond === 'string' && body.order_cond && !old.order.order_cond ? body.order_cond : undefined;
     return rows.map(t => t !== old ? t : { ...t, ...(cond ? { order: { ...t.order, order_cond: cond } } : {}), status: { ...t.status, deal_quantity: quantity,
         status: statusOf(t.order.quantity, quantity, t.status.cancel_quantity),
-        deals: [...t.status.deals, { seq, ts: report.ts!, quantity: report.quantity, price: report.price }] } });
+        deals: [...held, detail] } });
 }

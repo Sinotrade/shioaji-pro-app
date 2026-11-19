@@ -17,7 +17,7 @@ const m = vi.hoisted(() => ({
 }));
 vi.mock('../lib/account-store', () => {
     const state = () => ({ accounts: m.accounts, selectedStock: m.accounts[0], selectedFutures: null, selectedIntl: m.accounts.find(a => a.account_type === 'H') ?? null, loaded: true });
-    return { useAccounts: state, getAccountState: state, selectAccount: vi.fn() };
+    return { useAccounts: state, getAccountState: state, selectAccount: vi.fn(), subscribeAccounts: () => () => {} };
 });
 vi.mock('../lib/account-tradable', () => ({ canTrade: (a: { signed: boolean }) => a.signed }));
 vi.mock('../hooks/use-stream', () => ({
@@ -45,7 +45,7 @@ vi.mock('../lib/shioaji', () => ({
     placeStockOrder: m.stock,
 }));
 vi.mock('../lib/trade', () => ({ notify: vi.fn() }));
-vi.mock('../lib/server-info-store', () => ({ captureServerMode: () => () => true, SERVER_MODE_CHANGED_MESSAGE: 'changed' }));
+vi.mock('../lib/server-info-store', async importOriginal => ({ ...(await importOriginal<object>()), captureServerMode: () => () => true, SERVER_MODE_CHANGED_MESSAGE: 'changed' }));
 vi.mock('../lib/bracket', () => ({ ensureBracketHost: vi.fn(), registerBracket: vi.fn(), registrationFailureText: String, validateBracketRequest: () => null }));
 vi.mock('./bracket-status', () => ({ BracketStatusList: () => null }));
 vi.mock('../lib/protection-env', () => ({ currentProtectionEnv: () => 'sim' }));

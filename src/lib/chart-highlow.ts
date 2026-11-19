@@ -142,7 +142,8 @@ interface MarkSpec {
 }
 
 /** 兩個標籤框（版面已夾回 pane 之後）若重疊，把最低往下、放不下就把最高往上 */
-export function resolveOverlap(high: MarkLayout, low: MarkLayout, paneHeight: number): void {
+type MarkBox = Pick<MarkLayout, 'boxX' | 'boxY' | 'boxW' | 'boxH'>;
+export function resolveOverlap(high: MarkBox, low: MarkBox, paneHeight: number): void {
     const xOverlap = high.boxX < low.boxX + low.boxW && low.boxX < high.boxX + high.boxW;
     if (!xOverlap) return;
     const gap = 2;

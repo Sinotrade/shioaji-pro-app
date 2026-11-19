@@ -213,9 +213,14 @@ export function Popover({
         place();
         win.addEventListener('resize', place);
         win.addEventListener('scroll', place, true);
+        // 內容長高（例如成交標記設定展開色盤）也重新定位，下半部不會跑出視窗
+        const RO = (win as typeof window).ResizeObserver;
+        const ro = RO && popRef.current ? new RO(place) : null;
+        if (ro) ro.observe(popRef.current!);
         return () => {
             win.removeEventListener('resize', place);
             win.removeEventListener('scroll', place, true);
+            ro?.disconnect();
         };
     }, [anchor]);
 

@@ -5,9 +5,12 @@ import { normalizeOrderEvent, type OrderEventReport } from './order-report';
 import schema from './fixtures/order-callback-openapi-1.7.5.json';
 import type { TradeObservation } from './trade-observations';
 import type { Account } from './types/portfolio';
+import { remainingWorkingOrderQuantity } from './working-order-quantity';
 
 const mocks = vi.hoisted(() => ({
     extraAccounts: [] as Account[],
+    accountsLoaded: true,
+    accountsChanged: new Set<() => void>(),
     status: 'live', order: null as ((r: OrderEventReport) => void) | null,
     statusChanged: null as (() => void) | null,
     tick: null as ((t: { code: string; close: string; simtrade?: boolean }) => void) | null,
@@ -16,7 +19,7 @@ const mocks = vi.hoisted(() => ({
     positions: vi.fn(), trades: vi.fn(), balance: vi.fn(), margin: vi.fn(), subscribe: vi.fn(), health: vi.fn(),
     account: { account_type: 'S', broker_id: 'fixture', account_id: 'a', person_id: 'fixture', signed: true, username: 'fixture' },
 }));
-vi.mock('./account-store', () => ({ useAccounts: () => ({ accounts: [mocks.account, ...mocks.extraAccounts], selectedStock: mocks.account, selectedFutures: null }), getAccountState: () => ({ accounts: [mocks.account, ...mocks.extraAccounts] }), refreshAccounts: vi.fn(), subscribeAccounts: () => () => undefined }));
+vi.mock('./account-store', () => ({ useAccounts: () => ({ accounts: [mocks.account, ...mocks.extraAccounts], selectedStock: mocks.account, selectedFutures: null }), getAccountState: () => ({ accounts: mocks.accountsLoaded ? [mocks.account, ...mocks.extraAccounts] : [], loaded: mocks.accountsLoaded }), refreshAccounts: vi.fn(), subscribeAccounts: (listener: () => void) => { mocks.accountsChanged.add(listener); return () => mocks.accountsChanged.delete(listener); } }));
 vi.mock('./runtime', () => ({ getApiBase: () => 'http://fixture.invalid' }));
 vi.mock('./boot', () => ({ subscribeTradeReports: mocks.subscribe }));
 vi.mock('./trade-observations', () => ({ onTradeResponse: (cb: typeof mocks.response) => { mocks.response = cb; return vi.fn(); } }));
@@ -56,6 +59,8 @@ beforeEach(async () => {
     mocks.account.account_id = 'a'; mocks.account.broker_id = 'fixture';
     mocks.account.signed = true;
     mocks.extraAccounts = [];
+    mocks.accountsLoaded = true;
+    mocks.accountsChanged.clear();
     mocks.positions.mockReset().mockImplementation(async () => [baseline()]);
     mocks.trades.mockReset().mockResolvedValue([]); mocks.balance.mockReset().mockResolvedValue({ acc_balance: 100, date: '2026-09-12', errmsg: '' });
     mocks.subscribe.mockReset().mockResolvedValue(undefined);
@@ -93,6 +98,283 @@ it('mode discovery rereads positions, orders and funds despite the initial snaps
     const calls = [mocks.positions, mocks.trades, mocks.balance].map(fn => fn.mock.calls.length);
     await act(async () => { await store.refreshTradingStateForModeChange(); });
     expect([mocks.positions, mocks.trades, mocks.balance].map(fn => fn.mock.calls.length)).toEqual(calls.map(n => n + 1));
+});
+
+describe('orders snapshot environment provenance', () => {
+    async function mirrorFixture() {
+        const channels: Array<{ name: string; fire: (data: unknown) => void }> = [];
+        class Channel {
+            listener?: (event: { data: unknown }) => void;
+            constructor(public name: string) { channels.push(this); }
+            addEventListener(_name: string, listener: (event: { data: unknown }) => void) { this.listener = listener; }
+            postMessage(_data: unknown) { /* supplied by this fixture */ }
+            fire(data: unknown) { this.listener?.({ data }); }
+        }
+        vi.resetModules();
+        vi.stubGlobal('location', { search: '?popout=chart' });
+        vi.stubGlobal('BroadcastChannel', Channel);
+        const mirror = await import('./trading-state');
+        const info = await import('./server-info-store');
+        const channel = channels.find(candidate => candidate.name.startsWith('sj-trading-state:'))!;
+        const observe = (simulation: boolean) => info.observeServerInfo(info.beginServerInfoRequest(), { simulation } as import('./shioaji').ServerInfo);
+        const frame = (updatedAt: number) => ({ kind: 'state', state: { ...store.getTradingState(),
+            ordersSnapshotEnv: 'http://fixture.invalid|simulation',
+            queries: { ...store.getTradingState().queries, orders: { ...store.getTradingState().queries.orders, updatedAt } },
+        } });
+        return { mirror, info, channel, observe, frame };
+    }
+
+    it.each(['mode round trip', 'unknown mode', 'main gone', 'account change'] as const)('rejects delayed mirror provenance after %s and accepts a newer authoritative read', async cause => {
+        const { mirror, info, channel, observe, frame } = await mirrorFixture();
+        observe(true);
+        await Promise.resolve(); // 得知模式那一輪通知結束：之後的帳戶變化是另一件事
+        const old = frame(Date.now());
+        channel.fire(old);
+        expect(mirror.getTradingState().ordersSnapshotEnv).toBe('http://fixture.invalid|simulation');
+        vi.advanceTimersByTime(10);
+        if (cause === 'main gone') channel.fire({ kind: 'main-gone' });
+        else if (cause === 'account change') {
+            mocks.extraAccounts = [{ ...mocks.account, account_id: 'b' }];
+            mocks.accountsChanged.forEach(listener => listener());
+        } else {
+            if (cause === 'unknown mode') info.forgetServerInfo('http://fixture.invalid');
+            else observe(false);
+            observe(true);
+        }
+        channel.fire(old);
+        expect(mirror.getTradingState().ordersSnapshotEnv).toBeNull();
+        channel.fire(frame(Date.now())); // same-millisecond completion is ambiguous
+        expect(mirror.getTradingState().ordersSnapshotEnv).toBeNull();
+        vi.advanceTimersByTime(1);
+        channel.fire(frame(Date.now()));
+        expect(mirror.getTradingState().ordersSnapshotEnv).toBe('http://fixture.invalid|simulation');
+    });
+
+    it.each([false, true])('a mirror that re-learns its mode after the main window re-read keeps accepting that read (accounts change too: %s)', async accountsToo => {
+        const { mirror, info, channel, observe, frame } = await mirrorFixture();
+        observe(true);
+        channel.fire(frame(Date.now()));
+        vi.advanceTimersByTime(10);
+        info.forgetServerInfo('http://fixture.invalid'); // stream lost: mode unknown here
+        vi.advanceTimersByTime(10);
+        const reread = frame(Date.now()); // the main window's authoritative read after the reconnect
+        vi.advanceTimersByTime(10);
+        observe(true); // this window's /info answers later than the main window's read
+        if (accountsToo) {
+            mocks.extraAccounts = [{ ...mocks.account, account_id: 'b' }];
+            mocks.accountsChanged.forEach(listener => listener());
+        }
+        await Promise.resolve();
+        channel.fire(reread);
+        expect(mirror.getTradingState().ordersSnapshotEnv).toBe('http://fixture.invalid|simulation');
+    });
+
+    it('accepts an existing snapshot when a new mirror first discovers its mode and accounts', async () => {
+        mocks.accountsLoaded = false;
+        const { mirror, channel, observe, frame } = await mirrorFixture();
+        const old = frame(Date.now() - 1000);
+        channel.fire(old);
+        observe(true);
+        mocks.accountsLoaded = true;
+        mocks.accountsChanged.forEach(listener => listener());
+        channel.fire(old);
+        expect(mirror.getTradingState().ordersSnapshotEnv).toBe('http://fixture.invalid|simulation');
+    });
+
+    it('after the first discovery, a later change of the eligible accounts revokes the mirror snapshot', async () => {
+        mocks.accountsLoaded = false;
+        const { mirror, channel, observe, frame } = await mirrorFixture();
+        const old = frame(Date.now() - 1000);
+        channel.fire(old);
+        observe(true);
+        mocks.accountsLoaded = true;
+        mocks.accountsChanged.forEach(listener => listener()); // first discovery keeps the main window's snapshot
+        channel.fire(old);
+        expect(mirror.getTradingState().ordersSnapshotEnv).toBe('http://fixture.invalid|simulation');
+        mocks.extraAccounts = [{ ...mocks.account, account_id: 'b' }];
+        mocks.accountsChanged.forEach(listener => listener()); // from now on the account list is known: any change revokes
+        expect(mirror.getTradingState().ordersSnapshotEnv).toBeNull();
+    });
+
+    it('tells subscribers at the moment the provenance is revoked (so a chart hides stale fills immediately)', async () => {
+        const info = await import('./server-info-store');
+        await act(async () => { info.observeServerInfo(info.beginServerInfoRequest(), { simulation: true } as import('./shioaji').ServerInfo); });
+        await act(async () => { await store.refreshTradingStateForModeChange(); });
+        expect(store.getTradingState().ordersSnapshotEnv).toBe('http://fixture.invalid|simulation');
+        const seen: Array<string | null | undefined> = [];
+        const stop = store.subscribeTradingState(() => seen.push(store.getTradingState().ordersSnapshotEnv));
+        await act(async () => { info.observeServerInfo(info.beginServerInfoRequest(), { simulation: false } as import('./shioaji').ServerInfo); });
+        expect(seen).toContain(null);
+        stop();
+    });
+
+    it('invalidates retained simulation rows when an unqueried account becomes eligible in production', async () => {
+        const info = await import('./server-info-store');
+        info.observeServerInfo(info.beginServerInfoRequest(), { simulation: true } as import('./shioaji').ServerInfo);
+        await emit(order()); await emit(deal());
+        const b = { ...mocks.account, account_id: 'b', signed: false };
+        const old = store.getTradingState().trades[0]!;
+        const simB = { ...old, account: b, order: { ...old.order, account: b } };
+        mocks.extraAccounts = [b];
+        mocks.accountsChanged.forEach(listener => listener());
+        mocks.trades.mockImplementation(async (_type: string, account: Account) => account.account_id === 'b' ? [simB] : []);
+        await act(async () => { await store.refreshTradingStateForModeChange(); });
+        info.observeServerInfo(info.beginServerInfoRequest(), { simulation: false } as import('./shioaji').ServerInfo);
+        mocks.trades.mockResolvedValue([]);
+        await act(async () => { await store.refreshTradingStateForModeChange(); });
+        expect(store.getTradingState().ordersSnapshotEnv).toBe('http://fixture.invalid|production');
+        const retained = store.getTradingState().trades;
+        expect(retained.some(t => t.account?.account_id === 'b')).toBe(true);
+        mocks.extraAccounts = [{ ...b, signed: true }];
+        await act(async () => { mocks.accountsChanged.forEach(listener => listener()); });
+        expect(store.getTradingState().ordersSnapshotEnv).toBeNull();
+        expect(store.getTradingState().trades).toBe(retained);
+        await act(async () => { await store.refreshTradingStateForModeChange(); });
+        expect(store.getTradingState().ordersSnapshotEnv).toBe('http://fixture.invalid|production');
+        expect(store.getTradingState().trades).toEqual([]);
+    });
+
+    it('keeps provenance for selection or account-label updates with the same eligible identities', async () => {
+        const info = await import('./server-info-store');
+        info.observeServerInfo(info.beginServerInfoRequest(), { simulation: false } as import('./shioaji').ServerInfo);
+        await act(async () => { await store.refreshTradingStateForModeChange(); });
+        await act(async () => { mocks.accountsChanged.forEach(listener => listener()); });
+        expect(store.getTradingState().ordersSnapshotEnv).toBe('http://fixture.invalid|production');
+    });
+
+    it('stamps the snapshot with currentProtectionEnv() itself, so the chart comparison cannot drift from a second key builder', async () => {
+        vi.resetModules();
+        vi.doMock('./protection-env', async (importOriginal) => ({
+            ...await importOriginal<typeof import('./protection-env')>(),
+            currentProtectionEnv: () => 'sentinel-env',
+        }));
+        try {
+            const info = await import('./server-info-store');
+            const fresh = await import('./trading-state');
+            info.observeServerInfo(info.beginServerInfoRequest(), { simulation: false } as import('./shioaji').ServerInfo);
+            await act(async () => { await fresh.refreshTradingStateForModeChange(); });
+            expect(fresh.getTradingState().ordersSnapshotEnv).toBe('sentinel-env');
+        } finally { vi.doUnmock('./protection-env'); }
+    });
+
+    it('does not restamp a snapshot when its eligible-account scope changes during the read', async () => {
+        const info = await import('./server-info-store');
+        info.observeServerInfo(info.beginServerInfoRequest(), { simulation: false } as import('./shioaji').ServerInfo);
+        const pending = deferred<[]>();
+        mocks.trades.mockImplementationOnce(() => pending.promise);
+        let run!: Promise<void>;
+        await act(async () => { run = store.refreshTradingStateForModeChange(); });
+        mocks.extraAccounts = [{ ...mocks.account, account_id: 'b' }];
+        mocks.accountsChanged.forEach(listener => listener());
+        pending.resolve([]);
+        await act(async () => { await run; });
+        expect(store.getTradingState().ordersSnapshotEnv).toBeNull();
+    });
+
+    it('invalidates retained fills immediately across mode changes and only restamps a successful authoritative snapshot', async () => {
+        const info = await import('./server-info-store');
+        await act(async () => { info.observeServerInfo(info.beginServerInfoRequest(), { simulation: true } as import('./shioaji').ServerInfo); });
+        await emit(order());
+        await emit(deal());
+        const simulated = store.getTradingState().trades;
+        mocks.trades.mockResolvedValue(simulated);
+        await act(async () => { await store.refreshTradingStateForModeChange(); });
+        expect(store.getTradingState().ordersSnapshotEnv).toBe('http://fixture.invalid|simulation');
+        // LiveCandleChart compares this stamp with currentProtectionEnv(); the two builders must never drift apart.
+        expect(store.getTradingState().ordersSnapshotEnv).toBe((await import('./protection-env')).currentProtectionEnv());
+
+        const retained = store.getTradingState().trades;
+        await act(async () => { info.observeServerInfo(info.beginServerInfoRequest(), { simulation: false } as import('./shioaji').ServerInfo); });
+        expect(store.getTradingState().ordersSnapshotEnv).toBeNull();
+        expect(store.getTradingState().trades).toBe(retained);
+        mocks.trades.mockRejectedValue(new Error('orders unavailable'));
+        await act(async () => { await store.refreshTradingStateForModeChange(); });
+        expect(store.getTradingState().ordersSnapshotEnv).toBeNull();
+        expect(store.getTradingState().trades).toBe(retained);
+
+        await act(async () => { info.observeServerInfo(info.beginServerInfoRequest(), { simulation: true } as import('./shioaji').ServerInfo); });
+        expect(store.getTradingState().ordersSnapshotEnv).toBeNull();
+        mocks.trades.mockResolvedValue(simulated);
+        await act(async () => { await store.refreshTradingStateForModeChange(); });
+        expect(store.getTradingState().ordersSnapshotEnv).toBe('http://fixture.invalid|simulation');
+        await act(async () => { info.forgetServerInfo('http://fixture.invalid'); });
+        expect(store.getTradingState().ordersSnapshotEnv).toBeNull();
+    });
+
+    it.each(['positions', 'account'] as const)('does not establish orders provenance after refreshing only %s', async scope => {
+        const info = await import('./server-info-store');
+        await act(async () => { info.observeServerInfo(info.beginServerInfoRequest(), { simulation: false } as import('./shioaji').ServerInfo); });
+        vi.advanceTimersByTime(1600);
+        await act(async () => { await store.refreshTradingState(scope); });
+        expect(store.getTradingState().ordersSnapshotEnv).toBeNull();
+    });
+
+    it('does not stamp an unknown-mode or partly failed multi-account orders snapshot', async () => {
+        expect(store.getTradingState().ordersSnapshotEnv).toBeNull();
+        const info = await import('./server-info-store');
+        await act(async () => { info.observeServerInfo(info.beginServerInfoRequest(), { simulation: false } as import('./shioaji').ServerInfo); });
+        mocks.extraAccounts = [{ ...mocks.account, account_id: 'b' }];
+        mocks.trades.mockImplementation(async (_type: string, account: Account) => {
+            if (account.account_id === 'b') throw new Error('second account unavailable');
+            return [];
+        });
+        vi.advanceTimersByTime(1600);
+        await act(async () => { await store.refreshTradingState('orders'); });
+        expect(store.getTradingState().queries.orders.reasons).toContain('query-failed');
+        expect(store.getTradingState().ordersSnapshotEnv).toBeNull();
+        mocks.trades.mockResolvedValue([]);
+        vi.advanceTimersByTime(1600);
+        await act(async () => { await store.refreshTradingState('orders'); });
+        expect(store.getTradingState().ordersSnapshotEnv).toBe('http://fixture.invalid|production');
+    });
+
+    it('does not stamp orders whose snapshot has a disconnect problem', async () => {
+        const info = await import('./server-info-store');
+        await act(async () => { info.observeServerInfo(info.beginServerInfoRequest(), { simulation: false } as import('./shioaji').ServerInfo); });
+        mocks.status = 'stale';
+        vi.advanceTimersByTime(1600);
+        await act(async () => { await store.refreshTradingState('orders'); });
+        expect(store.getTradingState().queries.orders.reasons).toContain('disconnect');
+        expect(store.getTradingState().ordersSnapshotEnv).toBeNull();
+    });
+
+    it('cache-only upsert cannot restore provenance lost on a mode change', async () => {
+        const info = await import('./server-info-store');
+        await act(async () => { info.observeServerInfo(info.beginServerInfoRequest(), { simulation: true } as import('./shioaji').ServerInfo); });
+        await act(async () => { await store.refreshTradingStateForModeChange(); });
+        expect(store.getTradingState().ordersSnapshotEnv).toBe('http://fixture.invalid|simulation');
+        await act(async () => { info.observeServerInfo(info.beginServerInfoRequest(), { simulation: false } as import('./shioaji').ServerInfo); });
+        mocks.trades.mockClear();
+        await act(async () => { mocks.status = 'stale'; mocks.statusChanged!(); });
+        await act(async () => { mocks.status = 'live'; mocks.statusChanged!(); });
+        await flush();
+        expect(mocks.trades).toHaveBeenCalledWith('S', mocks.account, { refresh: false });
+        expect(store.getTradingState().ordersSnapshotEnv).toBeNull();
+    });
+
+    it('invalidates mirrored provenance on a mode change even before the mirror starts', async () => {
+        const channels: Array<{ name: string; fire: (data: unknown) => void }> = [];
+        class Channel {
+            listener?: (event: { data: unknown }) => void;
+            constructor(public name: string) { channels.push(this); }
+            addEventListener(_name: string, listener: (event: { data: unknown }) => void) { this.listener = listener; }
+            postMessage(_data: unknown) { /* owner state is supplied below */ }
+            fire(data: unknown) { this.listener?.({ data }); }
+        }
+        vi.resetModules();
+        vi.stubGlobal('location', { search: '?popout=chart' });
+        vi.stubGlobal('BroadcastChannel', Channel);
+        const mirror = await import('./trading-state');
+        const info = await import('./server-info-store');
+        info.observeServerInfo(info.beginServerInfoRequest(), { simulation: true } as import('./shioaji').ServerInfo);
+        const channel = channels.find(candidate => candidate.name.startsWith('sj-trading-state:'))!;
+        channel.fire({ kind: 'state', state: { ...store.getTradingState(), ordersSnapshotEnv: 'http://fixture.invalid|simulation' } });
+        expect(mirror.getTradingState().ordersSnapshotEnv).toBe('http://fixture.invalid|simulation');
+        info.observeServerInfo(info.beginServerInfoRequest(), { simulation: false } as import('./shioaji').ServerInfo);
+        expect(mirror.getTradingState().ordersSnapshotEnv).toBeNull();
+        info.observeServerInfo(info.beginServerInfoRequest(), { simulation: true } as import('./shioaji').ServerInfo);
+        expect(mirror.getTradingState().ordersSnapshotEnv).toBeNull();
+    });
 });
 
 it('retries a mode-change snapshot if production reconnects while it is still reading', async () => {
@@ -776,6 +1058,12 @@ describe('read-back confirmed cancellation (#120 / #116)', () => {
         const { remainingWorkingOrderQuantity } = await import('./working-order-quantity');
         expect(remainingWorkingOrderQuantity(row)).toBe(0);
     });
+    it('a confirmed read-back without deals leaves the row a deals array', async () => {
+        await emit(order()); const old = store.getTradingState().trades[0]!;
+        const { observeTradeMutation, markConfirmedCancellation } = await import('./trade-mutations');
+        await act(async () => { await observeTradeMutation(old.order.id, async () => markConfirmedCancellation(cancelled(old, { deals: undefined }))); vi.advanceTimersByTime(50); });
+        expect(store.getTradingState().trades[0]!.status).toMatchObject({ status: 'Cancelled', deals: [] });
+    });
     it('falls back to 改刪待確認 when the local row already knows more fills than the read-back', async () => {
         await emit(order()); const old = store.getTradingState().trades[0]!;
         const { observeTradeMutation, markConfirmedCancellation } = await import('./trade-mutations');
@@ -1138,6 +1426,226 @@ describe('Shioaji 1.7.6 report identity and cache health', () => {
         expect(store.hasOrdersBaseline()).toBe(false);
         expect(store.tradeCacheContinuous()).toBe(false);
     });
+    // The cache may hold the order but not its deals; a cache-only resync must not
+    // silently drop fills the App already projected from SSE (that empties the list).
+    async function cacheResyncAfterDrop() {
+        await act(async () => { mocks.status = 'down'; mocks.statusChanged!(); });
+        await act(async () => { mocks.status = 'live'; mocks.statusChanged!(); });
+        await vi.waitFor(() => expect(mocks.trades).toHaveBeenCalledWith('S', expect.anything(), { refresh: false }));
+        await act(async () => { await Promise.resolve(); vi.advanceTimersByTime(50); });
+    }
+    async function observeSimulation() {
+        const info = await import('./server-info-store');
+        info.observeServerInfo(info.beginServerInfoRequest(), { simulation: true } as import('./shioaji').ServerInfo);
+    }
+    // The resync completed (it resolved the drop) and kept the simulation snapshot.
+    function expectCleanResync() {
+        expect(reasons('orders')).toEqual([]);
+        expect(store.getTradingState().queries.orders.needsReconcile).toBe(false);
+        expect(store.getTradingState().ordersSnapshotEnv).toBe('http://fixture.invalid|simulation');
+    }
+    // deal() is fixed to account 'a'; this describe's stock account differs.
+    const stockDeal = (seq: string) => normalizeOrderEvent({ state: 'StockDeal', data: { StockDeal: {
+        trade_id: 'new', seqno: 'new', ordno: 'new', exchange_seq: seq, broker_id: mocks.account.broker_id, account_id: mocks.account.account_id,
+        action: 'Buy', code: '2330', price: 101, quantity: 1, order_lot: 'Common', order_cond: 'Cash', ts: epoch + 2,
+    } } })!;
+    it('a cache-only resync keeps fills the App already holds when the cache row omits their deals', async () => {
+        await observeSimulation();
+        await emit(order());
+        const held = () => store.getTradingState().trades.find(t => t.order.id === 'new')!;
+        // The App holds the fill from an authoritative read; the cache later omits its deals.
+        const filled = { seq: 'fill-1', price: 101, quantity: 1, ts: epoch + 2 };
+        const reported = { ...held(), status: { ...held().status, status: 'PartFilled', deal_quantity: 1, deals: [filled] } };
+        mocks.trades.mockResolvedValue([reported]);
+        vi.advanceTimersByTime(60_000);
+        await act(async () => { await store.refreshTradingState('orders'); });
+        expect(held().status.deals.map(d => d.seq)).toEqual(['fill-1']);
+        mocks.trades.mockResolvedValue([{ ...reported, status: { ...reported.status, deals: [] } }]);
+        await cacheResyncAfterDrop();
+        expect(held().status.deals.map(d => d.seq)).toEqual(['fill-1']);
+        expectCleanResync();
+    });
+    it('a cache row without a deals key still applies its status and keeps the held fill', async () => {
+        await observeSimulation();
+        await emit(order());
+        const held = () => store.getTradingState().trades.find(t => t.order.id === 'new')!;
+        const filled = { seq: 'fill-1', price: 101, quantity: 1, ts: epoch + 2 };
+        const reported = { ...held(), status: { ...held().status, status: 'PartFilled', deal_quantity: 1, deals: [filled] } };
+        mocks.trades.mockResolvedValue([reported]);
+        vi.advanceTimersByTime(60_000);
+        await act(async () => { await store.refreshTradingState('orders'); });
+        // Without a deals array the merge must still complete: status moves, the fill stays.
+        mocks.trades.mockResolvedValue([{ ...reported, status: { ...reported.status, status: 'Filled', deals: undefined } }]);
+        await cacheResyncAfterDrop();
+        expect(held().status.status).toBe('Filled');
+        expect(held().status.deals.map(d => d.seq)).toEqual(['fill-1']);
+        expectCleanResync();
+    });
+    // The chart checks deal_quantity against deals itself; the store raises no
+    // global cause for it (only an authoritative read could clear one).
+    it('a cache row that reports filled quantity without any deals raises no cause; an authoritative read later adds the fill', async () => {
+        await observeSimulation();
+        await emit(order());
+        const held = () => store.getTradingState().trades.find(t => t.order.id === 'new')!;
+        const reported = { ...held(), status: { ...held().status, status: 'PartFilled', deal_quantity: 1, deals: [] } };
+        mocks.trades.mockResolvedValue([reported]);
+        await cacheResyncAfterDrop();
+        expect(held().status.deal_quantity).toBe(1);
+        expect(held().status.deals).toEqual([]);
+        expect(reasons('orders')).toEqual([]);
+        mocks.trades.mockResolvedValue([{ ...reported, status: { ...reported.status, deals: [{ seq: 'fill-1', price: 101, quantity: 1, ts: epoch + 2 }] } }]);
+        vi.advanceTimersByTime(60_000);
+        await act(async () => { await store.refreshTradingState('orders'); });
+        expect(held().status.deals.map(d => d.seq)).toEqual(['fill-1']);
+        expect(reasons('orders')).toEqual([]);
+    });
+    it('rows without deals (cache known/new row, authoritative read) store an empty array, so a later SSE deal still projects', async () => {
+        await emit(order());
+        const row = (id: string) => store.getTradingState().trades.find(t => t.order.id === id)!;
+        const bare = (id: string) => ({ ...row('new'), order: { ...row('new').order, id }, status: { ...row('new').status, id, deals: undefined } });
+        mocks.trades.mockResolvedValue([bare('new'), bare('cache-only')]);
+        await cacheResyncAfterDrop();
+        expect(row('new').status.deals).toEqual([]);
+        expect(row('cache-only').status.deals).toEqual([]);
+        expect(reasons('orders')).toEqual([]);
+        mocks.trades.mockResolvedValue([bare('new')]);
+        vi.advanceTimersByTime(60_000);
+        await act(async () => { await store.refreshTradingState('orders'); });
+        expect(row('new').status.deals).toEqual([]);
+        await emit(stockDeal('000001'));
+        expect(row('new').status.deals.map(d => d.seq)).toEqual(['000001']);
+    });
+    it('an order response row without deals still takes a later SSE deal', async () => {
+        await act(async () => { mocks.response!({ account: stock, trade: { contract: { code: '2330', security_type: 'STK', exchange: 'TSE', target_code: null },
+            order: { id: 'new', seqno: 'new', ordno: 'new', account: stock, action: 'Buy', price: 100, quantity: 3 },
+            status: { id: 'new', status: 'Submitted', status_code: '', msg: '', order_quantity: 3, deal_quantity: 0, cancel_quantity: 0, modified_price: 0 } } as unknown as import('./types/order').Trade }); });
+        await emit(stockDeal('000001'));
+        expect(store.getTradingState().trades.find(t => t.order.id === 'new')!.status.deals.map(d => d.seq)).toEqual(['000001']);
+    });
+    it('a cache row repeating a fill SSE already projected keeps it once', async () => {
+        await emit(order());
+        await emit(stockDeal('000001'));
+        const held = () => store.getTradingState().trades.find(t => t.order.id === 'new')!;
+        expect(held().status.deals.map(d => d.seq)).toEqual(['000001']);
+        mocks.trades.mockResolvedValue([held()]);
+        await cacheResyncAfterDrop();
+        expect(held().status.deals.map(d => d.seq)).toEqual(['000001']);
+        expect(held().status.deal_quantity).toBe(1);
+        expect(reasons('orders')).toEqual([]);
+    });
+    // REST and the cache may spell one fill's seq differently: the row's deals
+    // already cover deal_quantity, so the held spelling is not added again.
+    it('a cache row whose deals already cover deal_quantity is not padded with a differently keyed held fill', async () => {
+        await emit(order());
+        const held = () => store.getTradingState().trades.find(t => t.order.id === 'new')!;
+        const fill = (seq: string) => ({ seq, price: 101, quantity: 1, ts: epoch + 2 });
+        const reported = { ...held(), status: { ...held().status, status: 'PartFilled', deal_quantity: 1, deals: [fill('rest-1')] } };
+        mocks.trades.mockResolvedValue([reported]);
+        vi.advanceTimersByTime(60_000);
+        await act(async () => { await store.refreshTradingState('orders'); });
+        expect(held().status.deals.map(d => d.seq)).toEqual(['rest-1']);
+        mocks.trades.mockResolvedValue([{ ...reported, status: { ...reported.status, deals: [fill('sse-1')] } }]);
+        await cacheResyncAfterDrop();
+        expect(held().status.deals.map(d => d.seq)).toEqual(['sse-1']);
+        expect(reasons('orders')).toEqual([]);
+    });
+    it('a cache row with only part of its deals is filled up to deal_quantity from held fills', async () => {
+        await emit(order());
+        const held = () => store.getTradingState().trades.find(t => t.order.id === 'new')!;
+        const fill = (seq: string, price: number) => ({ seq, price, quantity: 1, ts: epoch + 2 });
+        const reported = { ...held(), status: { ...held().status, status: 'PartFilled', deal_quantity: 2, deals: [fill('a', 101), fill('b', 102)] } };
+        mocks.trades.mockResolvedValue([reported]);
+        vi.advanceTimersByTime(60_000);
+        await act(async () => { await store.refreshTradingState('orders'); });
+        mocks.trades.mockResolvedValue([{ ...reported, status: { ...reported.status, deals: [fill('a', 101)] } }]);
+        await cacheResyncAfterDrop();
+        expect(held().status.deals.map(d => d.seq)).toEqual(['a', 'b']);
+        expect(reasons('orders')).toEqual([]);
+    });
+    it('one fill spelled with another seq (REST vs SSE) is not added twice; the fill really missing still is', async () => {
+        await emit(order());
+        const held = () => store.getTradingState().trades.find(t => t.order.id === 'new')!;
+        const reported = { ...held(), status: { ...held().status, status: 'PartFilled', deal_quantity: 2,
+            deals: [{ seq: '1', price: 101, quantity: 1, ts: epoch + 2.004 }, { seq: '2', price: 102, quantity: 1, ts: epoch + 5 }] } };
+        mocks.trades.mockResolvedValue([reported]);
+        vi.advanceTimersByTime(60_000);
+        await act(async () => { await store.refreshTradingState('orders'); });
+        // The cache lists the first fill under its own seq spelling and lacks the second.
+        mocks.trades.mockResolvedValue([{ ...reported, status: { ...reported.status, deals: [{ seq: '000001', price: 101, quantity: 1, ts: epoch + 2 }] } }]);
+        await cacheResyncAfterDrop();
+        expect(held().status.deals.map(d => d.seq)).toEqual(['000001', '2']);
+    });
+    it('two fills that cannot be told apart leave the gap open rather than guess (the chart then reports missing deals)', async () => {
+        await emit(order());
+        const held = () => store.getTradingState().trades.find(t => t.order.id === 'new')!;
+        const fill = (seq: string) => ({ seq, price: 101, quantity: 1, ts: epoch + 2 });
+        const reported = { ...held(), status: { ...held().status, status: 'PartFilled', deal_quantity: 2, deals: [fill('a'), fill('b')] } };
+        mocks.trades.mockResolvedValue([reported]);
+        vi.advanceTimersByTime(60_000);
+        await act(async () => { await store.refreshTradingState('orders'); });
+        mocks.trades.mockResolvedValue([{ ...reported, status: { ...reported.status, deals: [fill('a')] } }]);
+        await cacheResyncAfterDrop();
+        expect(held().status.deals.map(d => d.seq)).toEqual(['a']);
+        expect(held().status.deal_quantity).toBe(2);
+        expect(reasons('orders')).toEqual([]);
+    });
+    // An order placed in another window or the desktop App: this window never sees its HTTP
+    // response, and a simulation New carries no full_code, so the report is parked.
+    const otherWindowFill = () => {
+        const fill = body(byId('v1:FD:FSTREAM:RESET1:8')) as { exchange_seq: string; price: number; quantity: number; ts: number };
+        const row = response(byId('v1:FO:FSTREAM:RESET1:12'), futures).trade;
+        return { ...row, status: { ...row.status, status: 'Filled', deal_quantity: 1, deals: [{ seq: fill.exchange_seq, price: fill.price, quantity: 1, ts: fill.ts }] } };
+    };
+    it('an order placed in another window is resolved from the cache shortly after, without a manual update', async () => {
+        await deliver(byId('v1:FO:FSTREAM:RESET1:12'));
+        await deliver(byId('v1:FD:FSTREAM:RESET1:8'));
+        expect(reasons('orders')).toEqual(expect.arrayContaining(['pending-report']));
+        expect(reasons('orders')).not.toContain('sequence-gap');
+        mocks.trades.mockClear().mockImplementation(async (type: string) => type === 'F' ? [otherWindowFill()] : []);
+        mocks.health.mockClear();
+        await act(async () => { vi.advanceTimersByTime(1500); });
+        await act(async () => { await Promise.resolve(); await Promise.resolve(); vi.advanceTimersByTime(50); });
+        await vi.waitFor(() => expect(reasons('orders')).toEqual([]));
+        expect(mocks.health).toHaveBeenCalled();
+        expect(mocks.trades.mock.calls.every(c => c[2]?.refresh === false)).toBe(true);
+        const row = store.getTradingState().trades.find(t => t.order.id === 'fx05')!;
+        expect(row.status.deals.map(d => d.seq)).toEqual(['000001']);
+        expect(row.status.deal_quantity).toBe(1);
+    });
+    // Review repro: a 2-lot order from another window, its first 1-lot fill arrives before the
+    // order is known. The automatic cache read must never count that fill twice, whatever the
+    // cache already shows (it reached the cache before or after the read).
+    it.each([
+        ['the cache counts the fill without its detail', 1, false],
+        ['the cache lists the fill (real shape)', 1, true],
+        ['the cache has not seen the fill yet', 0, false],
+    ] as const)('another window, fill before order: the automatic read counts it once when %s', async (_label, cacheDq, listed) => {
+        const fill = body(byId('v1:FD:FSTREAM:RESET1:8')) as { exchange_seq: string; price: number; quantity: number; ts: number };
+        const row = response(byId('v1:FO:FSTREAM:RESET1:12'), futures).trade;
+        const cacheRow = { ...row, order: { ...row.order, quantity: 2 }, status: { ...row.status, status: cacheDq ? 'PartFilled' : 'Submitted', order_quantity: 2,
+            deal_quantity: cacheDq, deals: listed ? [{ seq: fill.exchange_seq, price: fill.price, quantity: 1, ts: fill.ts }] : [] } };
+        mocks.trades.mockClear().mockImplementation(async (type: string) => type === 'F' ? [cacheRow] : []);
+        mocks.health.mockClear();
+        await deliver(byId('v1:FO:FSTREAM:RESET1:12'));
+        await deliver(byId('v1:FD:FSTREAM:RESET1:8'));
+        await act(async () => { vi.advanceTimersByTime(1500); });
+        for (let i = 0; i < 10; i += 1) await act(async () => { await Promise.resolve(); vi.advanceTimersByTime(50); });
+        await vi.waitFor(() => expect(reasons('orders')).toEqual([]));
+        const traded = store.getTradingState().trades.find(t => t.order.id === 'fx05')!;
+        expect(traded.status).toMatchObject({ deal_quantity: 1, status: 'PartFilled' });
+        expect(traded.status.deals.map(d => d.seq)).toEqual(['000001']);
+        expect(mocks.trades.mock.calls.every(c => c[2]?.refresh === false)).toBe(true);
+    });
+    it('a parked report this window resolves itself (its own order response) triggers no read', async () => {
+        await deliver(byId('v1:FO:FSTREAM:RESET1:12'));
+        expect(reasons('orders')).toContain('pending-report');
+        await act(async () => { mocks.response!(response(byId('v1:FO:FSTREAM:RESET1:12'), futures)); });
+        expect(reasons('orders')).not.toContain('pending-report');
+        mocks.health.mockClear(); mocks.trades.mockClear();
+        await act(async () => { vi.advanceTimersByTime(1600); });
+        expect(mocks.health).not.toHaveBeenCalled();
+        expect(mocks.trades).not.toHaveBeenCalled();
+    });
     it('backs off gap-triggered health reads while every cache stays Healthy', async () => {
         mocks.health.mockResolvedValue({ state: 'Healthy', reasons: [] });
         const waits: number[] = [];
@@ -1382,4 +1890,144 @@ it('an account refresh does not discard a fresh tick for another account', async
     expect(b).toMatchObject({ quantity: 1000, price: 101, last_price: 105, pnl: 4000 });
     // a was re-marked by its own snapshot (100), newer than the tick.
     expect(store.getTradingState().positions.find(p => p.account?.account_id === 'a')).toMatchObject({ last_price: 100 });
+});
+
+// A deal that beat its order is parked in pendingDeals. A later read-back row
+// (cache resync, update_status, HTTP response) can already count that fill in
+// deal_quantity without listing it in status.deals; replaying the parked fill
+// must then only add its detail, never count it again.
+describe('parked deal-before-order replayed onto a read-back row', () => {
+    const fill = (seq: string) => normalizeOrderEvent({ state: 'StockDeal', data: { StockDeal: {
+        trade_id: 'new', seqno: 'new', ordno: 'new', exchange_seq: seq, broker_id: 'fixture', account_id: 'a',
+        action: 'Buy', code: '2330', price: 101, quantity: 1, order_lot: 'Common', order_cond: 'Cash', ts: epoch + 2,
+    } } })!;
+    const detail = (seq: string) => ({ seq, ts: epoch + 2, quantity: 1, price: 101 });
+    const readRow = (quantity: number, dealQuantity: number, deals: ReturnType<typeof detail>[] = []) => ({
+        contract: { code: '2330', security_type: 'STK', exchange: 'TSE', target_code: null },
+        order: { id: 'new', seqno: 'new', ordno: 'new', action: 'Buy', price: 100, quantity, account: mocks.account },
+        status: { id: 'new', status: dealQuantity >= quantity ? 'Filled' : dealQuantity ? 'PartFilled' : 'Submitted', status_code: '', msg: '',
+            order_quantity: quantity, deal_quantity: dealQuantity, cancel_quantity: 0, modified_price: 0, deals },
+    }) as unknown as import('./types/order').Trade;
+    const row = () => store.getTradingState().trades.find(t => t.order.id === 'new')!;
+    const seqs = () => row().status.deals.map(d => d.seq);
+    const held = (code = '2330') => store.getTradingState().positions.find(p => p.code === code)?.quantity;
+    const reasons = () => [...store.getTradingState().queries.orders.reasons, ...store.getTradingState().queries.positions.reasons];
+    const futuresFill = (id: string, seq: string) => normalizeOrderEvent({ state: 'FuturesDeal', data: { FuturesDeal: {
+        trade_id: id, seqno: id, ordno: id, exchange_seq: seq, broker_id: 'fixture', account_id: 'a',
+        code: 'TXF', full_code: 'TXFI6', action: 'Buy', price: 200, quantity: 1, ts: epoch + 4,
+    } } })!;
+
+    it.each([
+        // review repro: quantity 2, the cache row counts the parked fill (dq 1) with deals []
+        { name: 'counted without detail (review repro)', quantity: 2, parked: ['000001'], readDq: 1, listed: [] as string[], status: 'PartFilled', dq: 1 },
+        { name: 'not counted yet', quantity: 2, parked: ['000001'], readDq: 0, listed: [], status: 'PartFilled', dq: 1 },
+        { name: 'detail already listed', quantity: 2, parked: ['000001'], readDq: 1, listed: ['000001'], status: 'PartFilled', dq: 1 },
+        { name: 'partial: two parked, one counted', quantity: 3, parked: ['000001', '000002'], readDq: 1, listed: [], status: 'PartFilled', dq: 2 },
+        { name: 'filled row without details', quantity: 2, parked: ['000001', '000002'], readDq: 2, listed: [], status: 'Filled', dq: 2 },
+    ])('cache resync: $name', async ({ quantity, parked, readDq, listed, status, dq }) => {
+        for (const seq of parked) await emit(fill(seq));
+        expect(reasons()).toContain('metadata-missing');
+        expect(held()).toBe(1000 + 1000 * parked.length); // stock fills hold at once
+        mocks.trades.mockResolvedValue([readRow(quantity, readDq, listed.map(detail))]);
+        await act(async () => { await store.checkTradeCacheHealth('gap'); vi.advanceTimersByTime(50); });
+        expect(mocks.trades).toHaveBeenLastCalledWith('S', mocks.account, { refresh: false });
+        expect(row().status).toMatchObject({ status, deal_quantity: dq });
+        expect(seqs()).toEqual(parked);
+        expect(remainingWorkingOrderQuantity(row())).toBe(quantity - dq);
+        expect(held()).toBe(1000 + 1000 * parked.length);
+        expect(reasons()).toEqual([]);
+    });
+
+    it('a live fill still adds to a read-back row whose deal_quantity exceeds its details', async () => {
+        mocks.trades.mockResolvedValue([readRow(2, 1)]);
+        vi.advanceTimersByTime(1500);
+        await act(async () => { await store.refreshTradingState('orders'); });
+        await emit(fill('000002'));
+        expect(row().status).toMatchObject({ status: 'Filled', deal_quantity: 2 });
+        expect(seqs()).toEqual(['000002']);
+        expect(remainingWorkingOrderQuantity(row())).toBe(0);
+        expect(held()).toBe(2000);
+        expect(reasons()).toEqual([]);
+    });
+
+    it('order response: a parked fill the response row already counts only adds its detail', async () => {
+        await emit(fill('000001'));
+        await act(async () => { mocks.response!({ trade: readRow(2, 1), account: mocks.account }); vi.advanceTimersByTime(50); });
+        expect(row().status).toMatchObject({ status: 'PartFilled', deal_quantity: 1 });
+        expect(seqs()).toEqual(['000001']);
+        expect(remainingWorkingOrderQuantity(row())).toBe(1);
+        expect(held()).toBe(2000);
+        expect(reasons()).toEqual([]);
+    });
+
+    it('order report after update_status: a parked fill the read counted only adds its detail', async () => {
+        await emit(fill('000001'));
+        mocks.trades.mockResolvedValue([readRow(3, 1)]);
+        vi.advanceTimersByTime(1500);
+        await act(async () => { await store.refreshTradingState('orders'); });
+        expect(seqs()).toEqual([]); // the authoritative read itself does not replay parked fills
+        await emit(order('new', 105, epoch + 3, 'UpdatePrice'));
+        expect(row().status).toMatchObject({ status: 'PartFilled', deal_quantity: 1 });
+        expect(seqs()).toEqual(['000001']);
+        expect(remainingWorkingOrderQuantity(row())).toBe(2);
+        expect(held()).toBe(2000);
+        expect(reasons()).toEqual([]);
+    });
+
+    it('contract metadata replay: a parked futures fill counted by a read-back row adds its detail and holds once', async () => {
+        mocks.account.account_type = 'F';
+        mocks.positions.mockResolvedValueOnce([]); mocks.margin.mockResolvedValue({ equity: 1000 });
+        vi.advanceTimersByTime(1500);
+        await act(async () => { await store.refreshTradingState(); });
+        const metadata = deferred<{ code: string; multiplier: number }>();
+        mocks.ensure.mockImplementation(() => metadata.promise); mocks.cached.mockReturnValue(undefined);
+        await emit(futuresFill('new', 'f1')); // order unknown: parked, not held yet
+        expect(held('TXFI6')).toBeUndefined();
+        // orders-only update_status: the row counts f1 without its detail
+        const read = readRow(2, 1);
+        mocks.trades.mockResolvedValue([{ ...read, contract: { code: 'TXFI6', security_type: 'FUT', exchange: 'TAIFEX', target_code: null },
+            order: { ...read.order, octype: 'New' } }]);
+        vi.advanceTimersByTime(1500);
+        await act(async () => { await store.refreshTradingState('orders'); });
+        // another order's fill on the same contract starts the metadata lookup
+        const body = (order('other').raw as { data: { StockOrder: Record<string, Record<string, unknown>> } }).data.StockOrder;
+        await emit(normalizeOrderEvent({ state: 'FuturesOrder', data: { FuturesOrder: { ...body, order: { ...body.order, oc_type: 'New' },
+            contract: { code: 'TXF', full_code: 'TXFI6', security_type: 'FUT', exchange: 'TAIFEX' } } } })!);
+        await emit(futuresFill('other', 'f2'));
+        expect(mocks.ensure).toHaveBeenCalledWith('TXFI6');
+        await act(async () => { mocks.cached.mockReturnValue({ code: 'TXFI6', multiplier: 200 }); metadata.resolve({ code: 'TXFI6', multiplier: 200 }); await metadata.promise; });
+        expect(row().status).toMatchObject({ status: 'PartFilled', deal_quantity: 1 });
+        expect(remainingWorkingOrderQuantity(row())).toBe(1);
+        expect(seqs()).toEqual(['f1']);
+        expect(held('TXFI6')).toBe(2); // f1 and f2, each once
+        expect(reasons()).toEqual([]);
+    });
+
+    it('code hints: a parked New re-projected onto a read-back row replays the parked fill as detail only', async () => {
+        mocks.account.account_type = 'F';
+        mocks.positions.mockResolvedValueOnce([]); mocks.margin.mockResolvedValue({ equity: 1000 });
+        vi.advanceTimersByTime(1500);
+        await act(async () => { await store.refreshTradingState(); });
+        mocks.cached.mockReturnValue({ code: 'TXFI6', multiplier: 200 });
+        const hints = await import('./order-code-hints');
+        try {
+            // a background engine's New without full_code: no code hint yet, so it is parked
+            const body = (order('new').raw as { data: { StockOrder: Record<string, Record<string, unknown>> } }).data.StockOrder;
+            await emit(normalizeOrderEvent({ state: 'FuturesOrder', data: { FuturesOrder: { ...body, order: { ...body.order, oc_type: 'New' },
+                contract: { code: 'TXF', security_type: 'FUT', exchange: 'TAIFEX' } } } })!);
+            expect(reasons()).toContain('pending-report');
+            await emit(futuresFill('new', 'f1')); // order unknown: parked
+            const read = readRow(3, 1);
+            mocks.trades.mockResolvedValue([{ ...read, contract: { code: 'TXFI6', security_type: 'FUT', exchange: 'TAIFEX', target_code: null },
+                order: { ...read.order, octype: 'New' } }]);
+            vi.advanceTimersByTime(1500);
+            await act(async () => { await store.refreshTradingState('orders'); });
+            expect(seqs()).toEqual([]);
+            hints.setOrderCodeHint(id => id === 'new' ? 'TXFI6' : null);
+            await act(async () => { hints.orderCodeHintsChanged(); vi.advanceTimersByTime(50); });
+            expect(seqs()).toEqual(['f1']);
+            expect(row().status).toMatchObject({ status: 'PartFilled', deal_quantity: 1 });
+            expect(remainingWorkingOrderQuantity(row())).toBe(2);
+        } finally { hints.setOrderCodeHint(null); }
+    });
 });
