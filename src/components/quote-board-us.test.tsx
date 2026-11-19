@@ -159,6 +159,19 @@ describe('QuoteBoard (US through the TW board)', () => {
         expect(t).toContain('一般盤收盤 100.00');
     });
 
+    it('without a reference, the extended-session percentage uses the same inferred base as the change', () => {
+        const s = usSnap({ reference: 0, close: 100, changePrice: 5, changeRate: 5.26, session: 'PreMarket', lastPrice: 110 });
+        m.usSnap = s;
+        m.snapshot = usSnapshotToTw(s);
+        const noRef = { ...aapl, reference: 0, us_reference: null, reference_date: null } as unknown as ContractInfo;
+        act(() => { view = create(createElement(QuoteBoard, { contract: noRef })); });
+        const t = text();
+        expect(t).toContain('110.00');
+        expect(t).toContain('+15.00'); // 110 − (100 − 5)
+        expect(t).toContain('+15.79%');
+        expect(t).not.toContain('+5.26%');
+    });
+
     it('a snapshot with no extended-session price keeps the regular close and no session badge', () => {
         const s = usSnap({ reference: 98, close: 100, changePrice: 2, changeRate: 2.04, session: 'PreMarket', lastPrice: null });
         m.usSnap = s;

@@ -247,10 +247,14 @@ export function QuoteBoard({
         : snapshot?.change_price;
     // NEVER use tick.pct_chg — its unit differs between stk (％×100) and
     // fop (％) streams; derive from the price change and reference instead
+    // 美股沒有參考價時，用同一組的現價減漲跌當基準（延長時段快照的漲跌是延長價減基準，不能沿用一般盤的 change_rate）
+    const usBase = isUs && !ref && chg !== undefined && close !== undefined && close - chg > 0 ? close - chg : undefined;
     const pct =
         chg !== undefined && ref
             ? (chg / ref) * 100
-            : isUs && chg === undefined ? undefined : snapshot?.change_rate;
+            : usBase !== undefined
+              ? (chg! / usBase) * 100
+              : isUs && chg === undefined ? undefined : snapshot?.change_rate;
     // 盤前試撮還沒有成交，即時成交的開高低是 0：當成沒有值，畫面顯示空值符號而不是 0.00。
     // 只限試撮：組合商品（價差）真成交的 0 是合法價格
     const tickOhl = (v: string) => (tick?.simtrade && Number(v) === 0 ? undefined : Number(v));
