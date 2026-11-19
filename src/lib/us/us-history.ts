@@ -409,25 +409,34 @@ export function fetchUsSnapshotShared(contract: Pick<ContractBase, 'code' | 'exc
 // ---- 最近交易日 ----
 
 /**
- * 從紐約今天往前找最近一個有 1 分 K 的交易日（最多 maxDays 天，跳過週末）。
- * 盤前／台北白天時今天還沒資料，會落到前一個交易日。沒有資料回 null。
+ * 最近一個有一般盤 1 分 K 的交易日（一次查紐約今天往前 lookbackDays 天）。
+ * 盤前／台北白天時今天還沒資料，會落到前一個交易日。prevClose 是再前一個
+ * 交易日一般盤最後一根 1 分 K 的收盤（走勢圖沒有當日參考價時的基準）。
+ * 沒有資料回 null。
  */
 export async function latestUsSessionBars(
     contract: Pick<ContractBase, 'code' | 'exchange'>,
-    opts?: { nowMs?: number; maxDays?: number },
-): Promise<{ date: string; bars: Candle[] } | null> {
+    opts?: { nowMs?: number; lookbackDays?: number },
+): Promise<{ date: string; bars: Candle[]; prevClose: number | null } | null> {
     const now = opts?.nowMs ?? Date.now();
-    const maxDays = opts?.maxDays ?? 6;
-    for (let d = 0; d <= maxDays; d++) {
-        const date = nyDateStr(now, d);
-        const dow = new Date(`${date}T12:00:00Z`).getUTCDay();
-        if (dow === 0 || dow === 6) continue;
-        const bars = await fetchUsKbars(contract, date, date);
+    const lookback = Math.min(opts?.lookbackDays ?? 10, US_KBARS_MAX_DAYS - 1);
+    const bars = await fetchUsKbars(contract, nyDateStr(now, lookback), nyDateStr(now));
+    const byDay = new Map<string, Candle[]>();
+    for (const b of bars) {
+        // bar.time 是紐約牆鐘當 UTC 的秒數（標示 bar 結束），16:00 那根仍屬當天
+        const date = new Date((b.time - 1) * 1000).toISOString().slice(0, 10);
         const range = usRegularSessionRange(date);
-        const day = bars.filter(b => b.time > range.start - 60 && b.time <= range.end + 600);
-        if (day.length > 0) return { date, bars: day };
+        if (b.time <= range.start - 60 || b.time > range.end + 600) continue;
+        const list = byDay.get(date) ?? [];
+        list.push(b);
+        byDay.set(date, list);
     }
-    return null;
+    const days = [...byDay.keys()].sort();
+    const date = days[days.length - 1];
+    if (!date) return null;
+    const prev = days.length > 1 ? byDay.get(days[days.length - 2]!)! : null;
+    const prevClose = prev ? prev[prev.length - 1]!.close : null;
+    return { date, bars: byDay.get(date)!, prevClose: Number.isFinite(prevClose) && prevClose! > 0 ? prevClose : null };
 }
 
 // ---- 即時逐筆併入 K 棒 ----

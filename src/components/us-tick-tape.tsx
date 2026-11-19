@@ -24,6 +24,8 @@ interface UsTapeRow {
     /** epoch µs（去重與排序用，保留原始精度） */
     ts: number;
     time: string;
+    /** 美東日期 YYYY-MM-DD（跨日分隔用） */
+    date: string;
     price: string;
     volume: number;
     tickType: number;
@@ -41,7 +43,7 @@ export function usTapeRowsFromHistory(ticks: readonly UsHistoryTick[], max = MAX
     const out: UsTapeRow[] = [];
     for (let i = ticks.length - 1; i >= 0 && out.length < max; i--) {
         const t = ticks[i]!;
-        out.push({ id: rowSeq++, ts: t.tsUs, time: fmtTime(t.time), price: String(t.price), volume: t.volume, tickType: t.tickType });
+        out.push({ id: rowSeq++, ts: t.tsUs, time: fmtTime(t.time), date: nyDateTime(t.tsUs).date, price: String(t.price), volume: t.volume, tickType: t.tickType });
     }
     return out;
 }
@@ -49,8 +51,8 @@ export function usTapeRowsFromHistory(ticks: readonly UsHistoryTick[], max = MAX
 /** 即時成交 → 明細列（美東時間到微秒） */
 export function usTapeRowFromMeta(meta: UsTickMeta): UsTapeRow {
     const us = meta.tsUs ?? meta.ts * 1000;
-    const { time } = nyDateTime(us);
-    return { id: rowSeq++, ts: Math.floor(us), time: `${time}.${String(Math.floor(us) % 1_000_000).padStart(6, '0')}`, price: meta.price, volume: meta.volume, tickType: meta.tickType ?? 0 };
+    const { date, time } = nyDateTime(us);
+    return { id: rowSeq++, ts: Math.floor(us), time: `${time}.${String(Math.floor(us) % 1_000_000).padStart(6, '0')}`, date, price: meta.price, volume: meta.volume, tickType: meta.tickType ?? 0 };
 }
 
 /** 歷史的 ns 時間經 JSON 數字傳遞後只準到 ±1 µs（見 us-history usTimeToUs） */
@@ -84,6 +86,19 @@ export function mergeUsTape(live: readonly UsTapeRow[], hist: readonly UsTapeRow
     }
     const fresh = live.filter(r => !matched.has(r));
     return [...fresh, ...hist].map((r, i) => [r, i] as const).sort((a, b) => b[0].ts - a[0].ts || a[1] - b[1]).map(([r]) => r).slice(0, max);
+}
+
+/**
+ * 明細跨日時要標日期：盤前只有即時列、歷史是前一交易日，兩天的列接在一起。
+ * 回傳要在哪一列之前插入日期分隔（第一列不是美東今天時也標）。
+ */
+export function usTapeDayBreaks(rows: readonly Pick<UsTapeRow, 'date'>[], today: string): Map<number, string> {
+    const out = new Map<number, string>();
+    rows.forEach((r, i) => {
+        const prev = i === 0 ? today : rows[i - 1]!.date;
+        if (r.date !== prev) out.set(i, r.date);
+    });
+    return out;
 }
 
 /** 從美東今天往前找最近一個有成交的交易日（跳過週末，最多 6 天） */
@@ -151,6 +166,8 @@ export function UsTickTape({ contract }: { contract: ContractInfo }) {
         return Math.max(5, (sum / rows.length) * BIG_LOT_FACTOR);
     }, [rows]);
 
+    const dayBreaks = usTapeDayBreaks(rows, nyDateStr());
+
     return (
         <div className={panel.panelBody} data-testid='us-tick-tape'>
             <div className={styles.tape}>
@@ -167,7 +184,14 @@ export function UsTickTape({ contract }: { contract: ContractInfo }) {
                         <span />
                     </span>
                 )}
-                {rows.map(r => <Row key={r.id} row={r} big={r.volume >= bigThreshold} />)}
+                {rows.map((r, i) => {
+                    const day = dayBreaks.get(i);
+                    const row = <Row key={r.id} row={r} big={r.volume >= bigThreshold} />;
+                    return day === undefined ? row : [
+                        <div key={`d${r.id}`} className={styles.dayBreak} data-testid='us-tape-day'>{`${day.slice(5).replace('-', '/')}（美東）`}</div>,
+                        row,
+                    ];
+                })}
             </div>
         </div>
     );

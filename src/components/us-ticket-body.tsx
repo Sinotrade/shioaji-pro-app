@@ -10,11 +10,12 @@ import { usHaltLabel, useUsHalt } from '../lib/us/us-halts';
 import { AlertTriangle, Globe, Info } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { useQuote, useTradingLive } from '../hooks/use-stream';
+import { pickUsReference, useUsSnapshot } from '../hooks/use-us-snapshot';
 import { useAccounts } from '../lib/account-store';
 import { canTrade } from '../lib/account-tradable';
 import { contractLinkKey } from '../lib/contract-key';
 import { accountConfirmLabel, requestOrderConfirm } from '../lib/order-confirm';
-import { maskAccountId, usePrivacyMode } from '../lib/privacy';
+import { maskAccountId, maskName, usePrivacyMode } from '../lib/privacy';
 import { checkUsOrderAllowed, getRiskSettings } from '../lib/risk';
 import { captureServerMode, SERVER_MODE_CHANGED_MESSAGE } from '../lib/server-info-store';
 import { notify } from '../lib/trade';
@@ -44,7 +45,7 @@ import * as styles from './us-ticket.css';
 const acctKey = (a: Account) => `${a.broker_id}-${a.account_id}`;
 
 function accountLabel(a: Account, priv: boolean) {
-    return `${a.broker_id}-${maskAccountId(a.account_id, priv)}${a.username ? ` ${a.username}` : ''}`;
+    return `${a.broker_id}-${maskAccountId(a.account_id, priv)}${a.username ? ` ${maskName(a.username, priv)}` : ''}`;
 }
 
 /** 價格輸入：只留數字與一個小數點，小數最多 4 位 */
@@ -114,7 +115,9 @@ export function UsTicketBody({
     const ask = quote?.bidask?.ask_price?.[0];
     const meta = last ? getUsTickMeta(linkKey) : undefined;
     const sessionLabel = meta ? US_SESSION_LABEL[meta.session] : '';
-    const reference = contract.us_reference ?? null;
+    // 參考價跟報價板同一條規則（快照優先於可能落後一天的合約檔）
+    const snap = useUsSnapshot(contract, !last);
+    const { price: reference, date: referenceDate } = pickUsReference(last ? quote?.tick : undefined, snap, contract);
     const fillPrice = last ?? (reference ? decNormalize(reference) : null);
     const suspended = !!contract.trading_suspended;
     const halt = useUsHalt(contract);
@@ -190,7 +193,7 @@ export function UsTicketBody({
                         </span>
                     </>
                 ) : reference ? (
-                    <span className={styles.refLabel}>參考 {fmtUsPrice(reference)}{contract.reference_date ? `（${contract.reference_date}）` : ''}</span>
+                    <span className={styles.refLabel}>參考 {fmtUsPrice(reference)}{referenceDate ? `（${referenceDate}）` : ''}</span>
                 ) : (
                     <span className={styles.refLabel}>尚無報價</span>
                 )}

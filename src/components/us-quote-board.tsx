@@ -7,12 +7,12 @@
 
 import { useQuote } from '../hooks/use-stream';
 import type { UsSnapshot } from '../lib/us/us-history';
-import { useUsSnapshot } from '../hooks/use-us-snapshot';
+import { pickUsReference, useUsSnapshot } from '../hooks/use-us-snapshot';
 import { contractLinkKey } from '../lib/contract-key';
 import type { ContractInfo } from '../lib/types/contract';
 import { decCompare, fmtUsPrice } from '../lib/us/decimal';
 import { usHaltLabel, useUsHalt } from '../lib/us/us-halts';
-import { getUsTickMeta, US_SESSION_LABEL, usTickReference } from '../lib/us/us-quotes';
+import { getUsTickMeta, US_SESSION_LABEL } from '../lib/us/us-quotes';
 import { fmtInt } from '../lib/utils/format';
 import * as styles from './quote-board.css';
 import * as us from './us-quote-board.css';
@@ -61,9 +61,7 @@ export function UsQuoteBoard({ contract }: { contract: ContractInfo }) {
     // 快照的一般盤開高低只在它與即時成交同一個美東交易日時才拿來補
     // （隔天盤前不可顯示前一天的開高低）
     const sameDaySnap = snap && tick && snapshotMatchesTradeDate(snap, tick.date) ? snap : null;
-    const ref = (tick ? usTickReference(tick) : null)
-        ?? (!tick && snap?.reference ? String(snap.reference) : null)
-        ?? contract.us_reference;
+    const ref = pickUsReference(tick, snap, contract).price;
 
     return (
         <div className={`${styles.board} ${us.board}`} aria-label='美股報價板' data-testid='us-quote-board'>

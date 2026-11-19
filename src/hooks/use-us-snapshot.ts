@@ -6,6 +6,8 @@
 import { useEffect, useState } from 'react';
 import type { ContractInfo } from '../lib/types/contract';
 import { fetchUsSnapshotShared, type UsSnapshot } from '../lib/us/us-history';
+import { usTickReference } from '../lib/us/us-quotes';
+import type { SseTick } from '../lib/types/market';
 
 export function useUsSnapshot(contract: Pick<ContractInfo, 'code' | 'exchange'>, enabled: boolean): UsSnapshot | null {
     const [snap, setSnap] = useState<{ key: string; row: UsSnapshot } | null>(null);
@@ -21,4 +23,22 @@ export function useUsSnapshot(contract: Pick<ContractInfo, 'code' | 'exchange'>,
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [key, enabled, have]);
     return have ? snap!.row : null;
+}
+
+/**
+ * 美股參考價（報價板、下單面板、閃電下單共用同一條規則）：
+ * 有即時成交 → 成交回推（close − price_chg，一般盤漲跌的基準）；
+ * 還沒有成交 → 快照的參考價（當天的）；都沒有 → 合約檔的前一日參考價。
+ * 合約檔的參考價可能落後一天（商品檔沒換日），所以快照優先。
+ * date 只在用合約檔時給（reference_date＝收盤日）。
+ */
+export function pickUsReference(
+    tick: Pick<SseTick, 'close' | 'price_chg'> | undefined,
+    snap: Pick<UsSnapshot, 'reference'> | null,
+    contract: Pick<ContractInfo, 'us_reference' | 'reference_date'>,
+): { price: string | null; date: string | null } {
+    const fromTick = tick ? usTickReference(tick) : null;
+    if (fromTick) return { price: fromTick, date: null };
+    if (!tick && snap?.reference && snap.reference > 0) return { price: String(snap.reference), date: null };
+    return { price: contract.us_reference ?? null, date: contract.us_reference ? contract.reference_date ?? null : null };
 }

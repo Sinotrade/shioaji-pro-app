@@ -48,7 +48,7 @@ export function usIntradayPath(ticks: readonly UsTickMeta[], ref: number | null)
 
 type HistoryState =
     | { kind: 'loading' }
-    | { kind: 'ready'; date: string; bars: Candle[] }
+    | { kind: 'ready'; date: string; bars: Candle[]; prevClose: number | null }
     | { kind: 'none'; reason: 'empty' | 'unavailable' | 'error' };
 
 function useUsSessionHistory(contract: ContractInfo): HistoryState {
@@ -77,7 +77,12 @@ export function UsIntraday({ contract }: { contract: ContractInfo }) {
     const history = useUsSessionHistory(contract);
     const ref = contract.us_reference ? Number(contract.us_reference) : null;
     const series = usIntradaySeries(history.kind === 'ready' ? history : null, regular);
-    const sessionRef = series ? usSessionReference(ref, contract.reference_date, series.date) : ref;
+    // 合約參考價只對它的下一個交易日有效；畫的是更早的時段時，改用歷史推的前一日收盤
+    const historyRef = history.kind !== 'ready' || !series ? null
+        : series.date === history.date ? history.prevClose
+        : series.date > history.date ? history.bars[history.bars.length - 1]?.close ?? null
+        : null;
+    const sessionRef = series ? usSessionReference(ref, contract.reference_date, series.date) ?? historyRef : ref;
 
     if (series) {
         const path = usIntradaySessionPath(series, sessionRef);

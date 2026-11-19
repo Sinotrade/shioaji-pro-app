@@ -8,6 +8,7 @@ const m = vi.hoisted(() => ({
     place: vi.fn(), confirm: vi.fn(), confirmOn: false, locked: false, observe: vi.fn(),
     stock: vi.fn(), future: vi.fn(), twRisk: vi.fn(() => null), onPlaced: vi.fn(),
     quote: undefined as unknown,
+    snap: null as unknown,
     quoteKeys: [] as (string | null)[],
     accounts: [
         { account_type: 'S', broker_id: '9A95', account_id: '0000001', signed: true, person_id: 'P', username: 'u' },
@@ -23,7 +24,9 @@ vi.mock('../hooks/use-stream', () => ({
     useTradingLive: () => true,
     useQuote: (key: string | null) => { m.quoteKeys.push(key); return m.quote; },
 }));
-vi.mock('../lib/us/us-quotes', () => ({
+vi.mock('../hooks/use-us-snapshot', async importOriginal => ({ ...(await importOriginal<object>()), useUsSnapshot: () => m.snap }));
+vi.mock('../lib/us/us-quotes', async importOriginal => ({
+    usTickReference: (await importOriginal<typeof import('../lib/us/us-quotes')>()).usTickReference,
     getUsTickMeta: () => ({ session: 'Regular' }),
     US_SESSION_LABEL: { Unknown: '', PreMarket: '盤前', Regular: '盤中', AfterHours: '盤後' },
 }));
@@ -90,6 +93,14 @@ it('renders the US body inside the shared ticket, without TW-only fields', async
     // 報價以連動 key 訂閱，不會用裸代碼撞到台股
     expect(m.quoteKeys).toContain('US:AAPL');
     expect(m.quoteKeys).not.toContain('AAPL');
+});
+
+it('prefers the snapshot reference over a stale contract reference before the first tick', async () => {
+    m.snap = { reference: 231.5 };
+    await mount();
+    expect(all()).toContain('參考 231.50');
+    expect(all()).not.toContain('230.10');
+    m.snap = null;
 });
 
 it('shows the reference price before the first tick and fills it', async () => {

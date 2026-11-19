@@ -11,11 +11,12 @@ import { usHaltLabel, useUsHalt } from '../lib/us/us-halts';
 import { ChevronDown, Locate, LocateFixed, Zap } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useQuote, useTradingLive } from '../hooks/use-stream';
+import { pickUsReference, useUsSnapshot } from '../hooks/use-us-snapshot';
 import { useAccounts } from '../lib/account-store';
 import { canTrade } from '../lib/account-tradable';
 import { contractLinkKey } from '../lib/contract-key';
 import { accountConfirmLabel, requestOrderConfirm } from '../lib/order-confirm';
-import { maskAccountId, usePrivacyMode } from '../lib/privacy';
+import { maskAccountId, maskName, usePrivacyMode } from '../lib/privacy';
 import { checkUsOrderAllowed, getRiskSettings } from '../lib/risk';
 import { captureServerMode, SERVER_MODE_CHANGED_MESSAGE } from '../lib/server-info-store';
 import { notify } from '../lib/trade';
@@ -69,7 +70,10 @@ export function UsFlashOrder({ contract, linkKey = '', symbolExtra, paused }: Us
     const askPrice = priceOf(quote?.bidask?.ask_price?.[0]);
     const bidVol = bidPrice ? quote?.bidask?.bid_volume?.[0] ?? 0 : 0;
     const askVol = askPrice ? quote?.bidask?.ask_volume?.[0] ?? 0 : 0;
-    const reference = priceOf(contract.us_reference);
+    // 參考價跟報價板同一條規則（快照優先於可能落後一天的合約檔）
+    const snap = useUsSnapshot(contract, !last);
+    const { price: refPrice, date: referenceDate } = pickUsReference(last ? quote?.tick : undefined, snap, contract);
+    const reference = priceOf(refPrice);
     const center = usRoundToTick(last ?? reference ?? '') ?? null;
     const centerFrom: 'last' | 'ref' | null = last ? 'last' : reference ? 'ref' : null;
 
@@ -281,7 +285,7 @@ export function UsFlashOrder({ contract, linkKey = '', symbolExtra, paused }: Us
             )}
             {!paused && !last && (
                 <div className={us.refNote} data-testid='flash-us-ref'>
-                    {reference ? `參考 ${fmtUsPrice(reference)}${contract.reference_date ? `（${contract.reference_date}）` : ''}・尚無即時報價` : '尚無參考價與即時報價'}
+                    {reference ? `參考 ${fmtUsPrice(reference)}${referenceDate ? `（${referenceDate}）` : ''}・尚無即時報價` : '尚無參考價與即時報價'}
                 </div>
             )}
             {!paused && contract.trading_suspended && <div className={`${us.refNote} ${us.warn}`}>{contract.code} 暫停交易</div>}
@@ -300,7 +304,7 @@ export function UsFlashOrder({ contract, linkKey = '', symbolExtra, paused }: Us
                         {!account && <option value=''>無複委託帳戶</option>}
                         {intl.map(a => (
                             <option key={acctKey(a)} value={acctKey(a)}>
-                                {`${a.broker_id}-${maskAccountId(a.account_id, priv)}${a.username ? ` ${a.username}` : ''}（複委託）`}
+                                {`${a.broker_id}-${maskAccountId(a.account_id, priv)}${a.username ? ` ${maskName(a.username, priv)}` : ''}（複委託）`}
                             </option>
                         ))}
                     </select>

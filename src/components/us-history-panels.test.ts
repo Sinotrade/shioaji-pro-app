@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { usBestLevel, usDepthLevel } from './us-depth';
 import { parseUsTicks } from '../lib/us/us-history';
-import { mergeUsTape, usTapeRowFromMeta, usTapeRowsFromHistory } from './us-tick-tape';
+import { mergeUsTape, usTapeDayBreaks, usTapeRowFromMeta, usTapeRowsFromHistory } from './us-tick-tape';
 
 describe('usBestLevel', () => {
     it('reads the single best level and the decimal spread', () => {
@@ -36,6 +36,17 @@ describe('usDepthLevel', () => {
     it('shows empty without live or usable snapshot', () => {
         expect(usDepthLevel(undefined, null)).toMatchObject({ bid: null, ask: null, source: 'live' });
         expect(usDepthLevel(undefined, { buyPrice: 0, buyVolume: 0, sellPrice: null, sellVolume: null })).toMatchObject({ bid: null, ask: null, source: 'live' });
+    });
+});
+
+describe('usTapeDayBreaks', () => {
+    it('labels the day where today\'s pre-market rows meet the previous session', () => {
+        const rows = [{ date: '2026-11-19' }, { date: '2026-11-19' }, { date: '2026-11-18' }, { date: '2026-11-18' }];
+        expect([...usTapeDayBreaks(rows, '2026-11-19')]).toEqual([[2, '2026-11-18']]);
+    });
+    it('labels the top when nothing is from today', () => {
+        expect([...usTapeDayBreaks([{ date: '2026-11-18' }], '2026-11-19')]).toEqual([[0, '2026-11-18']]);
+        expect(usTapeDayBreaks([], '2026-11-19').size).toBe(0);
     });
 });
 

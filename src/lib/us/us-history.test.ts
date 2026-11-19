@@ -248,14 +248,25 @@ describe('availability and fetch', () => {
         await expect(fetchUsKbars(AAPL, 'a', 'b')).rejects.toSatisfy(isUsHistoryUnavailable);
         expect(m.post).not.toHaveBeenCalled();
     });
-    it('finds the latest trade date with bars, skipping weekends and empty days', async () => {
-        // 2026-11-23 週一 08:00 紐約 → 今天沒資料、跳過週末、落到 11-20（週五）
+    it('finds the latest trade date with regular bars in one request and the previous close', async () => {
+        // 2026-11-23 週一 08:00 紐約 → 今天沒資料，落到 11-20（週五），前一交易日 11-19
         const now = Date.UTC(2026, 10, 23, 13, 0);
-        const empty = { datetime: [], Open: [], High: [], Low: [], Close: [], Volume: [] };
-        m.post.mockResolvedValueOnce(empty).mockResolvedValueOnce({ datetime: ['2026-11-20T14:31:00'], Open: [1], High: [1], Low: [1], Close: [2], Volume: [3] });
+        m.post.mockResolvedValueOnce({
+            datetime: ['2026-11-19T20:59:00', '2026-11-19T21:00:00', '2026-11-20T14:31:00', '2026-11-20T21:00:00'],
+            Open: [1, 1, 1, 1], High: [1, 1, 1, 1], Low: [1, 1, 1, 1], Close: [5, 6, 2, 3], Volume: [1, 1, 1, 1],
+        });
         const r = await latestUsSessionBars(AAPL, { nowMs: now });
         expect(r?.date).toBe('2026-11-20');
-        expect(m.post.mock.calls.map(c => (c[1] as { start: string }).start)).toEqual(['2026-11-23', '2026-11-20']);
+        expect(r?.bars.map(b => b.close)).toEqual([2, 3]);
+        expect(r?.prevClose).toBe(6);
+        expect(m.post).toHaveBeenCalledTimes(1);
+        expect(m.post.mock.calls[0]![1]).toMatchObject({ start: '2026-11-13', end: '2026-11-23' });
+    });
+    it('returns null without bars and no previous close for a single day', async () => {
+        m.post.mockResolvedValueOnce({ datetime: [], Open: [], High: [], Low: [], Close: [], Volume: [] });
+        expect(await latestUsSessionBars(AAPL, { nowMs: Date.UTC(2026, 10, 23, 13) })).toBeNull();
+        m.post.mockResolvedValueOnce({ datetime: ['2026-11-20T14:31:00'], Open: [1], High: [1], Low: [1], Close: [2], Volume: [1] });
+        expect((await latestUsSessionBars(AAPL, { nowMs: Date.UTC(2026, 10, 23, 13) }))?.prevClose).toBeNull();
     });
 });
 

@@ -8,6 +8,7 @@ import type { ContractInfo } from '../lib/types/contract';
 import type { AccountedUsTrade } from '../lib/types/us';
 
 const mocks = vi.hoisted(() => ({
+    snap: null as unknown,
     quote: undefined as unknown,
     live: true,
     locked: null as string | null,
@@ -27,7 +28,8 @@ vi.mock('../lib/account-store', () => ({
     ensureAccounts: () => undefined,
     useAccounts: () => ({ loaded: true, accounts: [S, H, H2], selectedStock: S, selectedFutures: null, selectedIntl: H }),
 }));
-vi.mock('../lib/privacy', () => ({ usePrivacyMode: () => false, maskAccountId: (id: string) => id, usePrivacyMoney: () => false, maskMoney: (v: string) => v }));
+vi.mock('../hooks/use-us-snapshot', async importOriginal => ({ ...(await importOriginal<object>()), useUsSnapshot: () => mocks.snap }));
+vi.mock('../lib/privacy', () => ({ usePrivacyMode: () => false, maskAccountId: (id: string) => id, maskName: (n: string) => n, usePrivacyMoney: () => false, maskMoney: (v: string) => v }));
 vi.mock('../lib/risk', () => ({ checkUsOrderAllowed: () => mocks.locked, getRiskSettings: () => ({ confirmManualOrders: mocks.confirmManual }) }));
 vi.mock('../lib/order-confirm', () => ({ requestOrderConfirm: mocks.confirm, accountConfirmLabel: (a: Account) => a.account_id }));
 vi.mock('../lib/server-info-store', async importOriginal => ({ ...(await importOriginal<object>()), captureServerMode: () => () => true, SERVER_MODE_CHANGED_MESSAGE: 'changed' }));
@@ -88,6 +90,14 @@ beforeEach(() => {
     vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} });
 });
 afterEach(async () => { await act(async () => view?.unmount()); vi.unstubAllGlobals(); });
+
+it('uses the snapshot reference over a stale contract reference, like the quote board', async () => {
+    mocks.snap = { reference: 188 };
+    await render();
+    expect(middle()).toBe('188');
+    expect(text(view.root.find(n => n.props['data-testid'] === 'flash-us-ref'))).toBe('參考 188.00・尚無即時報價');
+    mocks.snap = null;
+});
 
 it('before the first quote the ladder centers on the reference price and says so', async () => {
     await render();
