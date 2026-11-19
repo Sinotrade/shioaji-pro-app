@@ -11,7 +11,7 @@ import { contractLinkKey } from '../lib/contract-key';
 import type { ContractBase } from '../lib/types/contract';
 import type { Snapshot } from '../lib/types/market';
 import { setPickedPrice } from '../lib/price-sync';
-import { fmtUsPrice, usPriceDecimals } from '../lib/us/decimal';
+import { fmtUsChange, fmtUsPrice, usPriceDecimals } from '../lib/us/decimal';
 import { fmtInt, fmtPrice } from '../lib/utils/format';
 import * as panel from './panel.css';
 import * as styles from './depth-ladder.css';
@@ -27,7 +27,7 @@ export function DepthLadder({ code, snapshot, contract }: { code: string; snapsh
     const { book } = useDisplayBook(key, snapshot, contract);
     const fmt = (v: number) => (isUs ? fmtUsPrice(v) : fmtPrice(v));
 
-    const { bids, asks, maxVol, totalBid, totalAsk, spread } = useMemo(() => {
+    const { bids, asks, maxVol, totalBid, totalAsk, spread, spreadRef } = useMemo(() => {
         const bids = book?.bids ?? [];
         const asks = book?.asks ?? [];
         const maxVol = Math.max(
@@ -44,7 +44,7 @@ export function DepthLadder({ code, snapshot, contract }: { code: string; snapsh
             b1 !== undefined && a1 !== undefined && a1 > b1
                 ? Number((a1 - b1).toFixed(digits))
                 : null;
-        return { bids, asks, maxVol, totalBid, totalAsk, spread };
+        return { bids, asks, maxVol, totalBid, totalAsk, spread, spreadRef: b1 ?? a1 };
     }, [book, isUs]);
 
     // bid share of the 5-level book — the "買賣力道" gauge
@@ -116,7 +116,7 @@ export function DepthLadder({ code, snapshot, contract }: { code: string; snapsh
                 <span className={panel.dirText.up}>{isUs ? '買' : 'Σ買'} {fmtInt(totalBid)}</span>
                 {spread !== null && (
                     <span className={styles.spread} title='買一賣一價差'>
-                        價差 {isUs ? fmtUsPrice(spread) : fmtPrice(spread)}
+                        價差 {isUs ? fmtUsChange(spread, spreadRef) : fmtPrice(spread)}
                     </span>
                 )}
                 <span className={panel.dirText.down}>
