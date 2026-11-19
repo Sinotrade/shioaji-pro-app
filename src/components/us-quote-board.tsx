@@ -45,6 +45,21 @@ function ohl(live: string | undefined, snap: number | undefined): string {
 
 const numDir = (v: number): 'up' | 'down' | 'flat' => (v > 0 ? 'up' : v < 0 ? 'down' : 'flat');
 
+/**
+ * 報價板的買賣價：即時 bidask 有任一邊就用即時；還沒有即時一檔時用快照的
+ * buy_price／sell_price（買賣價相同的鎖定盤也照顯示，例如 IPO 撮合價）。
+ */
+export function usBoardBidAsk(
+    bidask: { bid_price?: (string | number)[]; ask_price?: (string | number)[] } | undefined,
+    snap: { buyPrice: number | null; sellPrice: number | null } | null,
+): { bid?: string; ask?: string } {
+    const pos = (v: string | number | null | undefined) => (v !== undefined && v !== null && Number(v) > 0 ? String(v) : undefined);
+    const liveBid = pos(bidask?.bid_price?.[0]);
+    const liveAsk = pos(bidask?.ask_price?.[0]);
+    if (liveBid || liveAsk) return { bid: liveBid, ask: liveAsk };
+    return { bid: pos(snap?.buyPrice), ask: pos(snap?.sellPrice) };
+}
+
 export function UsQuoteBoard({ contract }: { contract: ContractInfo }) {
     const key = contractLinkKey(contract);
     const quote = useQuote(key);
@@ -52,8 +67,7 @@ export function UsQuoteBoard({ contract }: { contract: ContractInfo }) {
     const snap = useUsSnapshot(contract, true);
     const halt = useUsHalt(contract);
     const tick = quote?.tick;
-    const bid = quote?.bidask?.bid_price?.[0];
-    const ask = quote?.bidask?.ask_price?.[0];
+    const { bid, ask } = usBoardBidAsk(quote?.bidask, snap);
     const meta = tick ? getUsTickMeta(key) : undefined;
     // 「參考」與漲跌同一個基準：當天交易日的快照 reference，其次是適用的合約檔
     // 參考價（見 pickUsReference）；漲跌＝成交價 − 參考價，不知道參考價時用 SDK 值
@@ -89,16 +103,25 @@ export function UsQuoteBoard({ contract }: { contract: ContractInfo }) {
                 </>
             ) : snap ? (
                 <>
-                    <span className={styles.bigPrice[numDir(snap.changePrice)]}>{fmtUsPrice(snap.close)}</span>
-                    <span className={styles.changeBlock}>
-                        <span className={us.dir[numDir(snap.changePrice)]}>{`${snap.changePrice > 0 ? '+' : ''}${fmtUsPrice(snap.changePrice)}`}</span>
-                        <span className={us.dir[numDir(snap.changePrice)]}>{`${snap.changeRate > 0 ? '+' : ''}${snap.changeRate.toFixed(2)}%`}</span>
-                    </span>
+                    {snap.close > 0 ? (
+                        <>
+                            <span className={styles.bigPrice[numDir(snap.changePrice)]}>{fmtUsPrice(snap.close)}</span>
+                            <span className={styles.changeBlock}>
+                                <span className={us.dir[numDir(snap.changePrice)]}>{`${snap.changePrice > 0 ? '+' : ''}${fmtUsPrice(snap.changePrice)}`}</span>
+                                <span className={us.dir[numDir(snap.changePrice)]}>{`${snap.changeRate > 0 ? '+' : ''}${snap.changeRate.toFixed(2)}%`}</span>
+                            </span>
+                        </>
+                    ) : (
+                        // 還沒有成交（例如剛上市）：沒有成交價與漲跌，只有買賣價
+                        <span className={styles.bigPrice.flat}>—</span>
+                    )}
                     {/* 一般盤還沒開（盤前）時開高低是 0 */}
                     <Stat label='開'>{snap.open > 0 ? fmtUsPrice(snap.open) : '—'}</Stat>
                     <Stat label='高'>{snap.high > 0 ? fmtUsPrice(snap.high) : '—'}</Stat>
                     <Stat label='低'>{snap.low > 0 ? fmtUsPrice(snap.low) : '—'}</Stat>
                     <Stat label='總量'>{fmtInt(snap.totalVolume)}</Stat>
+                    <Stat label='買'>{bid ? fmtUsPrice(bid) : '—'}</Stat>
+                    <Stat label='賣'>{ask ? fmtUsPrice(ask) : '—'}</Stat>
                     {snap.session && snap.session !== 'Regular' && US_SESSION_LABEL[snap.session] && snap.lastPrice !== null && snap.lastPrice > 0 && (
                         <Stat label={US_SESSION_LABEL[snap.session]}>{fmtUsPrice(snap.lastPrice)}</Stat>
                     )}

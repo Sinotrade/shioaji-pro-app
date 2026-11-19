@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { pickUsReference, usLiveChange } from './use-us-snapshot';
+import { pickUsReference, usLiveChange, usSnapshotHasData } from './use-us-snapshot';
 
 const contract = { us_reference: '351.91', reference_date: '2026-11-17' };
 
@@ -25,5 +25,13 @@ describe('usLiveChange', () => {
     it('computes price minus reference, else keeps the SDK value', () => {
         expect(usLiveChange({ close: '229.08', price_chg: '0', pct_chg: '0' }, '228.53')).toEqual({ priceChg: '0.55', pctChg: '0.24' });
         expect(usLiveChange({ close: '229.08', price_chg: '0.5', pct_chg: '0.2' }, null)).toEqual({ priceChg: '0.5', pctChg: '0.2' });
+    });
+});
+
+describe('usSnapshotHasData', () => {
+    it('keeps an IPO snapshot that has only a crossed best level (ANT: close 0, bid = ask = 100)', () => {
+        expect(usSnapshotHasData({ close: 0, buyPrice: 100, sellPrice: 100 })).toBe(true);
+        expect(usSnapshotHasData({ close: 352.45, buyPrice: null, sellPrice: null })).toBe(true);
+        expect(usSnapshotHasData({ close: 0, buyPrice: 0, sellPrice: null })).toBe(false);
     });
 });

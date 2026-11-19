@@ -206,7 +206,7 @@ export function UsCandleChart({ contract, interval, onIntervalChange }: {
     const overlay = state === 'loading' ? <AsyncStatus phase='loading' text='載入美股 K 線…' />
         : state === 'error' ? <AsyncStatus phase='error' text='美股 K 線無法取得' action={<button type='button' onClick={() => setRetry(n => n + 1)}>重試</button>} />
         : state === 'unavailable' ? <AsyncStatus phase='empty' text='這個 SDK 版本沒有美股歷史 K 線，只畫開啟後的一般盤成交' />
-        : state === 'empty' ? <AsyncStatus phase='empty' text='沒有美股 K 線（美股歷史行情只有正式環境）' />
+        : state === 'empty' ? <AsyncStatus phase='empty' text='尚無 K 線資料' />
         : null;
 
     return (

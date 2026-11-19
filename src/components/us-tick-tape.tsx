@@ -179,7 +179,7 @@ export function UsTickTape({ contract }: { contract: ContractInfo }) {
                                 : status === 'error' ? <AsyncStatus phase='error' text='美股歷史成交無法取得'
                                     action={<button type='button' onClick={() => setRetrySeq(n => n + 1)}>重試</button>} />
                                 : status === 'unavailable' ? <AsyncStatus phase='empty' text='這個 SDK 版本沒有美股歷史成交，只顯示開啟後的逐筆' />
-                                : <AsyncStatus phase='empty' text='尚無美股成交（歷史行情只有正式環境）' />}
+                                : <AsyncStatus phase='empty' text='尚無成交資料' />}
                         </span>
                         <span />
                     </span>

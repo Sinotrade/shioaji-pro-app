@@ -10,6 +10,15 @@ import { usLinkKey } from '../lib/contract-key';
 import { noteUsReference, usChangeFrom, usReferenceFor } from '../lib/us/us-quotes';
 import type { SseTick } from '../lib/types/market';
 
+/**
+ * 快照有沒有可顯示的東西：有成交價，或有最佳一檔。剛上市還沒成交的 IPO
+ * （例如 ANT：close 0、session Unknown、exchange 空字串）只有撮合前的買賣價，
+ * 那也是真實報價，五檔與報價板要顯示。
+ */
+export function usSnapshotHasData(row: Pick<UsSnapshot, 'close' | 'buyPrice' | 'sellPrice'>): boolean {
+    return row.close > 0 || (row.buyPrice ?? 0) > 0 || (row.sellPrice ?? 0) > 0;
+}
+
 export function useUsSnapshot(contract: Pick<ContractInfo, 'code' | 'exchange'>, enabled: boolean): UsSnapshot | null {
     const [snap, setSnap] = useState<{ key: string; row: UsSnapshot } | null>(null);
     const key = `${contract.exchange}:${contract.code}`;
@@ -20,7 +29,7 @@ export function useUsSnapshot(contract: Pick<ContractInfo, 'code' | 'exchange'>,
         fetchUsSnapshotShared(contract)
             .then(row => {
                 if (row?.tradeDate) noteUsReference(usLinkKey(contract.code), row.tradeDate, row.reference);
-                if (!cancelled && row && row.close > 0) setSnap({ key, row });
+                if (!cancelled && row && usSnapshotHasData(row)) setSnap({ key, row });
             })
             .catch(() => { /* 沒有快照：呼叫端維持原本的顯示 */ });
         return () => { cancelled = true; };
