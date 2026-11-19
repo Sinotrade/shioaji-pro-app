@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { getUsSessionTicks, normalizeUsBidAsk, normalizeUsTick, nyDateTime, recordUsTick, resetUsQuotesForTest, usSubscriptionBody, usTickChange } from './us-quotes';
+import { getUsSessionTicks, normalizeUsBidAsk, normalizeUsTick, nyDateTime, recordUsTick, resetUsQuotesForTest, usSubscriptionBody, usTickChange, usTickReference } from './us-quotes';
 
 // 2026-11-17 14:30:05 America/New_York（EST, UTC-5）
 const T = Date.UTC(2026, 10, 17, 19, 30, 5) * 1000;
@@ -19,8 +19,16 @@ describe('US quote adapter', () => {
         expect(r.tick.close).toBe('354.1244');
         expect(r.tick.price_chg).toBe('1.6744');
         expect(r.tick.pct_chg).toBe('0.48');
+        // 一般盤還沒開：開高低留空，不拿成交價補；參考＝漲跌基準（最近一般盤收盤價）
+        expect([r.tick.open, r.tick.high, r.tick.low]).toEqual(['', '', '']);
+        expect(usTickReference(r.tick)).toBe('352.45');
         // 盤後同樣以當日一般盤收盤價計算
         expect(usTickChange({ ...raw, session: 'AfterHours', close: '355' }, '354.5')).toEqual({ priceChg: '-0.5', pctChg: '-0.14' });
+    });
+    it('derives the reference from price minus change', () => {
+        expect(usTickReference({ close: '353.65', price_chg: '1.2' })).toBe('352.45');
+        expect(usTickReference({ close: '353.65', price_chg: undefined })).toBeNull();
+        expect(usTickReference(undefined)).toBeNull();
     });
     it('keeps the SDK change during the regular session', () => {
         expect(usTickChange({ close: '352.45', price_chg: '1.2', pct_chg: '0.34', session: 'Regular' }, '353.65')).toEqual({ priceChg: '1.2', pctChg: '0.34' });

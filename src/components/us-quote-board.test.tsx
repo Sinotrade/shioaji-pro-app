@@ -36,6 +36,18 @@ describe('UsQuoteBoard', () => {
     });
 });
 
+describe('UsQuoteBoard extended hours', () => {
+    it('shows — for open/high/low before the regular open and the change base as 參考', () => {
+        m.quote = { tick: { close: '354.1244', price_chg: '1.6744', pct_chg: '0.48', open: '', high: '', low: '', total_volume: 255203 }, bidask: undefined };
+        act(() => { view = create(createElement(UsQuoteBoard, { contract: aapl })); });
+        const t = text();
+        expect(t).toContain('354.1244');
+        expect(t).toContain('352.45'); // 參考＝最近一般盤收盤價，與漲跌一致
+        expect(t).not.toContain('230.10'); // 不再顯示合約上較舊的參考價
+        expect((t.match(/—/g) ?? []).length).toBeGreaterThanOrEqual(3);
+    });
+});
+
 describe('usIntradayPath', () => {
     it('spans ticks and includes the reference line', () => {
         const t = (ts: number, price: string) => ({ key: 'US:AAPL', price, session: 'Regular' as const, freshness: null, ts, volume: 1 });

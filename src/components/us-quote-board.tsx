@@ -12,7 +12,7 @@ import { contractLinkKey } from '../lib/contract-key';
 import type { ContractInfo } from '../lib/types/contract';
 import { decCompare, fmtUsPrice } from '../lib/us/decimal';
 import { usHaltLabel, useUsHalt } from '../lib/us/us-halts';
-import { getUsTickMeta, US_SESSION_LABEL } from '../lib/us/us-quotes';
+import { getUsTickMeta, US_SESSION_LABEL, usTickReference } from '../lib/us/us-quotes';
 import { fmtInt } from '../lib/utils/format';
 import * as styles from './quote-board.css';
 import * as us from './us-quote-board.css';
@@ -49,19 +49,31 @@ function useUsSnapshot(contract: ContractInfo, enabled: boolean): UsSnapshot | n
     return snap?.key === key ? snap.row : null;
 }
 
+/** 開高低：即時值 → 快照一般盤值 → 「—」 */
+function ohl(live: string | undefined, snap: number | undefined): string {
+    if (live && Number(live) > 0) return fmtUsPrice(live);
+    if (snap !== undefined && snap > 0) return fmtUsPrice(snap);
+    return '—';
+}
+
 const numDir = (v: number): 'up' | 'down' | 'flat' => (v > 0 ? 'up' : v < 0 ? 'down' : 'flat');
 
 export function UsQuoteBoard({ contract }: { contract: ContractInfo }) {
     const key = contractLinkKey(contract);
     const quote = useQuote(key);
-    const snap = useUsSnapshot(contract, !quote?.tick);
+    // 沒有即時成交、或即時成交沒有開高低（盤前／盤後）時抓一次快照補一般盤值
+    const snap = useUsSnapshot(contract, !quote?.tick || !quote.tick.open);
     const halt = useUsHalt(contract);
     const tick = quote?.tick;
     const bid = quote?.bidask?.bid_price?.[0];
     const ask = quote?.bidask?.ask_price?.[0];
     const meta = tick ? getUsTickMeta(key) : undefined;
     const dir = dirOf(tick?.price_chg);
-    const ref = contract.us_reference;
+    // 「參考」與漲跌同一個基準：有即時成交時用成交價−漲跌（盤前／盤後即最近
+    // 一般盤收盤價），有快照時用快照的參考價，都沒有才用合約的前一日參考價
+    const ref = (tick ? usTickReference(tick) : null)
+        ?? (!tick && snap?.reference ? String(snap.reference) : null)
+        ?? contract.us_reference;
 
     return (
         <div className={`${styles.board} ${us.board}`} aria-label='美股報價板' data-testid='us-quote-board'>
@@ -76,9 +88,10 @@ export function UsQuoteBoard({ contract }: { contract: ContractInfo }) {
                         <span className={us.dir[dir]}>{tick.price_chg ? `${dir === 'up' ? '+' : ''}${fmtUsPrice(tick.price_chg)}` : '—'}</span>
                         <span className={us.dir[dir]}>{tick.pct_chg ? `${dir === 'up' ? '+' : ''}${Number(tick.pct_chg).toFixed(2)}%` : ''}</span>
                     </span>
-                    <Stat label='開'>{fmtUsPrice(tick.open)}</Stat>
-                    <Stat label='高'>{fmtUsPrice(tick.high)}</Stat>
-                    <Stat label='低'>{fmtUsPrice(tick.low)}</Stat>
+                    {/* 盤前一般盤還沒開：開高低留空顯示「—」，有快照就用快照的一般盤值 */}
+                    <Stat label='開'>{ohl(tick.open, snap?.open)}</Stat>
+                    <Stat label='高'>{ohl(tick.high, snap?.high)}</Stat>
+                    <Stat label='低'>{ohl(tick.low, snap?.low)}</Stat>
                     <Stat label='總量'>{fmtInt(tick.total_volume)}</Stat>
                     <Stat label='買'>{bid ? fmtUsPrice(bid) : '—'}</Stat>
                     <Stat label='賣'>{ask ? fmtUsPrice(ask) : '—'}</Stat>

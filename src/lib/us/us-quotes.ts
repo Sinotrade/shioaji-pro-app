@@ -121,6 +121,16 @@ export function usTickChange(raw: Pick<RawUsTick, 'close' | 'price_chg' | 'pct_c
     return { priceChg: str(raw.price_chg) || undefined, pctChg: str(raw.pct_chg) || undefined };
 }
 
+/**
+ * 漲跌的基準價（成交價 − 漲跌）：一般盤是當日參考價，盤前／盤後是最近一般盤
+ * 收盤價（見 usTickChange）。報價板的「參考」用它，才會與漲跌一致。
+ */
+export function usTickReference(tick: Pick<SseTick, 'close' | 'price_chg'> | undefined): string | null {
+    if (!tick?.price_chg || !decIsPositive(tick.close)) return null;
+    const ref = decSub(tick.close, tick.price_chg);
+    return ref !== null && decIsPositive(ref) ? decNormalize(ref) ?? ref : null;
+}
+
 /** us_tick → SseTick（code＝US:CODE）＋美股資訊；沒有成交價回 null */
 export function normalizeUsTick(raw: RawUsTick): { tick: SseTick; meta: UsTickMeta } | null {
     // price 是這筆成交價（可含 sub-penny，例如零股或中價成交，照原值顯示）；close 是一般盤價
@@ -133,9 +143,10 @@ export function normalizeUsTick(raw: RawUsTick): { tick: SseTick; meta: UsTickMe
         code: key,
         date,
         time,
-        open: str(raw.open) || price,
-        high: str(raw.high) || price,
-        low: str(raw.low) || price,
+        // 一般盤還沒開（盤前）時 SDK 送 null：留空，畫面顯示「—」，不拿成交價補
+        open: str(raw.open),
+        high: str(raw.high),
+        low: str(raw.low),
         close: price,
         avg_price: str(raw.avg_price) || undefined,
         volume: Number(raw.volume) || 0,
