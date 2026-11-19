@@ -277,29 +277,7 @@ export function recordUsTick(meta: UsTickMeta) {
     }
     list.push(meta);
     if (list.length > SESSION_TICK_LIMIT) list.splice(0, list.length - SESSION_TICK_LIMIT);
-    if (meta.session === 'Regular') recordRegularMinute(meta);
     sessionListeners.get(meta.key)?.forEach(l => l());
-}
-
-// 一般盤走勢線：每分鐘只留最後一筆（一天最多約 390 點），換日才清；進入盤後
-// 不清，走勢面板才能在盤後繼續畫完整的一般盤。
-const regularLines = new Map<string, { date: string; points: UsTickMeta[] }>();
-
-function recordRegularMinute(meta: UsTickMeta) {
-    const date = nyDateTime(meta.ts * 1000).date;
-    let line = regularLines.get(meta.key);
-    if (!line || line.date !== date) {
-        line = { date, points: [] };
-        regularLines.set(meta.key, line);
-    }
-    const last = line.points[line.points.length - 1];
-    if (last && Math.floor(last.ts / 60_000) === Math.floor(meta.ts / 60_000)) line.points[line.points.length - 1] = meta;
-    else line.points.push(meta);
-}
-
-/** 當日（紐約日期）一般盤的逐分鐘最後成交 */
-export function getUsRegularLine(key: string): readonly UsTickMeta[] {
-    return regularLines.get(key)?.points ?? EMPTY;
 }
 
 export function getUsSessionTicks(key: string): readonly UsTickMeta[] {
@@ -327,7 +305,6 @@ export const US_SESSION_LABEL: Record<UsTradingSession, string> = {
 
 export function resetUsQuotesForTest() {
     sessionTicks.clear();
-    regularLines.clear();
     knownReferences.clear();
     lastMeta.clear();
     sessionListeners.clear();

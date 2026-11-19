@@ -1,25 +1,10 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { getUsRegularLine, getUsSessionTicks, normalizeUsBidAsk, normalizeUsTick, nyDateTime, recordUsTick, resetUsQuotesForTest, usSubscriptionBody, usTickChange, usChangeFrom, usReferenceFor, contractReferenceApplies, noteUsReference } from './us-quotes';
+import { getUsSessionTicks, normalizeUsBidAsk, normalizeUsTick, nyDateTime, recordUsTick, resetUsQuotesForTest, usSubscriptionBody, usTickChange, usChangeFrom, usReferenceFor, contractReferenceApplies, noteUsReference } from './us-quotes';
 
 // 2026-11-17 14:30:05 America/New_York（EST, UTC-5）
 const T = Date.UTC(2026, 10, 17, 19, 30, 5) * 1000;
 
 beforeEach(resetUsQuotesForTest);
-
-describe('regular-session line', () => {
-    const meta = (utcMs: number, price: string, session: 'Regular' | 'AfterHours' | 'PreMarket' = 'Regular') => ({ key: 'US:AAPL', price, session, freshness: null, ts: utcMs, volume: 1 });
-    it('keeps the last trade per minute and survives the switch to after-hours', () => {
-        const t = (h: number, mi: number, s: number) => Date.UTC(2026, 10, 18, h, mi, s);
-        recordUsTick(meta(t(14, 31, 1), '10'));
-        recordUsTick(meta(t(14, 31, 50), '11'));
-        recordUsTick(meta(t(14, 32, 5), '12'));
-        recordUsTick(meta(t(21, 0, 1), '13', 'AfterHours'));
-        expect(getUsSessionTicks('US:AAPL').map(x => x.price)).toEqual(['13']); // 本時段清空
-        expect(getUsRegularLine('US:AAPL').map(x => x.price)).toEqual(['11', '12']); // 一般盤保留
-        recordUsTick(meta(Date.UTC(2026, 10, 19, 14, 31), '20'));
-        expect(getUsRegularLine('US:AAPL').map(x => x.price)).toEqual(['20']); // 換日重來
-    });
-});
 
 describe('US quote adapter', () => {
     it('maps a us_tick to the shared tick shape keyed US:CODE', () => {
