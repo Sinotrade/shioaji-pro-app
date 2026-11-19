@@ -7,7 +7,7 @@ export function buildVersionLabel(input: {
     dirty?: boolean;
 }): string {
     if (input.command === 'build' && input.refType === 'tag' &&
-        /^v\d+\.\d+\.\d+$/.test(input.refName ?? '')) {
+        /^v\d+\.\d+\.\d+(?:-\d+)?$/.test(input.refName ?? '')) {
         return input.refName!;
     }
     const revision = /^[0-9a-f]{7,40}$/.test(input.revision ?? '')
