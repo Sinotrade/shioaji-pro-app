@@ -196,6 +196,7 @@ beforeEach(() => {
 afterEach(() => {
     for (const m of mounted.splice(0)) act(() => m.unmount());
     listeners.clear();
+    vi.restoreAllMocks(); // 先還原 spy（包在假計時器外的那層），再換回真計時器
     vi.useRealTimers();
     vi.unstubAllGlobals();
 });
@@ -1022,8 +1023,9 @@ describe('CandleChart 實際成交標記', () => {
         expect(legendText(r)).toBe('成交▲買▼賣2筆');
         expect(captured.groups).toHaveLength(1);
     });
-    it('眼睛在顯示與隱藏之間切換、× 從這張圖移除：交回工作區的狀態依序是 hidden、on、off；隱藏中按 × 也是 off', async () => {
+    it('眼睛在顯示與隱藏之間切換、× 從這張圖移除：交回工作區的狀態依序是 hidden、on、off；隱藏中按 × 也是 off；× 放 0.5 秒遮罩、眼睛不放', async () => {
         setNow('2026-10-08T09:16:00'); fetchMock.mockResolvedValue(DATA);
+        const shield = (m: ReturnType<typeof mountWorkspace>) => m.root.findAll((n) => n.props['data-click-shield'] === '');
         const log: ChartFillsState[] = [];
         const r = mountWorkspace({ contract: stk, trades: trades() }, log); await flush();
         await press(r, '隱藏成交標記');
@@ -1032,15 +1034,19 @@ describe('CandleChart 實際成交標記', () => {
         await press(r, '顯示成交標記');
         expect(log).toEqual(['hidden', 'on']);
         expect(captured.groups).toHaveLength(1);
+        expect(shield(r)).toHaveLength(0); // 眼睛只換內容、整列還在，不擋點擊
         await press(r, '移除成交標記');
         expect(log).toEqual(['hidden', 'on', 'off']);
         expect(legend(r)).toBeUndefined();
         expect(captured.groups).toEqual([]);
+        // 整列移除後下面的委託列移到游標下：遮罩接住雙擊的第二下，不會按到 CANCEL（攔截行為見下方「從指標點成交標記」那則）
+        expect(shield(r)).toHaveLength(1);
         const hiddenLog: ChartFillsState[] = [];
         const hidden = mountWorkspace({ contract: stk, trades: trades(), initial: 'hidden' }, hiddenLog); await flush();
         await press(hidden, '移除成交標記');
         expect(hiddenLog).toEqual(['off']);
         expect(legend(hidden)).toBeUndefined();
+        expect(shield(hidden)).toHaveLength(1);
     });
     it('圖例列的筆數和工具列明細數相同（K 線載入中、成交待確認是「…」）；示意字元跟著形狀偏好換、顏色和圖層相同', async () => {
         setNow('2026-10-08T09:16:00');
@@ -1212,11 +1218,17 @@ describe('CandleChart 實際成交標記', () => {
             querySelector: (selector: string) => (selector === 'button' ? name : null) };
         const r = mountWorkspace({ contract: stk, trades: trades(), initial: 'off' }); await flush();
         expect(legend(r)).toBeUndefined();
+        const add = vi.spyOn(window, 'addEventListener');
         await act(async () => r.root.findAll((n) => n.type === 'button' && text(n) === '指標')[0]!.props.onClick());
         await act(async () => r.root.findAll((n) => n.type === 'button' && text(n).startsWith('成交標記'))[0]!.props.onClick());
         expect(panel(r)).toBeDefined();
         await frame();
-        await press(r, '成交');
+        // 按 Esc 關掉：走 useEscClose 的 window capture listener，跟真的按鍵同一條路
+        const esc = [...new Set(add.mock.calls.filter((c) => c[0] === 'keydown' && c[2] === true).map((c) => c[1]))];
+        expect(esc).toHaveLength(1);
+        const key = { key: 'Escape', repeat: false, preventDefault: vi.fn() };
+        await act(async () => (esc[0] as (e: unknown) => void)(key));
+        expect(key.preventDefault).toHaveBeenCalled(); // 不會算進 Esc×2 全刪單
         expect(panel(r)).toBeUndefined();
         expect(name.focus.mock.calls).toEqual([[{ preventScroll: true }]]);
     });
@@ -1231,17 +1243,35 @@ describe('CandleChart 實際成交標記', () => {
         const types = ['click', 'dblclick', 'mousedown', 'mouseup', 'pointerdown', 'pointerup'];
         // 只看指標類事件（Esc 堆疊等也會在 window 註冊 keydown）
         const guarded = (spy: typeof add) => spy.mock.calls.filter((c) => c[2] === true && types.includes(c[0])).map((c) => c[0]).sort();
+        const setT = vi.spyOn(globalThis, 'setTimeout');
+        const clearT = vi.spyOn(globalThis, 'clearTimeout');
         await act(async () => r.root.findAll((n) => n.type === 'button' && text(n) === '指標')[0]!.props.onClick());
         await act(async () => r.root.findAll((n) => n.type === 'button' && text(n).startsWith('成交標記'))[0]!.props.onClick());
         expect(panel(r)).toBeDefined();
         expect(shield()).toHaveLength(1);
         expect(guarded(add)).toEqual(types);
         expect(guarded(remove)).toEqual([]);
+        // 真的攔下：滑鼠點擊停在 window；mousedown 另外擋掉焦點移動；鍵盤產生的 click（detail 0）放行
+        const swallow = add.mock.calls.find((c) => c[0] === 'click' && c[2] === true)![1] as (e: unknown) => void;
+        const ev = (type: string, detail = 1) => ({ type, detail, stopPropagation: vi.fn(), preventDefault: vi.fn() });
+        const second = ev('click', 2); swallow(second);
+        expect(second.stopPropagation).toHaveBeenCalled();
+        const down = ev('mousedown'); swallow(down);
+        expect(down.stopPropagation).toHaveBeenCalled();
+        expect(down.preventDefault).toHaveBeenCalled();
+        const keyClick = ev('click', 0); swallow(keyClick);
+        expect(keyClick.stopPropagation).not.toHaveBeenCalled();
+        // 只放行 click：pointerdown 在 Chromium 也是 detail 0，放行就會觸發 Popover 的點外面關閉
+        const pd = ev('pointerdown', 0); swallow(pd);
+        expect(pd.stopPropagation).toHaveBeenCalled();
         await act(async () => { vi.advanceTimersByTime(499); });
         expect(shield()).toHaveLength(1);
         await act(async () => { vi.advanceTimersByTime(1); });
         expect(shield()).toHaveLength(0);
         expect(guarded(remove)).toEqual(types);
+        // 清理時也清掉 0.5 秒的計時器（0.5 秒內卸載不會留下計時器）
+        const timer = setT.mock.results[setT.mock.calls.findIndex((c) => c[1] === 500)]!.value;
+        expect(clearT).toHaveBeenCalledWith(timer);
         expect(panel(r)).toBeDefined(); // 設定面板照樣開著
         // 從圖例列打開不放遮罩（那裡沒有被拿掉的全視窗遮罩）
         await press(r, '成交'); await press(r, '成交');
@@ -1302,6 +1332,8 @@ describe('CandleChart 實際成交標記', () => {
         expect(log).toEqual(['off']);
         expect(legend(r)).toBeUndefined();
         expect(captured.groups).toEqual([]);
+        // 「移除」消失後整列按鈕移到游標下：遮罩接住雙擊的第二下，不會又加回來
+        expect(r.root.findAll((n) => n.props['data-click-shield'] === '')).toHaveLength(1);
         // 對話框還開著，這一列變成可以加回
         expect(row()).toBeDefined();
         expect(text(row())).not.toContain('已加入');

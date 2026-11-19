@@ -344,11 +344,18 @@ export function CandleChart({
         setFills(state);
     };
     // 從「指標」打開設定會當場拿掉全視窗遮罩：雙擊那一列的第二下不能穿到底下的閃電下單、刪單鈕或已武裝的圖。
+    // 按圖例列的 × 會整列移除，下面的委託列移到游標下：雙擊 × 的第二下不能按到 CANCEL（直接刪單、不經確認）。
     // 透明遮罩接住雙擊間隔內的點擊；在 window 就攔下，剛打開的設定面板也不會當成點外面而關掉
     const [clickShield, setClickShield] = useState(false);
     useEffect(() => {
         if (!clickShield) return;
-        const swallow = (e: Event) => e.stopPropagation();
+        const swallow = (e: Event) => {
+            // 鍵盤按下按鈕產生的 click（detail 0）不是雙擊的第二下：放行，剛打開的面板可以馬上用鍵盤操作
+            if (e.type === 'click' && (e as MouseEvent).detail === 0) return;
+            // 第二下按在遮罩上：擋掉預設的焦點移動，面板裡的焦點才不會掉到 body
+            if (e.type === 'mousedown') e.preventDefault();
+            e.stopPropagation();
+        };
         const types = ['pointerdown', 'pointerup', 'mousedown', 'mouseup', 'click', 'dblclick'];
         types.forEach((t) => window.addEventListener(t, swallow, true));
         const timer = setTimeout(() => setClickShield(false), 500);
@@ -2492,7 +2499,8 @@ export function CandleChart({
                                 setClickShield(true);
                                 openFillSettings();
                             },
-                            onRemove: () => { drawings.onInteraction(); setFillsClosing('off'); },
+                            // 「移除」消失後整列按鈕移到游標下：遮罩接住雙擊的第二下，不會剛移除又加回來
+                            onRemove: () => { drawings.onInteraction(); setClickShield(true); setFillsClosing('off'); },
                         } : undefined}
                         onSaveDefaults={panelService ? () => {
                             saveInstances(savedInstances);
@@ -2585,7 +2593,7 @@ export function CandleChart({
                                         <Settings2 size={11} />
                                     </button>
                                     <button className={styles.legendCtrlBtn} aria-label='移除成交標記' title='移除（之後可從「指標」加回來）'
-                                        onClick={() => setFillsClosing('off')}>
+                                        onClick={() => { setClickShield(true); setFillsClosing('off'); }}>
                                         <X size={11} />
                                     </button>
                                 </span>

@@ -768,7 +768,7 @@ describe('chart order settings button', () => {
     const fillLegend = () => view.root.findAll(n => typeof n.type === 'string' && n.props['data-fills-legend'])[0];
     const fillPanel = () => view.root.findAll(n => n.props.role === 'dialog' && n.props['aria-label'] === '成交標記設定')[0];
 
-    it('成交圖例列排在武裝提示之前：按它解除武裝、提示收起時，往上移的是下面的委託列，游標下仍是圖例列（不會變成 CANCEL）', async () => {
+    it('成交圖例列排在武裝提示之前：按它解除武裝、提示收起時，往上移的是排在下面的指標、委託與觸價列，游標下仍是圖例列（不會變成 CANCEL）', async () => {
         const trade = { contract: stk, order: { id: 'legend-order', action: 'Buy', price: 100, quantity: 1 },
             status: { status: 'Submitted', deal_quantity: 0, cancel_quantity: 0, modified_price: 0 } };
         await mount({ contract: stk, trades: [trade] });
