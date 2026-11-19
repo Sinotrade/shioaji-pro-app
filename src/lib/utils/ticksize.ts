@@ -41,7 +41,13 @@ function etfTick(price: number): number {
     return price < 50 ? 0.01 : 0.05;
 }
 
+// 美股（Reg NMS 612）：1 美元以上報價單位 0.01，未滿 1 美元 0.0001
+function usTick(price: number): number {
+    return Math.abs(price) < 1 ? 0.0001 : 0.01;
+}
+
 export function tickSizeFor(contract: TickContract, price: number): number {
+    if (contract.region === 'US') return usTick(price);
     const st = contract.security_type;
     if (st === 'FUT' || st === 'OPT') {
         // banded 商品（個股期 tw_stock_fut_price_band、TXO premium band

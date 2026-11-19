@@ -42,7 +42,7 @@ import {
 import { orderStatusLabel } from '../lib/order-status-label';
 import { usLinkKey } from '../lib/contract-key';
 import type { AccountedUsTrade } from '../lib/types/us';
-import { fmtDec, fmtUsPrice } from '../lib/us/decimal';
+import { fmtDec, fmtUsAvgPrice } from '../lib/us/decimal';
 import { usRemaining } from '../lib/us/us-trading-state';
 import {
     usAccountGroupKey,
@@ -490,7 +490,7 @@ export function OrdersPane({
             </span>
             {t.status.avg_price && (
                 <span className={styles.priceDualSub}>
-                    成 {fmtUsPrice(t.status.avg_price)}
+                    成 {fmtUsAvgPrice(t.status.avg_price)}
                 </span>
             )}
         </span>

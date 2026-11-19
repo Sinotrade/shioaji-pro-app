@@ -25,6 +25,16 @@ import {
 import { Settings2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { useQuote } from '../hooks/use-stream';
+import { useUsSnapshot } from '../hooks/use-us-snapshot';
+import { contractLinkKey } from '../lib/contract-key';
+import { usPriceDecimals } from '../lib/us/decimal';
+import {
+    contractReferenceApplies,
+    getUsTickMeta,
+    knownUsReference,
+    nyDateTime,
+    subscribeUsSessionTicks,
+} from '../lib/us/us-quotes';
 import { colorWithOpacity } from '../lib/indicator-defs';
 import { limitStateOf } from '../lib/limit-state';
 import {
@@ -34,7 +44,10 @@ import {
     parseIntradaySessionMode,
     pastSessionReference,
     pickIntradayWindow,
+    isUsChartSession,
+    sessionKindOf,
     sessionMinutes,
+    sessionNow,
     sessionWindowFor,
     tickBucket,
     type IntradaySessionMode,
@@ -43,11 +56,10 @@ import {
 } from '../lib/intraday-session';
 import { getChartColors, useThemeSettings, themeKey as themeKeyOf, baseMode } from '../lib/theme-store';
 import type { ContractInfo } from '../lib/types/contract';
-import type { KBars } from '../lib/types/market';
+import type { KBars, SseTick } from '../lib/types/market';
 import { fmtPrice } from '../lib/utils/format';
 import {
     dateStrOffset,
-    nowWallClockUtc,
     wallClockToUtc,
 } from '../lib/utils/kbars';
 import * as styles from './intraday-chart.css';
@@ -429,7 +441,15 @@ export function IntradayChart({
     const bumpLegendRef = useRef(bumpLegend);
     bumpLegendRef.current = bumpLegend;
 
-    const quote = useQuote(contract.code);
+    // 美股（region US）走同一張走勢圖：時段框架是紐約一般盤 09:30–16:00
+    // （sessionKindOf → 'US'），行情 key 是 US:CODE，即時成交從逐筆通知進來
+    const sk = sessionKindOf(contract);
+    const isUs = sk === 'US';
+    const quoteKey = contractLinkKey(contract);
+    const quote = useQuote(quoteKey);
+    // 美股參考價（漲跌基準）：快照的 reference 優先 — 抓一次快照，
+    // noteUsReference 會記下當天的參考價
+    const usSnap = useUsSnapshot(contract, isUs);
     const themeSettings = useThemeSettings();
     const colors = getChartColors(themeSettings);
     const themeKey = themeKeyOf(themeSettings);
@@ -696,6 +716,18 @@ export function IntradayChart({
         volSeriesRef.current?.setData([]);
     };
 
+    // 美股：win 所在交易日（紐約）的參考價；不知道回 0（呼叫端退回歷史推算）
+    const usSessionReference = (win: SessionWindow): number => {
+        const date = new Date(win.start * 1000).toISOString().slice(0, 10);
+        const known = Number(knownUsReference(quoteKey, date));
+        if (known > 0) return known;
+        if (contract.us_reference && contractReferenceApplies(contract.reference_date, date)) {
+            const r = Number(contract.us_reference);
+            if (r > 0) return r;
+        }
+        return 0;
+    };
+
     const applyRefPrice = (ref: number) => {
         if (!Number.isFinite(ref) || ref <= 0) return;
         if (Math.abs(ref - refPriceRef.current) < 1e-9) return;
@@ -704,13 +736,20 @@ export function IntradayChart({
             baseValue: { type: 'price', price: ref },
         });
         refLineRef.current?.applyOptions({ price: ref });
+        // 美股價格刻度位數跟著價位（未滿 1 美元 4 位），與報價板一致
+        if (isUs) {
+            const d = usPriceDecimals(ref);
+            const priceFormat = { type: 'price' as const, precision: d, minMove: 10 ** -d };
+            priceSeriesRef.current?.applyOptions({ priceFormat });
+            barSeriesRef.current?.applyOptions({ priceFormat });
+        }
     };
 
     // ---- history load: pick the last session present in the data ----
     useEffect(() => {
         const loadKey = `${contract.code}|${reloadSeq}|${optsKey}|${sessionMode}`;
-        const now = nowWallClockUtc();
-        const current = sessionWindowFor(contract.security_type, now);
+        const now = sessionNow(sk);
+        const current = sessionWindowFor(sk, now);
         const previousLoad = historyLoadRef.current;
         const sameContractAndRefresh =
             previousLoad.code === contract.code && previousLoad.reloadSeq === reloadSeq;
@@ -831,27 +870,27 @@ export function IntradayChart({
             // 空框架＝沒有這段的歷史（零 kbars/載入失敗/403）— 先清掉
             // 圖上殘留的前一次資料，live 從現在開始重畫
             clearSeries();
-            const ref = Number(contract.reference);
-            if (!Number.isFinite(ref) || ref <= 0) return;
             const pend =
                 pendingWinRef.current?.code === contract.code
                     ? pendingWinRef.current.start
                     : 0;
             const win = pickIntradayWindow(
-                contract.security_type,
+                sk,
                 [],
                 sessionMode,
-                nowWallClockUtc(),
+                sessionNow(sk),
                 pend,
             );
+            const ref = isUs ? usSessionReference(win) : Number(contract.reference);
+            if (!Number.isFinite(ref) || ref <= 0) return;
             applyRefPrice(ref);
             // 空框架沒有歷史可推參考價 — 已結束時段至少不畫漲跌停
             const past = isReviewingPastSession(
-                contract.security_type,
+                sk,
                 sessionMode,
                 win,
                 [],
-                nowWallClockUtc(),
+                sessionNow(sk),
                 pend,
             );
             pastRef.current = past;
@@ -909,13 +948,13 @@ export function IntradayChart({
                 const lastRecent = all[all.length - 1];
                 const needNight = sessionMode === 'night' ||
                     (sessionMode === 'auto' && lastRecent !== undefined &&
-                        sessionWindowFor(contract.security_type, lastRecent.time).night);
+                        sessionWindowFor(sk, lastRecent.time).night);
                 if (needNight) {
                     const lastNight = [...all].reverse().find((b) =>
-                        sessionWindowFor(contract.security_type, b.time).night,
+                        sessionWindowFor(sk, b.time).night,
                     );
                     const queryStart = wallClockToUtc(`${recentStart}T00:00:00`);
-                    if (!lastNight || sessionWindowFor(contract.security_type, lastNight.time).start < queryStart) {
+                    if (!lastNight || sessionWindowFor(sk, lastNight.time).start < queryStart) {
                         const older = kbarsToMinBars(await fetchChartHistory(
                             contract, dateStrOffset(29), recentStart,
                             { revision: historyRevision },
@@ -942,10 +981,10 @@ export function IntradayChart({
                 // 空的新時段框架等第一筆成交。手動鎖日/夜盤時取有資料
                 // 的最近一段該種時段
                 const win = pickIntradayWindow(
-                    contract.security_type,
+                    sk,
                     all.map((b) => b.time),
                     sessionMode,
-                    nowWallClockUtc(),
+                    sessionNow(sk),
                     pend,
                 );
                 const bars = all.filter(
@@ -974,19 +1013,22 @@ export function IntradayChart({
                 // 手動回顧已結束的時段：合約參考價/漲跌停屬於現在（自動
                 // 會選）的時段 — 參考價改由歷史推，漲跌停不畫
                 const past = isReviewingPastSession(
-                    contract.security_type,
+                    sk,
                     sessionMode,
                     win,
                     all.map((b) => b.time),
-                    nowWallClockUtc(),
+                    sessionNow(sk),
                     pend,
                 );
                 pastRef.current = past;
+                // 美股：這個交易日的參考價（快照／適用的合約檔），沒有時用
+                // 歷史裡前一個交易日的最後收盤
                 const ref =
-                    (past
-                        ? pastSessionReference(contract.security_type, all, win)
-                        : null) ||
-                    Number(contract.reference) ||
+                    (isUs
+                        ? usSessionReference(win) || pastSessionReference(sk, all, win)
+                        : (past
+                              ? pastSessionReference(sk, all, win)
+                              : null) || Number(contract.reference)) ||
                     bars[0]?.close ||
                     last?.close ||
                     0;
@@ -1143,8 +1185,11 @@ export function IntradayChart({
 
     // ---- live tick / index quote -> extend the current minute ----
     const liveQuote = quote?.tick ?? quote?.index;
-    useEffect(() => {
-        if (!liveQuote || liveQuote.code !== contract.code) return;
+    // 一筆成交（或指數 quote_idx）併進目前這分鐘。台股從行情 store 進來；
+    // 美股從逐筆通知進來（見下方），tick 帶單筆量、不帶 price_chg
+    type LiveTick = SseTick | NonNullable<typeof quote>['index'];
+    const processLiveRef = useRef<(lq: NonNullable<LiveTick>, tick: SseTick | undefined, index: NonNullable<typeof quote>['index']) => void>(() => {});
+    processLiveRef.current = (liveQuote, tick, index) => {
         if (
             loadedKeyRef.current !==
             `${contract.code}|${reloadSeq}|${optsKey}|${sessionModeRef.current}`
@@ -1168,7 +1213,7 @@ export function IntradayChart({
         // 定盤 14:30）只丟棄，否則每筆都會白打一次 kbars
         // 手動鎖定時段時，另一種時段的 tick 整個略過（不重載、不入圖）
         if (t > win.end + CLOSE_GRACE) {
-            const next = sessionWindowFor(contract.security_type, t);
+            const next = sessionWindowFor(sk, t);
             if (
                 next.start !== win.start &&
                 followsSession(sessionModeRef.current, next)
@@ -1186,7 +1231,7 @@ export function IntradayChart({
         if ('simtrade' in liveQuote && liveQuote.simtrade) {
             const sp = Number(liveQuote.close);
             if (Number.isFinite(sp) && sp > 0) {
-                const sc = Number(quote?.tick?.price_chg);
+                const sc = Number(tick?.price_chg);
                 simRef.current = {
                     price: sp,
                     chg: Number.isFinite(sc) ? sc : undefined,
@@ -1201,9 +1246,9 @@ export function IntradayChart({
         // 時重載 — 冷門股每隔幾分鐘一筆成交是常態，不該筆筆重載
         if (stale > 0 && tickBucket(win, t) > stale + 180) {
             const missedVolume =
-                !quote?.tick ||
-                (quote.tick.total_volume ?? 0) >
-                    cumVRef.current + (quote.tick.volume ?? 0);
+                !tick ||
+                (tick.total_volume ?? 0) >
+                    cumVRef.current + (tick.volume ?? 0);
             if (missedVolume) {
                 throttledReload();
                 return;
@@ -1215,16 +1260,16 @@ export function IntradayChart({
         if (simRef.current) simRef.current = null; // 開盤了 — 試搓讀值退場
 
         // tick 才帶 price_chg — 用它回推最新參考價（比合約快取新鮮）
-        const chg = Number(quote?.tick?.price_chg);
-        if (quote?.tick && Number.isFinite(chg)) {
+        const chg = Number(tick?.price_chg);
+        if (tick && Number.isFinite(chg)) {
             applyRefPrice(p - chg);
-        } else if (quote?.index) {
-            applyRefPrice(Number(quote.index.reference));
+        } else if (index) {
+            applyRefPrice(Number(index.reference));
         }
         const ref = refPriceRef.current;
 
-        const vol = quote?.tick?.volume ?? 0;
-        const size = isIndex ? Number(quote?.index?.amount ?? 0) : vol;
+        const vol = tick?.volume ?? 0;
+        const size = isIndex ? Number(index?.amount ?? 0) : vol;
         if (label > lastLabelRef.current) {
             prevMinCloseRef.current = liveRef.current?.price ?? ref;
             lastLabelRef.current = label;
@@ -1249,7 +1294,7 @@ export function IntradayChart({
         cumVRef.current += vol;
         cumPVRef.current += p * vol;
 
-        const tickAvg = Number(quote?.tick?.avg_price);
+        const tickAvg = Number(tick?.avg_price);
         const avg = isIndex
             ? null
             : Number.isFinite(tickAvg) && tickAvg > 0
@@ -1259,10 +1304,10 @@ export function IntradayChart({
                 : null;
         const totalVol = Math.max(
             cumVRef.current,
-            quote?.tick?.total_volume ?? 0,
+            tick?.total_volume ?? 0,
         );
         const total = isIndex
-            ? Number(quote?.index?.amount_sum ?? 0)
+            ? Number(index?.amount_sum ?? 0)
             : totalVol;
         const prev = liveRef.current;
         liveRef.current = {
@@ -1300,10 +1345,41 @@ export function IntradayChart({
         setEmpty(false);
         setHistoryError(false);
         bumpLegendRef.current();
+    };
+    useEffect(() => {
+        // 美股不走這裡：行情 store 會把相近的多筆合併成最後一筆（量會漏）
+        if (isUs) return;
+        if (!liveQuote || liveQuote.code !== quoteKey) return;
+        processLiveRef.current(liveQuote, quote?.tick, quote?.index);
         // NOTE: 依賴 liveQuote 物件本身而非 quote.seq — seq 在 bidask 更新
         // 也會跳，若當 dep 會把同一筆 tick 的量重複累加
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [liveQuote, contract.code]);
+    }, [liveQuote, quoteKey, isUs]);
+    // 美股：每筆成交（帶 session 與單筆量）。只畫一般盤（含收盤競價）；
+    // 參考價不從成交回推（price_chg 不帶），用快照／合約檔的參考價
+    useEffect(() => {
+        if (!isUs) return;
+        return subscribeUsSessionTicks(quoteKey, () => {
+            const meta = getUsTickMeta(quoteKey);
+            if (!meta || !isUsChartSession(meta.session) || !(meta.volume > 0)) return;
+            const { date, time } = nyDateTime(meta.tsUs ?? meta.ts * 1000);
+            if (!date) return;
+            const tick = {
+                code: quoteKey, date, time, close: meta.price, open: '', high: '', low: '',
+                volume: meta.volume, total_volume: 0, tick_type: meta.tickType ?? 0, simtrade: false,
+            } as SseTick;
+            processLiveRef.current(tick, tick, undefined);
+        });
+    }, [isUs, quoteKey]);
+    // 快照晚到：當天的參考價補上（只在畫的就是快照那個交易日時）
+    useEffect(() => {
+        const win = sessionRef.current;
+        if (!isUs || !usSnap?.reference || !win) return;
+        if (new Date(win.start * 1000).toISOString().slice(0, 10) !== usSnap.tradeDate) return;
+        applyRefPrice(usSnap.reference);
+        bumpLegendRef.current();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [isUs, usSnap]);
 
     // ---- legend ----
     // 重載/載入失敗期間沿用上次畫出的時段（同商品、且與目前選的時段
@@ -1331,6 +1407,9 @@ export function IntradayChart({
               ? 'up'
               : 'down';
     const chg = shownPrice !== undefined ? shownPrice - refPrice : undefined;
+    // 美股價格固定位數（1 美元以上 2 位、未滿 4 位），寬度不隨 sub-penny 成交跳動；
+    // 台股維持原本的 fmtPrice 預設
+    const pxDigits = isUs ? usPriceDecimals(shownPrice ?? refPrice) : undefined;
     const chgPct =
         chg !== undefined && refPrice ? (chg / refPrice) * 100 : undefined;
     const shownAvg = hover ? hover.avg : live?.avg;
@@ -1353,7 +1432,8 @@ export function IntradayChart({
     // 顯示的不是今天的時段（週末/收盤後看盤）→ 標日期提示。
     // 夜盤跨午夜：起訖任一落在今天都算「今天的時段」，否則週二凌晨
     // 正在交易的夜盤會被誤標成昨天的舊資料
-    const taiwanNow = new Date(Date.now() + 8 * 3600 * 1000);
+    // 牆鐘的「今天」：台股台北、美股紐約（與時段框架同一套編碼）
+    const taiwanNow = new Date(sessionNow(sk) * 1000);
     const sameTwDay = (d: Date) =>
         d.getUTCFullYear() === taiwanNow.getUTCFullYear() &&
         d.getUTCMonth() === taiwanNow.getUTCMonth() &&
@@ -1448,17 +1528,20 @@ export function IntradayChart({
                         )}
                     </span>
                 ) : (
-                    (sessionLabel || staleDate) && (
-                        <span className={styles.sessionChip}>
+                    (sessionLabel || staleDate || isUs) && (
+                        <span
+                            className={styles.sessionChip}
+                            title={isUs ? '美東時間・一般盤 09:30–16:00（盤前／盤後成交不入圖）' : undefined}
+                        >
                             {staleDate ? `${staleDate} ` : ''}
-                            {sessionLabel ?? '日盤'}
+                            {sessionLabel ?? (isUs ? '美東' : '日盤')}
                         </span>
                     )
                 )}
                 <span className={styles.stats}>
                 {sim && (
                     <span className={styles.simChip}>
-                        試搓 {fmtPrice(sim.price)}
+                        試搓 {fmtPrice(sim.price, pxDigits)}
                         {simPct !== undefined
                             ? ` ${simPct > 0 ? '+' : ''}${simPct.toFixed(2)}%`
                             : ''}
@@ -1471,7 +1554,7 @@ export function IntradayChart({
                             : `${styles.price} ${panel.dirText[dir]}`
                     }
                 >
-                    {shownPrice !== undefined ? fmtPrice(shownPrice) : '—'}
+                    {shownPrice !== undefined ? fmtPrice(shownPrice, pxDigits) : '—'}
                 </span>
                 <span
                     className={panel.dirText[dir]}
@@ -1483,7 +1566,7 @@ export function IntradayChart({
                 >
                     {pastRef.current && chg !== undefined ? '≈' : ''}
                     {chg !== undefined
-                        ? `${chg > 0 ? '+' : ''}${fmtPrice(chg)}`
+                        ? `${chg > 0 ? '+' : ''}${fmtPrice(chg, pxDigits)}`
                         : ''}
                     {chgPct !== undefined
                         ? ` (${chgPct > 0 ? '+' : ''}${chgPct.toFixed(2)}%)`
@@ -1493,7 +1576,7 @@ export function IntradayChart({
                     <span className={styles.kv}>
                         均{' '}
                         <span className={styles.avgVal}>
-                            {shownAvg != null ? fmtPrice(shownAvg) : '—'}
+                            {shownAvg != null ? fmtPrice(shownAvg, pxDigits) : '—'}
                         </span>
                     </span>
                 )}
@@ -1501,11 +1584,11 @@ export function IntradayChart({
                     <span className={styles.kv}>
                         高{' '}
                         <span className={panel.dirText.up}>
-                            {live ? fmtPrice(live.high) : '—'}
+                            {live ? fmtPrice(live.high, pxDigits) : '—'}
                         </span>{' '}
                         低{' '}
                         <span className={panel.dirText.down}>
-                            {live ? fmtPrice(live.low) : '—'}
+                            {live ? fmtPrice(live.low, pxDigits) : '—'}
                         </span>
                     </span>
                 )}
@@ -1810,7 +1893,7 @@ export function IntradayChart({
                                   contract.security_type === 'FUT' ||
                                   contract.security_type === 'OPT'
                                       ? '口'
-                                      : '張'
+                                      : isUs ? '股' : '張'
                               }`}
                     </span>
                 )}

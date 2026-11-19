@@ -1,18 +1,31 @@
 // src/components/depth-ladder.tsx — 5-level bid/ask "energy bars".
 // Clicking a price loads it into the order ticket.
+//
+// 美股（region US）走同一個元件：行情只有最佳一檔（us_bidask），只畫一列；
+// 即時一檔到達前用美股快照的買賣價墊底（標「快照一檔」）。美股下單面板
+// 不接點價帶入，美股價格不可點。
 
 import { useMemo } from 'react';
 import { useDisplayBook } from '../hooks/use-display-book';
+import { contractLinkKey } from '../lib/contract-key';
 import type { ContractBase } from '../lib/types/contract';
 import type { Snapshot } from '../lib/types/market';
 import { setPickedPrice } from '../lib/price-sync';
+import { fmtUsPrice, usPriceDecimals } from '../lib/us/decimal';
 import { fmtInt, fmtPrice } from '../lib/utils/format';
 import * as panel from './panel.css';
 import * as styles from './depth-ladder.css';
 
+const TW_LEVELS = [0, 1, 2, 3, 4];
+const US_LEVELS = [0];
+
 export function DepthLadder({ code, snapshot, contract }: { code: string; snapshot?: Snapshot; contract?: ContractBase }) {
-    const onPickPrice = (price: number) => setPickedPrice(code, price);
-    const { book } = useDisplayBook(code, snapshot, contract);
+    const isUs = contract?.region === 'US';
+    // 美股的行情／快照 key 是 US:CODE
+    const key = contract && isUs ? contractLinkKey(contract) : code;
+    const onPickPrice = (price: number) => { if (!isUs) setPickedPrice(code, price); };
+    const { book } = useDisplayBook(key, snapshot, contract);
+    const fmt = (v: number) => (isUs ? fmtUsPrice(v) : fmtPrice(v));
 
     const { bids, asks, maxVol, totalBid, totalAsk, spread } = useMemo(() => {
         const bids = book?.bids ?? [];
@@ -26,21 +39,24 @@ export function DepthLadder({ code, snapshot, contract }: { code: string; snapsh
         const totalAsk = asks.reduce((s, a) => s + a.vol, 0);
         const b1 = bids[0] && bids[0].vol > 0 ? bids[0].price : undefined;
         const a1 = asks[0] && asks[0].vol > 0 ? asks[0].price : undefined;
+        const digits = isUs ? usPriceDecimals(b1 ?? a1) : 2;
         const spread =
             b1 !== undefined && a1 !== undefined && a1 > b1
-                ? Number((a1 - b1).toFixed(2))
+                ? Number((a1 - b1).toFixed(digits))
                 : null;
         return { bids, asks, maxVol, totalBid, totalAsk, spread };
-    }, [book]);
+    }, [book, isUs]);
 
     // bid share of the 5-level book — the "買賣力道" gauge
     const bidShare =
         totalBid + totalAsk > 0
             ? (totalBid / (totalBid + totalAsk)) * 100
             : 50;
+    const levels = isUs ? US_LEVELS : TW_LEVELS;
+    const bookLabel = book?.source === 'snapshot' ? '快照一檔' : isUs ? '最佳一檔' : '五檔';
 
     return (
-        <div className={styles.grid}>
+        <div className={styles.grid} data-levels={levels.length}>
                 {book?.source === 'snapshot' && <span title={book.time}>快照一檔</span>}
                 <div className={styles.headerRow}>
                     <span>買量</span>
@@ -48,7 +64,7 @@ export function DepthLadder({ code, snapshot, contract }: { code: string; snapsh
                     <span>ASK</span>
                     <span style={{ textAlign: 'right' }}>賣量</span>
                 </div>
-                {[0, 1, 2, 3, 4].map((i) => {
+                {levels.map((i) => {
                     const bid = bids[i];
                     const ask = asks[i];
                     const hasBid = !!bid && bid.vol > 0;
@@ -71,7 +87,7 @@ export function DepthLadder({ code, snapshot, contract }: { code: string; snapsh
                                     }}
                                 />
                                 <span className={styles.priceBid}>
-                                    {hasBid ? fmtPrice(bid.price) : ''}
+                                    {hasBid ? fmt(bid.price) : ''}
                                 </span>
                             </div>
                             <div
@@ -87,7 +103,7 @@ export function DepthLadder({ code, snapshot, contract }: { code: string; snapsh
                                     }}
                                 />
                                 <span className={styles.priceAsk}>
-                                    {hasAsk ? fmtPrice(ask.price) : ''}
+                                    {hasAsk ? fmt(ask.price) : ''}
                                 </span>
                             </div>
                             <span className={styles.volTextRight}>
@@ -97,19 +113,19 @@ export function DepthLadder({ code, snapshot, contract }: { code: string; snapsh
                     );
                 })}
             <div className={styles.totals}>
-                <span className={panel.dirText.up}>Σ買 {fmtInt(totalBid)}</span>
+                <span className={panel.dirText.up}>{isUs ? '買' : 'Σ買'} {fmtInt(totalBid)}</span>
                 {spread !== null && (
                     <span className={styles.spread} title='買一賣一價差'>
-                        價差 {fmtPrice(spread)}
+                        價差 {isUs ? fmtUsPrice(spread) : fmtPrice(spread)}
                     </span>
                 )}
                 <span className={panel.dirText.down}>
-                    Σ賣 {fmtInt(totalAsk)}
+                    {isUs ? '賣' : 'Σ賣'} {fmtInt(totalAsk)}
                 </span>
             </div>
             <div
                 className={styles.forceTrack}
-                title={`${book?.source === 'snapshot' ? '快照一檔' : '五檔'}買賣力道 買${bidShare.toFixed(0)}%`}
+                title={`${bookLabel}買賣力道 買${bidShare.toFixed(0)}%`}
             >
                 <div
                     className={styles.forceBid}

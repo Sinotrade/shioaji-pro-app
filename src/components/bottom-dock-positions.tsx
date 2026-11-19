@@ -46,7 +46,7 @@ import {
     type ViewMode,
 } from './bottom-dock-shared';
 import { usLinkKey } from '../lib/contract-key';
-import { decAdd, fmtDec, fmtUsPrice } from '../lib/us/decimal';
+import { decAdd, fmtDec, fmtUsAvgPrice, fmtUsPrice } from '../lib/us/decimal';
 import { US_POSITIONS_UNAVAILABLE, type UsPositionsStatus } from '../lib/us/us-trading-state';
 import {
     fmtUsPnl,
@@ -401,7 +401,7 @@ export function PositionsPane({
                 {sz === 'wide' && <td className={`${styles.td} ${styles.qtyCell}`}>—</td>}
                 {sz === 'wide' && (
                     <td className={styles.td}>
-                        {maskMoney(fmtUsPrice(p.price), privMoney)}
+                        {maskMoney(fmtUsAvgPrice(p.price), privMoney)}
                     </td>
                 )}
                 <td className={styles.td}>
@@ -459,7 +459,7 @@ export function PositionsPane({
                         </span>
                         <span>
                             <span className={styles.priceStackLabel}>均</span>
-                            {maskMoney(fmtUsPrice(p.price), privMoney)}
+                            {maskMoney(fmtUsAvgPrice(p.price), privMoney)}
                         </span>
                     </span>
                     <span className={styles.cardSpacer} />

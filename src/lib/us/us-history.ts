@@ -143,11 +143,6 @@ export function nyDateStr(nowMs = Date.now(), daysAgo = 0): string {
     return nyDateTime((nowMs - daysAgo * 86_400_000) * 1000).date;
 }
 
-/** 一般盤 09:30–16:00（紐約牆鐘當 UTC 的秒數） */
-export function usRegularSessionRange(nyDate: string): { start: number; end: number } {
-    return { start: wallClockToUtc(`${nyDate}T09:30:00`), end: wallClockToUtc(`${nyDate}T16:00:00`) };
-}
-
 // ---- kbars ----
 
 const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : Number(v));
@@ -334,6 +329,8 @@ export interface UsSnapshot {
     session: UsTradingSession | null;
     /** 最新成交（含盤前／盤後）；close 是一般盤價 */
     lastPrice: number | null;
+    /** 前一交易日成交量（量比用；舊 sidecar 沒帶時 undefined） */
+    yesterdayVolume?: number;
 }
 
 const optNum = (v: unknown) => (v === null || v === undefined ? null : Number.isFinite(num(v)) ? num(v) : null);
@@ -365,6 +362,7 @@ export function parseUsSnapshotRow(row: unknown): UsSnapshot | null {
         sellVolume: optNum(r.sell_volume),
         session: sessionOf(r.session),
         lastPrice: optNum(r.last_price),
+        ...(optNum(r.yesterday_volume) !== null ? { yesterdayVolume: optNum(r.yesterday_volume)! } : {}),
     };
 }
 
@@ -404,89 +402,4 @@ export function fetchUsSnapshotShared(contract: Pick<ContractBase, 'code' | 'exc
     promise.catch(() => { if (snapshotCache.get(key)?.promise === promise) snapshotCache.delete(key); });
     if (snapshotCache.size > 200) snapshotCache.delete(snapshotCache.keys().next().value!);
     return promise;
-}
-
-// ---- 最近交易日 ----
-
-/**
- * 最近一個有一般盤 1 分 K 的交易日（一次查紐約今天往前 lookbackDays 天）。
- * 盤前／台北白天時今天還沒資料，會落到前一個交易日。prevClose 是再前一個
- * 交易日一般盤最後一根 1 分 K 的收盤（走勢圖沒有當日參考價時的基準）。
- * 沒有資料回 null。
- */
-export async function latestUsSessionBars(
-    contract: Pick<ContractBase, 'code' | 'exchange'>,
-    opts?: { nowMs?: number; lookbackDays?: number },
-): Promise<{ date: string; bars: Candle[]; prevClose: number | null } | null> {
-    const now = opts?.nowMs ?? Date.now();
-    const lookback = Math.min(opts?.lookbackDays ?? 10, US_KBARS_MAX_DAYS - 1);
-    const bars = await fetchUsKbars(contract, nyDateStr(now, lookback), nyDateStr(now));
-    const byDay = new Map<string, Candle[]>();
-    for (const b of bars) {
-        // bar.time 是紐約牆鐘當 UTC 的秒數（標示 bar 結束），16:00 那根仍屬當天
-        const date = new Date((b.time - 1) * 1000).toISOString().slice(0, 10);
-        const range = usRegularSessionRange(date);
-        if (b.time <= range.start - 60 || b.time > range.end + 600) continue;
-        const list = byDay.get(date) ?? [];
-        list.push(b);
-        byDay.set(date, list);
-    }
-    const days = [...byDay.keys()].sort();
-    const date = days[days.length - 1];
-    if (!date) return null;
-    const prev = days.length > 1 ? byDay.get(days[days.length - 2]!)! : null;
-    const prevClose = prev ? prev[prev.length - 1]!.close : null;
-    return { date, bars: byDay.get(date)!, prevClose: Number.isFinite(prevClose) && prevClose! > 0 ? prevClose : null };
-}
-
-// ---- 即時逐筆併入 K 棒 ----
-
-export interface UsLiveTrade {
-    /** 紐約牆鐘當 UTC 的秒數 */
-    wall: number;
-    price: number;
-    volume: number;
-}
-
-/**
- * 歷史載入期間收到的成交補進 K 棒。coveredUntil 是歷史最後一根「1 分 K」的
- * 結束時間（牆鐘秒）：早於它的成交已含在歷史裡，跳過；之後的成交照常併入，
- * 落在聚合後最後一根的同一桶時就更新那一根（例如 5 分 K 09:35 那根只含到
- * 09:32 的歷史）。回傳是否有變動。
- */
-export function replayUsTrades(bars: Candle[], pending: readonly UsLiveTrade[], minutes: number, coveredUntil: number): boolean {
-    let changed = false;
-    for (const t of pending) {
-        if (t.wall < coveredUntil) continue;
-        if (mergeUsTickIntoBars(bars, t.wall, t.price, t.volume, minutes)) changed = true;
-    }
-    return changed;
-}
-
-/** 逐筆時間（牆鐘當 UTC 的秒數）→ 所屬 K 棒 label（close-label-right；日 K 取日曆日） */
-export function usBarBucket(wallSec: number, minutes: number): number {
-    if (minutes >= 1440) return Math.floor(wallSec / 86400) * 86400;
-    const bucketSec = minutes * 60;
-    return Math.floor(wallSec / bucketSec) * bucketSec + bucketSec;
-}
-
-/**
- * 把一筆即時成交併進 K 棒尾端：同桶更新、新桶新增；比尾端舊的成交忽略
- * （lightweight-charts 不接受往回更新）。回傳被更新或新增的 K 棒，忽略時回 null。
- */
-export function mergeUsTickIntoBars(bars: Candle[], wallSec: number, price: number, volume: number, minutes: number): Candle | null {
-    if (!Number.isFinite(wallSec) || !Number.isFinite(price)) return null;
-    const bucket = usBarBucket(wallSec, minutes);
-    const last = bars[bars.length - 1];
-    if (last && bucket < last.time) return null;
-    if (!last || bucket > last.time) {
-        const bar: Candle = { time: bucket, open: price, high: price, low: price, close: price, volume };
-        bars.push(bar);
-        return bar;
-    }
-    last.high = Math.max(last.high, price);
-    last.low = Math.min(last.low, price);
-    last.close = price;
-    last.volume += volume;
-    return last;
 }

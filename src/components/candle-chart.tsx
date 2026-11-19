@@ -166,6 +166,10 @@ import * as panel from './panel.css';
 import { contractMarket, isWarrantContract } from '../lib/contract-market';
 import { WARRANT_FLASH_TEXT, warrantMarketOrderBlock } from '../lib/warrant-rules';
 import { orderStatusWithNumber } from '../lib/order-status-label';
+import { contractLinkKey } from '../lib/contract-key';
+import { getUsTickMeta, subscribeUsSessionTicks } from '../lib/us/us-quotes';
+import { nyWallClockSec } from '../lib/us/us-history';
+import { usPriceDecimals } from '../lib/us/decimal';
 
 // NOTE: the kbars API only serves 1-minute bars, so 1D aggregates a huge
 // payload (a year of TXF ≈ 280k bars / 18MB) — keep the range tight enough
@@ -176,6 +180,15 @@ const TIMEFRAMES: readonly { label: ChartInterval; minutes: number; days: number
     { label: '15m', minutes: 15, days: 20 },
     { label: '60m', minutes: 60, days: 60 },
     { label: '1D', minutes: 1440, days: 240 },
+];
+// 美股：同一組週期（index 與台股一致），只有天數不同 — 週末連假多一天的
+// 1 分 K，日 K 由 1 分 K 聚合、kbars 一次 30 天要分段，抓約半年
+const US_TIMEFRAMES: typeof TIMEFRAMES = [
+    { label: '1m', minutes: 1, days: 4 },
+    { label: '5m', minutes: 5, days: 10 },
+    { label: '15m', minutes: 15, days: 20 },
+    { label: '60m', minutes: 60, days: 60 },
+    { label: '1D', minutes: 1440, days: 120 },
 ];
 const DEFAULT_TF_IDX = TIMEFRAMES.findIndex((t) => t.label === DEFAULT_CHART_INTERVAL);
 function timeframeIndex(interval: unknown): number | null {
@@ -307,8 +320,13 @@ export function CandleChart({
     const loadedKeyRef = useRef('');
     // 圖上目前畫的是哪一組（商品|週期|僅日盤）— 換組時同步清圖
     const drawnKeyRef = useRef('');
-    const quote = useQuote(contract.code);
-    const tf = TIMEFRAMES[tfIdx] ?? TIMEFRAMES[DEFAULT_TF_IDX]!;
+    // 美股（region US）走同一張圖：行情 key 是 US:CODE、歷史由 chart-history
+    // 轉接美股 kbars、即時成交逐筆併入（見下方美股 effect）；圖上下單、委託線、
+    // 觸價警示是台股功能，美股不顯示
+    const isUs = contract.region === 'US';
+    const quoteKey = contractLinkKey(contract);
+    const quote = useQuote(quoteKey);
+    const tf = (isUs ? US_TIMEFRAMES : TIMEFRAMES)[tfIdx] ?? TIMEFRAMES[DEFAULT_TF_IDX]!;
     const themeSettings = useThemeSettings();
     // 只取這個布林：別的風控欄位變動時不必重繪整張圖
     const orderLineLock = useSyncExternalStore(subscribeRiskSettings, () => getRiskSettings().orderLineLock);
@@ -332,7 +350,7 @@ export function CandleChart({
     const themeKey = themeKeyOf(themeSettings);
     const [mode, setMode] = useState<TradeMode>('observe');
     // 圖表下單設定（#204）：每張圖自己一組（每市場一份），缺省取「設為預設」
-    const orderMarket: ChartOrderMarket | null = contractMarket(contract.security_type);
+    const orderMarket: ChartOrderMarket | null = isUs ? null : contractMarket(contract.security_type);
     const warrant = isWarrantContract(contract);
     // 外國標的權證：K 線圖停損／停利觸發後是市價，交易所不收 → 按鈕停用並寫原因
     const warrantExitBlock = warrantMarketOrderBlock(contract) ? WARRANT_FLASH_TEXT.chartForeign : null;
@@ -542,17 +560,18 @@ export function CandleChart({
     const rawRef = useRef<Candle[]>([]);
     const loadMoreRef = useRef<(() => void) | null>(null);
     const indSeriesRef = useRef<ISeriesApi<'Line' | 'Histogram'>[]>([]);
-    const triggers = useTriggers().filter((t) => t.code === contract.code);
+    // 觸價警示與委託線只有台股（美股委託走下單／閃電面板與委託分頁）
+    const triggers = useTriggers().filter((t) => !isUs && t.code === contract.code);
     const workingOrders = useMemo(
         () =>
-            trades.filter(
+            isUs ? [] : trades.filter(
                 (t) =>
                     (t.contract.code === contract.code ||
                         (contract.target_code &&
                             t.contract.code === contract.target_code)) &&
                     remainingWorkingOrderQuantity(t) > 0,
             ),
-        [trades, contract],
+        [trades, contract, isUs],
     );
     const workingOrdersRef = useRef(workingOrders);
     workingOrdersRef.current = workingOrders;
@@ -574,13 +593,15 @@ export function CandleChart({
         armedDrawingSequenceRef.current = next === 'observe' ? null : drawingsRef.current?.interactionSequence() ?? null;
         setMode(next);
     };
-    if (mode !== 'observe' && mode !== 'alert' && armedTradeKeyRef.current !== tradeKey) {
+    // 美股圖沒有交易工具：從台股切過來時連警示模式也一併解除
+    const disarm = mode !== 'observe' && (isUs || (mode !== 'alert' && armedTradeKeyRef.current !== tradeKey));
+    if (disarm) {
         modeRef.current = 'observe';
         armedDrawingSequenceRef.current = null;
         setMode('observe');
     }
     // 這次 render 的模式（解除的那次 render 不再顯示提示）
-    const shownMode: TradeMode = mode !== 'observe' && mode !== 'alert' && armedTradeKeyRef.current !== tradeKey ? 'observe' : mode;
+    const shownMode: TradeMode = disarm ? 'observe' : mode;
     const contractRef = useRef(contract);
     contractRef.current = contract;
     const lastPriceRef = useRef<number | null>(null);
@@ -1045,6 +1066,13 @@ export function CandleChart({
                     return;
                 }
                 rawRef.current = raw;
+                // 美股價格刻度：1 美元以上 2 位、未滿 1 美元 4 位（與報價板一致）
+                if (contract.region === 'US') {
+                    const d = usPriceDecimals(bars[bars.length - 1]!.close);
+                    candleSeriesRef.current.applyOptions({
+                        priceFormat: { type: 'price', precision: d, minMove: 10 ** -d },
+                    });
+                }
                 applyBars(bars);
                 lastBarRef.current = bars[bars.length - 1] ?? null;
                 loadedKeyRef.current = loadKey;
@@ -1076,15 +1104,14 @@ export function CandleChart({
     // Live trade/index quote -> update the current bar. Index products use
     // quote_idx rather than the regular tick stream in Shioaji 1.7.
     const liveQuote = quote?.tick ?? quote?.index;
-    if (liveQuote && liveQuote.code === contract.code) {
+    if (liveQuote && liveQuote.code === quoteKey) {
         const p = Number(liveQuote.close);
         if (Number.isFinite(p)) lastPriceRef.current = p;
     }
-    useEffect(() => {
-        if (!liveQuote || liveQuote.code !== contract.code) return;
-        // 試撮 (simtrade) 揭示價可以是漲跌停天地價 — 畫進 K 棒會把
-        // Y 軸尺度撐爆（issue #5），一律排除
-        if ('simtrade' in liveQuote && liveQuote.simtrade) return;
+    // 一筆成交併進目前的 K 棒（台股從行情 store、美股從逐筆通知進來）。
+    // tickTime 是牆鐘編碼秒數（台股台北、美股紐約）
+    const applyTradeRef = useRef<(tickTime: number, price: number, volume: number) => void>(() => {});
+    applyTradeRef.current = (tickTime, price, volume) => {
         // history for this (symbol, timeframe) not in place yet
         if (
             loadedKeyRef.current !== `${contract.code}|${tf.minutes}|${dayOnly}`
@@ -1093,11 +1120,7 @@ export function CandleChart({
         }
         const series = candleSeriesRef.current;
         if (!series) return;
-        const price = Number(liveQuote.close);
-        if (!Number.isFinite(price)) return;
-        const tickTime = wallClockToUtc(
-            `${liveQuote.date}T${liveQuote.time}`,
-        );
+        if (!Number.isFinite(price) || !Number.isFinite(tickTime)) return;
         // 僅日盤：夜盤/盤外成交不入圖（與歷史濾法同一套 label 判斷）
         if (dayOnly && !isDaySessionTick(contract.security_type, tickTime)) {
             return;
@@ -1129,7 +1152,7 @@ export function CandleChart({
                 high: price,
                 low: price,
                 close: price,
-                volume: quote?.tick?.volume ?? 0,
+                volume,
             };
             // a fresh bucket = the previous bar closed — keep barsRef in
             // sync (history paging re-attaches this tail) and recompute
@@ -1140,7 +1163,7 @@ export function CandleChart({
             bar.high = Math.max(bar.high, price);
             bar.low = Math.min(bar.low, price);
             bar.close = price;
-            bar.volume += quote?.tick?.volume ?? 0;
+            bar.volume += volume;
         }
         lastBarRef.current = bar;
         try {
@@ -1165,7 +1188,31 @@ export function CandleChart({
         // 「無 K 線資料」（同值 setState React 會 bail out）
         setEmpty(false);
         setHistoryError(false);
-    }, [liveQuote, quote?.tick?.volume, contract.code, tf.minutes, dayOnly]);
+    };
+    useEffect(() => {
+        // 美股不走這裡：行情 store 會把相近的多筆合併成最後一筆（量會漏），
+        // 改用下方的逐筆通知
+        if (isUs) return;
+        if (!liveQuote || liveQuote.code !== quoteKey) return;
+        // 試撮 (simtrade) 揭示價可以是漲跌停天地價 — 畫進 K 棒會把
+        // Y 軸尺度撐爆（issue #5），一律排除
+        if ('simtrade' in liveQuote && liveQuote.simtrade) return;
+        applyTradeRef.current(
+            wallClockToUtc(`${liveQuote.date}T${liveQuote.time}`),
+            Number(liveQuote.close),
+            quote?.tick?.volume ?? 0,
+        );
+    }, [liveQuote, quote?.tick?.volume, quoteKey, isUs, tf.minutes, dayOnly]);
+    // 美股：每筆成交（recordUsTick 的通知，帶 session 與單筆量）只併一般盤 —
+    // 歷史 1 分 K 只有一般盤，盤前／盤後的零星成交混進來會畫出孤立的 K 棒
+    useEffect(() => {
+        if (!isUs) return;
+        return subscribeUsSessionTicks(quoteKey, () => {
+            const meta = getUsTickMeta(quoteKey);
+            if (!meta || meta.session !== 'Regular' || !(meta.volume > 0)) return;
+            applyTradeRef.current(nyWallClockSec(meta.ts), Number(meta.price), meta.volume);
+        });
+    }, [isUs, quoteKey]);
 
     // 自訂指標增刪改 → 重算指標 effect；被刪掉的型別把殘留實例一併清掉
     const [customVer, setCustomVer] = useState(0);
@@ -2253,6 +2300,16 @@ export function CandleChart({
                 >
                     <ArrowUpDown size={12} />
                 </button>
+                {isUs && (
+                    <span
+                        className={styles.tfBtn.normal}
+                        style={{ cursor: 'default' }}
+                        title='美股時間軸為美東時間；K 線只含一般盤 09:30–16:00（盤前／盤後成交不入圖）'
+                    >
+                        美東・一般盤
+                    </span>
+                )}
+                {!isUs && (<>
                 <span className={styles.toolbarDivider} />
                 <button
                     type='button'
@@ -2297,6 +2354,7 @@ export function CandleChart({
                     </button>
                     );
                 })}
+                </>)}
                 {orderMarket && !isCombo && !warrant && (
                     <ChartOrderButton
                         market={orderMarket}

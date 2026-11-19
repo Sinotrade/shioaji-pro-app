@@ -11,22 +11,17 @@ import {
     fetchUsSnapshotShared,
     fetchUsTicks,
     isUsHistoryUnavailable,
-    latestUsSessionBars,
-    mergeUsTickIntoBars,
     nyWallClockSec,
     parseUsKbars,
     parseUsSnapshots,
     parseUsTicks,
-    replayUsTrades,
     resetUsHistoryForTest,
     sdkHasUsHistory,
     splitDateRange,
-    usBarBucket,
     usHistoryAvailable,
     usSnapshotQuote,
     usTimeToMs,
 } from './us-history';
-import type { Candle } from '../types/market';
 
 const AAPL = { code: 'AAPL', exchange: 'NASDAQ' } as const;
 const wall = (s: string) => Date.UTC(+s.slice(0, 4), +s.slice(5, 7) - 1, +s.slice(8, 10), +s.slice(11, 13), +s.slice(14, 16), +(s.slice(17, 19) || 0)) / 1000;
@@ -248,70 +243,5 @@ describe('availability and fetch', () => {
         await expect(fetchUsKbars(AAPL, 'a', 'b')).rejects.toSatisfy(isUsHistoryUnavailable);
         expect(m.post).not.toHaveBeenCalled();
     });
-    it('finds the latest trade date with regular bars in one request and the previous close', async () => {
-        // 2026-11-23 週一 08:00 紐約 → 今天沒資料，落到 11-20（週五），前一交易日 11-19
-        const now = Date.UTC(2026, 10, 23, 13, 0);
-        m.post.mockResolvedValueOnce({
-            datetime: ['2026-11-19T20:59:00', '2026-11-19T21:00:00', '2026-11-20T14:31:00', '2026-11-20T21:00:00'],
-            Open: [1, 1, 1, 1], High: [1, 1, 1, 1], Low: [1, 1, 1, 1], Close: [5, 6, 2, 3], Volume: [1, 1, 1, 1],
-        });
-        const r = await latestUsSessionBars(AAPL, { nowMs: now });
-        expect(r?.date).toBe('2026-11-20');
-        expect(r?.bars.map(b => b.close)).toEqual([2, 3]);
-        expect(r?.prevClose).toBe(6);
-        expect(m.post).toHaveBeenCalledTimes(1);
-        expect(m.post.mock.calls[0]![1]).toMatchObject({ start: '2026-11-13', end: '2026-11-23' });
-    });
-    it('returns null without bars and no previous close for a single day', async () => {
-        m.post.mockResolvedValueOnce({ datetime: [], Open: [], High: [], Low: [], Close: [], Volume: [] });
-        expect(await latestUsSessionBars(AAPL, { nowMs: Date.UTC(2026, 10, 23, 13) })).toBeNull();
-        m.post.mockResolvedValueOnce({ datetime: ['2026-11-20T14:31:00'], Open: [1], High: [1], Low: [1], Close: [2], Volume: [1] });
-        expect((await latestUsSessionBars(AAPL, { nowMs: Date.UTC(2026, 10, 23, 13) }))?.prevClose).toBeNull();
-    });
 });
 
-describe('replayUsTrades', () => {
-    it('skips trades before the last 1-minute bar end and adds the rest', () => {
-        const bars: Candle[] = [{ time: wall('2026-11-18T09:31:00'), open: 10, high: 11, low: 9, close: 10, volume: 5 }];
-        const changed = replayUsTrades(bars, [
-            { wall: wall('2026-11-18T09:30:40'), price: 50, volume: 9 }, // 歷史已含，不重複
-            { wall: wall('2026-11-18T09:31:05'), price: 12, volume: 2 },
-            { wall: wall('2026-11-18T09:31:30'), price: 13, volume: 3 },
-        ], 1, wall('2026-11-18T09:31:00'));
-        expect(changed).toBe(true);
-        expect(bars[0]).toMatchObject({ high: 11, volume: 5 });
-        expect(bars[1]).toMatchObject({ time: wall('2026-11-18T09:32:00'), open: 12, high: 13, close: 13, volume: 5 });
-    });
-    it('builds bars from scratch when history is empty', () => {
-        const bars: Candle[] = [];
-        replayUsTrades(bars, [{ wall: wall('2026-11-18T09:30:10'), price: 1, volume: 1 }], 5, -Infinity);
-        expect(bars).toHaveLength(1);
-    });
-    it('merges a trade into the aggregated tail bar when history ends mid-bucket (5m, 1D)', () => {
-        // 5 分 K：歷史 1 分 K 到 09:32（聚合標籤 09:35），09:32:10 的成交要併進 09:35 那根
-        const five: Candle[] = [{ time: wall('2026-11-18T09:35:00'), open: 10, high: 11, low: 9, close: 10, volume: 5 }];
-        replayUsTrades(five, [{ wall: wall('2026-11-18T09:32:10'), price: 12, volume: 2 }], 5, wall('2026-11-18T09:32:00'));
-        expect(five).toHaveLength(1);
-        expect(five[0]).toMatchObject({ high: 12, close: 12, volume: 7 });
-        const day: Candle[] = [{ time: wall('2026-11-18T00:00:00'), open: 10, high: 11, low: 9, close: 10, volume: 5 }];
-        replayUsTrades(day, [{ wall: wall('2026-11-18T10:00:30'), price: 8, volume: 1 }], 1440, wall('2026-11-18T10:00:00'));
-        expect(day[0]).toMatchObject({ low: 8, close: 8, volume: 6 });
-    });
-});
-
-describe('live tick merge', () => {
-    it('buckets close-label-right and daily by calendar day', () => {
-        expect(usBarBucket(wall('2026-11-18T09:30:00'), 1)).toBe(wall('2026-11-18T09:31:00'));
-        expect(usBarBucket(wall('2026-11-18T09:34:59'), 5)).toBe(wall('2026-11-18T09:35:00'));
-        expect(usBarBucket(wall('2026-11-18T15:59:00'), 1440)).toBe(wall('2026-11-18T00:00:00'));
-    });
-    it('updates the tail, opens a new bar, and ignores older ticks', () => {
-        const bars: Candle[] = [{ time: wall('2026-11-18T09:31:00'), open: 10, high: 11, low: 9, close: 10, volume: 5 }];
-        mergeUsTickIntoBars(bars, wall('2026-11-18T09:30:30'), 12, 2, 1);
-        expect(bars[0]).toMatchObject({ high: 12, close: 12, volume: 7 });
-        mergeUsTickIntoBars(bars, wall('2026-11-18T09:31:10'), 8, 1, 1);
-        expect(bars).toHaveLength(2);
-        expect(bars[1]).toMatchObject({ time: wall('2026-11-18T09:32:00'), open: 8, volume: 1 });
-        expect(mergeUsTickIntoBars(bars, wall('2026-11-18T09:29:00'), 1, 1, 1)).toBeNull();
-    });
-});
