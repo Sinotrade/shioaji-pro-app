@@ -238,7 +238,8 @@ jobs:
 
             macOS: .dmg ｜ Windows: .msi / .exe ｜ Linux: .AppImage / .deb / .rpm
           releaseDraft: true
-          prerelease: false
+          # tag 帶 '-'（例如 v0.1.58-1）即 pre-release；MSI 只接受純數字的 pre-release 號
+          prerelease: ${{ contains(github.ref_name, '-') }}
           args: ${{ matrix.args }}
 
   publish:
@@ -267,4 +268,10 @@ jobs:
           # this tag's section + shared footer (fails loudly if missing)
           python3 scripts/extract-release-notes.py '${{ github.ref_name }}' RELEASE_NOTES.md > "$RUNNER_TEMP/release-notes.md"
           gh release edit '${{ github.ref_name }}'             --repo '${{ github.repository }}' --notes-file "$RUNNER_TEMP/release-notes.md"
-          gh release edit '${{ github.ref_name }}'             --repo '${{ github.repository }}' --draft=false
+          if [[ '${{ github.ref_name }}' == *-* ]]; then
+            # pre-release 不設為 latest：releases/latest/download/latest.json 仍指向正式版，
+            # 現有使用者不會被自動更新到 pre-release
+            gh release edit '${{ github.ref_name }}'             --repo '${{ github.repository }}' --draft=false --prerelease --latest=false
+          else
+            gh release edit '${{ github.ref_name }}'             --repo '${{ github.repository }}' --draft=false
+          fi
