@@ -55,6 +55,7 @@ function markUnavailable(base: string) {
 
 export function resetUsHistoryForTest() {
     unavailableBases.clear();
+    snapshotCache.clear();
 }
 
 /** 美股歷史不可用（舊 SDK／形狀不對）時的錯誤；面板據此退回只用即時資料 */
@@ -328,6 +329,8 @@ export interface UsSnapshot {
     totalVolume: number;
     buyPrice: number | null;
     sellPrice: number | null;
+    buyVolume: number | null;
+    sellVolume: number | null;
     session: UsTradingSession | null;
     /** 最新成交（含盤前／盤後）；close 是一般盤價 */
     lastPrice: number | null;
@@ -358,6 +361,8 @@ export function parseUsSnapshotRow(row: unknown): UsSnapshot | null {
         totalVolume: num(r.total_volume) || 0,
         buyPrice: optNum(r.buy_price),
         sellPrice: optNum(r.sell_price),
+        buyVolume: optNum(r.buy_volume),
+        sellVolume: optNum(r.sell_volume),
         session: sessionOf(r.session),
         lastPrice: optNum(r.last_price),
     };
@@ -381,6 +386,24 @@ export function parseUsSnapshots(raw: unknown, count: number): (UsSnapshot | nul
 export function fetchUsSnapshots(contracts: Pick<ContractBase, 'code' | 'exchange'>[]): Promise<(UsSnapshot | null)[]> {
     if (contracts.length === 0) return Promise.resolve([]);
     return usPost('/api/v1/data/snapshots', { contracts: contracts.map(usContractBody) }, raw => parseUsSnapshots(raw, contracts.length));
+}
+
+/**
+ * 單一商品的快照，報價板、五檔等同時開啟時共用一個請求；結果保留 SNAPSHOT_TTL_MS，
+ * 失敗不快取（下次掛載再試）。
+ */
+const SNAPSHOT_TTL_MS = 15_000;
+const snapshotCache = new Map<string, { at: number; promise: Promise<UsSnapshot | null> }>();
+
+export function fetchUsSnapshotShared(contract: Pick<ContractBase, 'code' | 'exchange'>, nowMs = Date.now()): Promise<UsSnapshot | null> {
+    const key = `${baseKey(getApiBase())}|${contract.exchange}|${contract.code.trim().toUpperCase()}`;
+    const hit = snapshotCache.get(key);
+    if (hit && nowMs - hit.at < SNAPSHOT_TTL_MS) return hit.promise;
+    const promise = fetchUsSnapshots([contract]).then(rows => rows[0] ?? null);
+    snapshotCache.set(key, { at: nowMs, promise });
+    promise.catch(() => { if (snapshotCache.get(key)?.promise === promise) snapshotCache.delete(key); });
+    if (snapshotCache.size > 200) snapshotCache.delete(snapshotCache.keys().next().value!);
+    return promise;
 }
 
 // ---- 最近交易日 ----

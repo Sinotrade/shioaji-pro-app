@@ -5,9 +5,9 @@
 // 收盤與開高低；快照拿不到（舊 SDK、非正式環境）就只顯示前一日參考價。
 // 即時價格是原始 decimal 字串（USD），不套用台股級距；快照數字是 float，只供顯示。
 
-import { useEffect, useState } from 'react';
 import { useQuote } from '../hooks/use-stream';
-import { fetchUsSnapshots, type UsSnapshot } from '../lib/us/us-history';
+import type { UsSnapshot } from '../lib/us/us-history';
+import { useUsSnapshot } from '../hooks/use-us-snapshot';
 import { contractLinkKey } from '../lib/contract-key';
 import type { ContractInfo } from '../lib/types/contract';
 import { decCompare, fmtUsPrice } from '../lib/us/decimal';
@@ -31,23 +31,6 @@ const dirOf = (chg: string | undefined): 'up' | 'down' | 'flat' => {
     const c = decCompare(chg, '0');
     return c > 0 ? 'up' : c < 0 ? 'down' : 'flat';
 };
-
-/** 第一筆即時成交前抓一次快照；失敗不重試（換商品再抓） */
-function useUsSnapshot(contract: ContractInfo, enabled: boolean): UsSnapshot | null {
-    const [snap, setSnap] = useState<{ key: string; row: UsSnapshot } | null>(null);
-    const key = `${contract.exchange}:${contract.code}`;
-    useEffect(() => {
-        if (!enabled) return;
-        if (snap?.key === key) return;
-        let cancelled = false;
-        fetchUsSnapshots([contract])
-            .then(rows => { const row = rows[0]; if (!cancelled && row && row.close > 0) setSnap({ key, row }); })
-            .catch(() => { /* 沒有快照：維持參考價顯示 */ });
-        return () => { cancelled = true; };
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [key, enabled]);
-    return snap?.key === key ? snap.row : null;
-}
 
 export function snapshotMatchesTradeDate(snap: Pick<UsSnapshot, 'tradeDate'>, tickDate: string | undefined): boolean {
     return !!snap.tradeDate && !!tickDate && snap.tradeDate === tickDate;

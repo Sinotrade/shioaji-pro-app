@@ -8,6 +8,7 @@ vi.mock('../runtime', () => ({ getApiBase: m.base }));
 import {
     fetchUsKbars,
     fetchUsSnapshots,
+    fetchUsSnapshotShared,
     fetchUsTicks,
     isUsHistoryUnavailable,
     latestUsSessionBars,
@@ -111,7 +112,7 @@ describe('parseUsSnapshots', () => {
         const tw = { region: 'TW', code: '2330', close: 2100 };
         const rows = parseUsSnapshots([tw, row], 2)!;
         expect(rows[0]).toBeNull();
-        expect(rows[1]).toMatchObject({ open: 0, close: 352.45, session: 'PreMarket', lastPrice: 354.06, tradeDate: '2026-11-19' });
+        expect(rows[1]).toMatchObject({ open: 0, close: 352.45, session: 'PreMarket', lastPrice: 354.06, tradeDate: '2026-11-19', buyPrice: 354.06, buyVolume: 120, sellPrice: 354.26, sellVolume: 100 });
         expect(usSnapshotQuote(rows[1]!)).toEqual({ last: '352.45', close: 352.45, chg: 0, pct: 0 });
         expect(usSnapshotQuote({ ...rows[1]!, close: 0 })).toBeNull();
     });
@@ -139,6 +140,21 @@ describe('availability and fetch', () => {
         expect(m.post).toHaveBeenCalledWith('/api/v1/data/kbars', {
             contract: { security_type: 'STK', region: 'US', exchange: 'NYSE', code: 'BRK.B' }, start: '2026-11-18', end: '2026-11-18',
         }, expect.anything());
+    });
+    it('shares one snapshot request per contract and retries after a failure', async () => {
+        const row = { region: 'US', code: 'AAPL', exchange: 'NASDAQ', close: 352.45, buy_price: 354.06, buy_volume: 120 };
+        m.post.mockResolvedValueOnce([row]);
+        const [a, b] = await Promise.all([fetchUsSnapshotShared(AAPL, 1000), fetchUsSnapshotShared(AAPL, 1001)]);
+        expect(a).toBe(b);
+        expect(a).toMatchObject({ buyPrice: 354.06, buyVolume: 120 });
+        expect(m.post).toHaveBeenCalledTimes(1);
+        m.post.mockResolvedValueOnce([row]);
+        await fetchUsSnapshotShared(AAPL, 1000 + 15_000);
+        expect(m.post).toHaveBeenCalledTimes(2);
+        m.post.mockRejectedValueOnce(new Error('500'));
+        await expect(fetchUsSnapshotShared(AAPL, 100_000)).rejects.toThrow('500');
+        m.post.mockResolvedValueOnce([row]);
+        await expect(fetchUsSnapshotShared(AAPL, 100_001)).resolves.toMatchObject({ code: 'AAPL' });
     });
     it('sends LastCount for ticks', async () => {
         m.post.mockResolvedValueOnce({ datetime: [], close: [], volume: [] });

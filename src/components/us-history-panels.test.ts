@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { usBestLevel } from './us-depth';
+import { usBestLevel, usDepthLevel } from './us-depth';
 import { parseUsTicks } from '../lib/us/us-history';
 import { mergeUsTape, usTapeRowFromMeta, usTapeRowsFromHistory } from './us-tick-tape';
 
@@ -14,6 +14,28 @@ describe('usBestLevel', () => {
         const r = usBestLevel({ bid_price: ['0'], bid_volume: [0], ask_price: [], ask_volume: [] });
         expect(r).toEqual({ bid: null, ask: null, spread: null });
         expect(usBestLevel(undefined).bid).toBeNull();
+    });
+});
+
+describe('usDepthLevel', () => {
+    const snap = { buyPrice: 354.06, buyVolume: 120, sellPrice: 354.26, sellVolume: 100 };
+    it('seeds from the snapshot before any live bidask', () => {
+        const r = usDepthLevel(undefined, snap);
+        expect(r.source).toBe('snapshot');
+        expect(r.bid).toEqual({ price: '354.06', vol: 120 });
+        expect(r.ask).toEqual({ price: '354.26', vol: 100 });
+        expect(Number(r.spread)).toBeCloseTo(0.2);
+        expect(usDepthLevel({ bid_price: [], ask_price: [] }, snap).source).toBe('snapshot');
+    });
+    it('uses live data as soon as one side is valid, ignoring the snapshot', () => {
+        const r = usDepthLevel({ bid_price: ['354.17'], bid_volume: [3], ask_price: [], ask_volume: [] }, snap);
+        expect(r.source).toBe('live');
+        expect(r.bid).toEqual({ price: '354.17', vol: 3 });
+        expect(r.ask).toBeNull();
+    });
+    it('shows empty without live or usable snapshot', () => {
+        expect(usDepthLevel(undefined, null)).toMatchObject({ bid: null, ask: null, source: 'live' });
+        expect(usDepthLevel(undefined, { buyPrice: 0, buyVolume: 0, sellPrice: null, sellVolume: null })).toMatchObject({ bid: null, ask: null, source: 'live' });
     });
 });
 
