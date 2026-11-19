@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { usBestLevel } from './us-depth';
-import { usTapeRowsFromHistory } from './us-tick-tape';
+import { mergeUsTape, usTapeRowFromMeta, usTapeRowsFromHistory } from './us-tick-tape';
 
 describe('usBestLevel', () => {
     it('reads the single best level and the decimal spread', () => {
@@ -22,5 +22,21 @@ describe('usTapeRowsFromHistory', () => {
         const rows = usTapeRowsFromHistory(ticks, 2);
         expect(rows.map(r => r.price)).toEqual(['103', '102']);
         expect(rows[0]!.time).toBe('09:30:03.000000');
+    });
+});
+
+describe('mergeUsTape', () => {
+    const t0 = Date.UTC(2026, 10, 18, 20, 59, 59);
+    const hist = usTapeRowsFromHistory([0, 1, 2].map(i => ({ ts: t0 + i, time: `15:59:59.00${i}000`, price: 352 + i / 100, volume: 10 + i, bid: null, ask: null, tickType: 0, session: 'Regular' as const, oddLot: false })));
+    it('drops live rows already in history and keeps newer ones on top', () => {
+        const dup = usTapeRowFromMeta({ key: 'US:AAPL', price: '352.02', session: 'Regular', freshness: null, ts: t0 + 2, tsUs: (t0 + 2) * 1000, volume: 12, tickType: 1 });
+        const newer = usTapeRowFromMeta({ key: 'US:AAPL', price: '352.5', session: 'AfterHours', freshness: null, ts: t0 + 5000, tsUs: (t0 + 5000) * 1000 + 7, volume: 3, tickType: 1 });
+        const rows = mergeUsTape([newer, dup], hist);
+        expect(rows.map(r => r.price)).toEqual(['352.5', '352.02', '352.01', '352']);
+        expect(rows[0]!.time).toBe('16:00:04.000007');
+    });
+    it('keeps a live row that only shares the timestamp', () => {
+        const other = usTapeRowFromMeta({ key: 'US:AAPL', price: '352.02', session: 'Regular', freshness: null, ts: t0 + 2, volume: 99 });
+        expect(mergeUsTape([other], hist)).toHaveLength(4);
     });
 });

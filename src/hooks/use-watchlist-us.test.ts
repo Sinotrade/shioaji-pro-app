@@ -205,3 +205,13 @@ it('membership comparison is region-aware', () => {
     expect(serverMembershipChanged({ contracts: [tw] }, [us])).toBe(true);
     expect(serverMembershipChanged({ contracts: [tw, us] }, [us, tw])).toBe(false);
 });
+
+it('keeps the newer US snapshot when an older response arrives late', async () => {
+    const { isNewerUsSnapshot } = await import('./use-watchlist');
+    const snap = (ts: number | null) => ({ code: 'AAPL', exchange: 'NASDAQ', ts, tradeDate: '2026-11-19', open: 0, high: 0, low: 0, close: 1, reference: 1, changePrice: 0, changeRate: 0, totalVolume: 0, buyPrice: null, sellPrice: null, session: null, lastPrice: null });
+    expect(isNewerUsSnapshot(snap(100), undefined)).toBe(true);
+    expect(isNewerUsSnapshot(snap(100), snap(200))).toBe(false);
+    expect(isNewerUsSnapshot(snap(200), snap(100))).toBe(true);
+    expect(isNewerUsSnapshot(snap(null), snap(100))).toBe(false);
+    expect(isNewerUsSnapshot(snap(100), snap(null))).toBe(true);
+});

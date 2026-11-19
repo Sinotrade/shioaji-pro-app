@@ -20,9 +20,9 @@ import { contractLinkKey } from '../lib/contract-key';
 import { getChartColors, themeKey as themeKeyOf, useThemeSettings, type ChartColors } from '../lib/theme-store';
 import type { ContractInfo } from '../lib/types/contract';
 import type { Candle } from '../lib/types/market';
-import { fetchUsKbars, isUsHistoryUnavailable, mergeUsTickIntoBars } from '../lib/us/us-history';
-import { getUsTickMeta } from '../lib/us/us-quotes';
-import { aggregate, dateStrOffset, wallClockToUtc } from '../lib/utils/kbars';
+import { fetchUsKbars, isUsHistoryUnavailable, mergeUsTickIntoBars, nyWallClockSec, replayUsTrades, type UsLiveTrade } from '../lib/us/us-history';
+import { getUsTickMeta, subscribeUsSessionTicks } from '../lib/us/us-quotes';
+import { aggregate, dateStrOffset } from '../lib/utils/kbars';
 import { DEFAULT_CHART_INTERVAL, isChartInterval, type ChartInterval } from '../lib/workspace';
 import { AsyncStatus } from './async-status';
 import * as styles from './candle-chart.css';
@@ -56,7 +56,7 @@ export function UsCandleChart({ contract, interval, onIntervalChange }: {
     onIntervalChange?: (interval: ChartInterval) => void;
 }) {
     const key = contractLinkKey(contract);
-    const quote = useQuote(key);
+    useQuote(key); // 確保已訂閱（逐筆另從 recordUsTick 的通知取）
     const [localInterval, setLocalInterval] = useState<ChartInterval | undefined>(interval);
     useEffect(() => setLocalInterval(interval), [interval]);
     const tf = tfOf(localInterval);
@@ -73,7 +73,11 @@ export function UsCandleChart({ contract, interval, onIntervalChange }: {
     const barsRef = useRef<Candle[]>([]);
     /** 目前圖上那組（商品|週期）的歷史已就位，逐筆才可更新 */
     const loadedKeyRef = useRef('');
+    /** 歷史載入期間收到的一般盤成交，載入完再補 */
+    const pendingRef = useRef<UsLiveTrade[]>([]);
     const [state, setState] = useState<LoadState>('loading');
+    const stateRef = useRef(state);
+    stateRef.current = state;
     const [retry, setRetry] = useState(0);
 
     // chart lifecycle
@@ -134,11 +138,14 @@ export function UsCandleChart({ contract, interval, onIntervalChange }: {
         let cancelled = false;
         const loadKey = `${key}|${tf.minutes}`;
         loadedKeyRef.current = '';
+        pendingRef.current = [];
         barsRef.current = [];
         candleRef.current?.setData([]);
         volRef.current?.setData([]);
         setState('loading');
         const apply = (bars: Candle[]) => {
+            replayUsTrades(bars, pendingRef.current, tf.minutes);
+            pendingRef.current = [];
             barsRef.current = bars;
             const { candles, volume } = toSeries(bars, colorsRef.current);
             candleRef.current?.setData(candles);
@@ -152,7 +159,7 @@ export function UsCandleChart({ contract, interval, onIntervalChange }: {
                 if (cancelled) return;
                 const bars = aggregate(raw, tf.minutes);
                 apply(bars);
-                setState(bars.length ? 'ready' : 'empty');
+                setState(barsRef.current.length ? 'ready' : 'empty');
             })
             .catch((e) => {
                 if (cancelled) return;
@@ -164,27 +171,31 @@ export function UsCandleChart({ contract, interval, onIntervalChange }: {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [key, contract.exchange, tf.minutes, tf.days, retry]);
 
-    // 即時逐筆 → 最後一根（只收一般盤）
-    const tick = quote?.tick;
+    // 即時逐筆 → 最後一根（只收一般盤）。用每筆成交的通知（recordUsTick），
+    // 不用 useQuote：行情 store 會把 50ms 內的多筆合併成最後一筆，量與高低會漏。
     useEffect(() => {
-        if (!tick || tick.code !== key) return;
-        if (loadedKeyRef.current !== `${key}|${tf.minutes}`) return;
-        const session = getUsTickMeta(key)?.session;
-        if (session && session !== 'Regular') return;
-        const price = Number(tick.close);
-        if (!tick.date || !tick.time) return;
-        const wall = wallClockToUtc(`${tick.date}T${tick.time}`);
-        const bar = mergeUsTickIntoBars(barsRef.current, wall, price, Number(tick.volume) || 0, tf.minutes);
-        if (!bar) return;
-        try {
-            candleRef.current?.update({ time: bar.time as UTCTimestamp, open: bar.open, high: bar.high, low: bar.low, close: bar.close });
-            volRef.current?.update({ time: bar.time as UTCTimestamp, value: bar.volume, color: bar.close >= bar.open ? colorsRef.current.upVol : colorsRef.current.downVol });
-        } catch {
-            // 圖表拒收（時間比尾端舊）— 忽略這筆
-        }
-        if (state !== 'ready' && barsRef.current.length > 0 && state !== 'loading') setState('ready');
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [tick]);
+        const loadKey = `${key}|${tf.minutes}`;
+        return subscribeUsSessionTicks(key, () => {
+            const meta = getUsTickMeta(key);
+            if (!meta || meta.session !== 'Regular' || !(meta.volume > 0)) return;
+            const trade: UsLiveTrade = { wall: nyWallClockSec(meta.ts), price: Number(meta.price), volume: meta.volume };
+            if (!Number.isFinite(trade.wall) || !Number.isFinite(trade.price)) return;
+            if (loadedKeyRef.current !== loadKey) {
+                pendingRef.current.push(trade);
+                return;
+            }
+            const bar = mergeUsTickIntoBars(barsRef.current, trade.wall, trade.price, trade.volume, tf.minutes);
+            if (!bar) return;
+            try {
+                candleRef.current?.update({ time: bar.time as UTCTimestamp, open: bar.open, high: bar.high, low: bar.low, close: bar.close });
+                volRef.current?.update({ time: bar.time as UTCTimestamp, value: bar.volume, color: bar.close >= bar.open ? colorsRef.current.upVol : colorsRef.current.downVol });
+            } catch {
+                // 圖表拒收（時間比尾端舊）— 忽略這筆
+            }
+            const st = stateRef.current;
+            if (st !== 'ready' && st !== 'loading' && barsRef.current.length > 0) setState('ready');
+        });
+    }, [key, tf.minutes]);
 
     const pick = (label: ChartInterval) => {
         setLocalInterval(label);

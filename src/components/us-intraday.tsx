@@ -12,24 +12,24 @@ import { useQuote } from '../hooks/use-stream';
 import { contractLinkKey } from '../lib/contract-key';
 import type { ContractInfo } from '../lib/types/contract';
 import { fmtUsPrice } from '../lib/us/decimal';
-import { getUsSessionTicks, subscribeUsSessionTicks, US_SESSION_LABEL, type UsTickMeta } from '../lib/us/us-quotes';
+import { getUsRegularLine, getUsSessionTicks, subscribeUsSessionTicks, US_SESSION_LABEL, type UsTickMeta } from '../lib/us/us-quotes';
 import * as styles from './us-intraday.css';
 
 const W = 600;
 const H = 240;
 const REDRAW_MS = 250;
 
-function useSessionTicks(key: string): readonly UsTickMeta[] {
-    const [ticks, setTicks] = useState(() => [...getUsSessionTicks(key)]);
+function useTickList(key: string, read: (key: string) => readonly UsTickMeta[]): readonly UsTickMeta[] {
+    const [ticks, setTicks] = useState(() => [...read(key)]);
     useEffect(() => {
-        setTicks([...getUsSessionTicks(key)]);
+        setTicks([...read(key)]);
         let timer: ReturnType<typeof setTimeout> | null = null;
         const off = subscribeUsSessionTicks(key, () => {
             if (timer) return;
-            timer = setTimeout(() => { timer = null; setTicks([...getUsSessionTicks(key)]); }, REDRAW_MS);
+            timer = setTimeout(() => { timer = null; setTicks([...read(key)]); }, REDRAW_MS);
         });
         return () => { off(); if (timer) clearTimeout(timer); };
-    }, [key]);
+    }, [key, read]);
     return ticks;
 }
 
@@ -71,10 +71,12 @@ const AXIS_LABELS = ['09:30', '12:45', '16:00'];
 export function UsIntraday({ contract }: { contract: ContractInfo }) {
     const key = contractLinkKey(contract);
     useQuote(key); // 確保已訂閱
-    const ticks = useSessionTicks(key);
+    // 本時段逐筆（沒有歷史時的退路）與當日一般盤逐分鐘線（進入盤後也保留）
+    const ticks = useTickList(key, getUsSessionTicks);
+    const regular = useTickList(key, getUsRegularLine);
     const history = useUsSessionHistory(contract);
     const ref = contract.us_reference ? Number(contract.us_reference) : null;
-    const series = usIntradaySeries(history.kind === 'ready' ? history : null, ticks);
+    const series = usIntradaySeries(history.kind === 'ready' ? history : null, regular);
     const sessionRef = series ? usSessionReference(ref, contract.reference_date, series.date) : ref;
 
     if (series) {

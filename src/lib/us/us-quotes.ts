@@ -84,7 +84,11 @@ export interface UsTickMeta {
     freshness: UsFreshnessStatus | null;
     /** epoch ms */
     ts: number;
+    /** epoch µs（原值，成交明細顯示用） */
+    tsUs?: number;
     volume: number;
+    /** 1 外盤／2 內盤／0 不明 */
+    tickType?: number;
 }
 
 const NY_PARTS = new Intl.DateTimeFormat('en-CA', {
@@ -171,7 +175,9 @@ export function normalizeUsTick(raw: RawUsTick): { tick: SseTick; meta: UsTickMe
             session: raw.session ?? 'Unknown',
             freshness: raw.freshness?.status ?? null,
             ts: Math.floor(raw.datetime / 1000),
+            tsUs: raw.datetime,
             volume: tick.volume,
+            tickType: tick.tick_type,
         },
     };
 }
@@ -224,7 +230,29 @@ export function recordUsTick(meta: UsTickMeta) {
     }
     list.push(meta);
     if (list.length > SESSION_TICK_LIMIT) list.splice(0, list.length - SESSION_TICK_LIMIT);
+    if (meta.session === 'Regular') recordRegularMinute(meta);
     sessionListeners.get(meta.key)?.forEach(l => l());
+}
+
+// 一般盤走勢線：每分鐘只留最後一筆（一天最多約 390 點），換日才清；進入盤後
+// 不清，走勢面板才能在盤後繼續畫完整的一般盤。
+const regularLines = new Map<string, { date: string; points: UsTickMeta[] }>();
+
+function recordRegularMinute(meta: UsTickMeta) {
+    const date = nyDateTime(meta.ts * 1000).date;
+    let line = regularLines.get(meta.key);
+    if (!line || line.date !== date) {
+        line = { date, points: [] };
+        regularLines.set(meta.key, line);
+    }
+    const last = line.points[line.points.length - 1];
+    if (last && Math.floor(last.ts / 60_000) === Math.floor(meta.ts / 60_000)) line.points[line.points.length - 1] = meta;
+    else line.points.push(meta);
+}
+
+/** 當日（紐約日期）一般盤的逐分鐘最後成交 */
+export function getUsRegularLine(key: string): readonly UsTickMeta[] {
+    return regularLines.get(key)?.points ?? EMPTY;
 }
 
 export function getUsSessionTicks(key: string): readonly UsTickMeta[] {
@@ -252,6 +280,7 @@ export const US_SESSION_LABEL: Record<UsTradingSession, string> = {
 
 export function resetUsQuotesForTest() {
     sessionTicks.clear();
+    regularLines.clear();
     lastMeta.clear();
     sessionListeners.clear();
 }

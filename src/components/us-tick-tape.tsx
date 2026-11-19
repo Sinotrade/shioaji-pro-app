@@ -7,10 +7,10 @@
 import { memo, useEffect, useMemo, useState } from 'react';
 import { contractLinkKey } from '../lib/contract-key';
 import { retainQuote } from '../lib/quote-ownership';
-import { onAnyTick } from '../lib/stream';
 import type { ContractInfo } from '../lib/types/contract';
 import { fmtUsPrice } from '../lib/us/decimal';
 import { fetchUsTicks, isUsHistoryUnavailable, nyDateStr, type UsHistoryTick } from '../lib/us/us-history';
+import { getUsTickMeta, nyDateTime, subscribeUsSessionTicks, type UsTickMeta } from '../lib/us/us-quotes';
 import { fmtInt } from '../lib/utils/format';
 import { AsyncStatus } from './async-status';
 import * as panel from './panel.css';
@@ -21,6 +21,8 @@ const BIG_LOT_FACTOR = 3;
 
 interface UsTapeRow {
     id: number;
+    /** epoch ms（去重與排序用） */
+    ts: number;
     time: string;
     price: string;
     volume: number;
@@ -39,9 +41,32 @@ export function usTapeRowsFromHistory(ticks: readonly UsHistoryTick[], max = MAX
     const out: UsTapeRow[] = [];
     for (let i = ticks.length - 1; i >= 0 && out.length < max; i--) {
         const t = ticks[i]!;
-        out.push({ id: rowSeq++, time: fmtTime(t.time), price: String(t.price), volume: t.volume, tickType: t.tickType });
+        out.push({ id: rowSeq++, ts: t.ts, time: fmtTime(t.time), price: String(t.price), volume: t.volume, tickType: t.tickType });
     }
     return out;
+}
+
+/** 即時成交 → 明細列（美東時間到微秒） */
+export function usTapeRowFromMeta(meta: UsTickMeta): UsTapeRow {
+    const us = meta.tsUs ?? meta.ts * 1000;
+    const { time } = nyDateTime(us);
+    return { id: rowSeq++, ts: meta.ts, time: `${time}.${String(Math.floor(us) % 1_000_000).padStart(6, '0')}`, price: meta.price, volume: meta.volume, tickType: meta.tickType ?? 0 };
+}
+
+/**
+ * 歷史回來時與載入期間收到的即時列合併：即時列若與歷史同一筆（同時間、價、量）
+ * 就丟掉，避免重複；合併後依時間新到舊、取前 max 筆。
+ */
+export function mergeUsTape(live: readonly UsTapeRow[], hist: readonly UsTapeRow[], max = MAX_ROWS): UsTapeRow[] {
+    const seen = new Map<string, number>();
+    const keyOf = (r: UsTapeRow) => `${r.ts}|${Number(r.price)}|${r.volume}`;
+    for (const r of hist) seen.set(keyOf(r), (seen.get(keyOf(r)) ?? 0) + 1);
+    const fresh = live.filter(r => {
+        const n = seen.get(keyOf(r)) ?? 0;
+        if (n > 0) { seen.set(keyOf(r), n - 1); return false; }
+        return true;
+    });
+    return [...fresh, ...hist].map((r, i) => [r, i] as const).sort((a, b) => b[0].ts - a[0].ts || a[1] - b[1]).map(([r]) => r).slice(0, max);
 }
 
 /** 從美東今天往前找最近一個有成交的交易日（跳過週末，最多 6 天） */
@@ -82,18 +107,18 @@ export function UsTickTape({ contract }: { contract: ContractInfo }) {
             .then((ticks) => {
                 if (cancelled) return;
                 const hist = usTapeRowsFromHistory(ticks);
-                setRows(live => [...live, ...hist].slice(0, MAX_ROWS));
+                setRows(live => mergeUsTape(live, hist));
                 setStatus('done');
             })
             .catch((e) => { if (!cancelled) setStatus(isUsHistoryUnavailable(e) ? 'unavailable' : 'error'); });
 
         const releaseQuote = retainQuote(contract, 'Tick');
-        const off = onAnyTick((tick) => {
-            if (tick.code !== key) return;
-            setRows(prev => [
-                { id: rowSeq++, time: fmtTime(tick.time), price: String(tick.close), volume: tick.volume, tickType: tick.tick_type },
-                ...prev,
-            ].slice(0, MAX_ROWS));
+        // 每筆成交的通知（recordUsTick）帶微秒時間與內外盤
+        const off = subscribeUsSessionTicks(key, () => {
+            const meta = getUsTickMeta(key);
+            if (!meta || !(meta.volume > 0)) return;
+            const row = usTapeRowFromMeta(meta);
+            setRows(prev => [row, ...prev].slice(0, MAX_ROWS));
         });
         return () => {
             cancelled = true;

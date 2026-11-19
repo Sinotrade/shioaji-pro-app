@@ -43,8 +43,9 @@ export function usHistoryAvailable(): boolean {
     return sdkHasUsHistory(knownServerInfo()?.version) !== false;
 }
 
-function markUnavailable() {
-    unavailableBases.add(getApiBase());
+/** base 是送出請求時的 sidecar；回應晚到時目前的 base 可能已經換了 */
+function markUnavailable(base: string) {
+    unavailableBases.add(base);
 }
 
 export function resetUsHistoryForTest() {
@@ -69,6 +70,7 @@ function usContractBody(c: Pick<ContractBase, 'code' | 'exchange'>) {
 
 async function usPost<T>(path: string, body: unknown, parse: (raw: unknown) => T | null, opts?: { timeoutMs?: number }): Promise<T> {
     if (!usHistoryAvailable()) throw new UsHistoryUnavailable();
+    const base = getApiBase();
     let raw: unknown;
     try {
         raw = await apiPost<unknown>(path, body, { timeoutMs: opts?.timeoutMs ?? 20_000 });
@@ -79,14 +81,14 @@ async function usPost<T>(path: string, body: unknown, parse: (raw: unknown) => T
         // 404／405／501：這個 sidecar 沒有這個端點的美股版本 — 記下不再打。
         // 400／422 等參數錯誤（例如 kbars 區間超過 30 天）只讓這次失敗。
         if (code === 404 || code === 405 || code === 501) {
-            markUnavailable();
+            markUnavailable(base);
             throw new UsHistoryUnavailable();
         }
         throw e;
     }
     const parsed = parse(raw);
     if (parsed === null) {
-        markUnavailable();
+        markUnavailable(base);
         throw new UsHistoryUnavailable();
     }
     return parsed;
@@ -383,6 +385,27 @@ export async function latestUsSessionBars(
 }
 
 // ---- 即時逐筆併入 K 棒 ----
+
+export interface UsLiveTrade {
+    /** 紐約牆鐘當 UTC 的秒數 */
+    wall: number;
+    price: number;
+    volume: number;
+}
+
+/**
+ * 歷史載入期間收到的成交補進 K 棒：只補比歷史最後一根還新的桶（同一桶視為
+ * 已含在歷史裡，避免重複計量）。回傳是否有變動。
+ */
+export function replayUsTrades(bars: Candle[], pending: readonly UsLiveTrade[], minutes: number): boolean {
+    const lastTime = bars.length ? bars[bars.length - 1]!.time : -Infinity;
+    let changed = false;
+    for (const t of pending) {
+        if (usBarBucket(t.wall, minutes) <= lastTime) continue;
+        if (mergeUsTickIntoBars(bars, t.wall, t.price, t.volume, minutes)) changed = true;
+    }
+    return changed;
+}
 
 /** 逐筆時間（牆鐘當 UTC 的秒數）→ 所屬 K 棒 label（close-label-right；日 K 取日曆日） */
 export function usBarBucket(wallSec: number, minutes: number): number {

@@ -40,6 +40,13 @@ export interface WatchItem {
 
 const US_SNAPSHOT_BATCH = 50;
 
+/** 晚回來的舊請求（例如切換清單前送出的）不可蓋掉較新的快照 */
+export function isNewerUsSnapshot(row: UsSnapshot, current: UsSnapshot | undefined): boolean {
+    if (!current) return true;
+    if (row.ts === null || current.ts === null) return row.ts !== null || current.ts === null;
+    return row.ts >= current.ts;
+}
+
 const DEFAULT_LIST_NAME = '我的自選';
 const DEFAULT_SYMBOLS: { code: string; type: SecurityType }[] = [
     { code: '2330', type: 'STK' },
@@ -212,7 +219,7 @@ export function useWatchlist() {
                     if (byKey.size === 0) return;
                     setItems((prev) => prev.map((i) => {
                         const row = isUsMember(i.contract) ? byKey.get(contractLinkKey(i.contract)) : undefined;
-                        return row ? { ...i, usSnapshot: row } : i;
+                        return row && isNewerUsSnapshot(row, i.usSnapshot) ? { ...i, usSnapshot: row } : i;
                     }));
                 })
                 .catch(() => undefined);

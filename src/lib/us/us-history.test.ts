@@ -16,6 +16,7 @@ import {
     parseUsKbars,
     parseUsSnapshots,
     parseUsTicks,
+    replayUsTrades,
     resetUsHistoryForTest,
     sdkHasUsHistory,
     splitDateRange,
@@ -169,6 +170,19 @@ describe('availability and fetch', () => {
         await expect(fetchUsSnapshots([AAPL])).rejects.toSatisfy(isUsHistoryUnavailable);
         expect(usHistoryAvailable()).toBe(false);
     });
+    it('marks the sidecar that answered, not the one current when a late 404 arrives', async () => {
+        let release!: (e: unknown) => void;
+        m.post.mockReturnValueOnce(new Promise((_, rej) => { release = rej; }));
+        m.base.mockReturnValue('http://old');
+        const p = fetchUsKbars(AAPL, '2026-11-18', '2026-11-18');
+        m.base.mockReturnValue('http://new');
+        release(Object.assign(new Error('404 Not Found'), { status: 404 }));
+        await expect(p).rejects.toSatisfy(isUsHistoryUnavailable);
+        expect(usHistoryAvailable()).toBe(true);
+        m.base.mockReturnValue('http://old');
+        expect(usHistoryAvailable()).toBe(false);
+        m.base.mockReturnValue('http://127.0.0.1:21391');
+    });
     it('does not latch on 5xx', async () => {
         m.post.mockRejectedValueOnce(Object.assign(new Error('500 decode error'), { status: 500 }));
         await expect(fetchUsSnapshots([AAPL])).rejects.toThrow('500');
@@ -187,6 +201,25 @@ describe('availability and fetch', () => {
         const r = await latestUsSessionBars(AAPL, { nowMs: now });
         expect(r?.date).toBe('2026-11-20');
         expect(m.post.mock.calls.map(c => (c[1] as { start: string }).start)).toEqual(['2026-11-23', '2026-11-20']);
+    });
+});
+
+describe('replayUsTrades', () => {
+    it('adds trades from the load window only into buckets newer than the history tail', () => {
+        const bars: Candle[] = [{ time: wall('2026-11-18T09:31:00'), open: 10, high: 11, low: 9, close: 10, volume: 5 }];
+        const changed = replayUsTrades(bars, [
+            { wall: wall('2026-11-18T09:30:40'), price: 50, volume: 9 }, // 同一桶：歷史已含，不重複
+            { wall: wall('2026-11-18T09:31:05'), price: 12, volume: 2 },
+            { wall: wall('2026-11-18T09:31:30'), price: 13, volume: 3 },
+        ], 1);
+        expect(changed).toBe(true);
+        expect(bars[0]).toMatchObject({ high: 11, volume: 5 });
+        expect(bars[1]).toMatchObject({ time: wall('2026-11-18T09:32:00'), open: 12, high: 13, close: 13, volume: 5 });
+    });
+    it('builds bars from scratch when history is empty', () => {
+        const bars: Candle[] = [];
+        replayUsTrades(bars, [{ wall: wall('2026-11-18T09:30:10'), price: 1, volume: 1 }], 5);
+        expect(bars).toHaveLength(1);
     });
 });
 
