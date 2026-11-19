@@ -29,7 +29,7 @@ const STYLES: readonly (readonly [FillMarkStyle, string, string, string])[] = [
 ];
 const SIDES = [['buy', '買'], ['sell', '賣']] as const;
 
-export function ChartFillSettings({ shape, style, color, scope, colors, custom, account }: {
+export function ChartFillSettings({ shape, style, color, scope, colors, custom, account, returnTo }: {
     shape: FillMarkShape;
     style: FillMarkStyle;
     color: ChartFillColor;
@@ -40,16 +40,19 @@ export function ChartFillSettings({ shape, style, color, scope, colors, custom, 
     custom: { buy: string; sell: string };
     /** 這張圖的帳戶名稱（已套隱私遮罩） */
     account: string;
+    /** 打開時焦點不在任何元素上（例如剛關掉「指標」對話框），關閉時就把焦點還給這裡的第一顆鈕（圖例列「成交」） */
+    returnTo?: HTMLElement | null;
 }) {
     // 正在換哪一邊的顏色（色盤展開在顏色列下面）
     const [picking, setPicking] = useState<'buy' | 'sell' | null>(null);
     // 打開時焦點移到選中的形狀，只用鍵盤也進得來（彈出層第一次渲染還是隱藏的，等一幀）。
-    // 關閉時焦點若跟著面板消失（Esc、點選項後關閉）就還給原本的地方；點了圖表等別處就留在那裡
+    // 關閉時焦點若跟著面板消失（例如按 Esc）就還給原本的地方；點了圖表等別處就留在那裡
     const rootRef = useRef<HTMLDivElement>(null);
     useEffect(() => {
         if (typeof requestAnimationFrame !== 'function') return; // 測試環境（沒有 DOM）
         const doc = rootRef.current?.ownerDocument;
-        const back = doc?.activeElement as HTMLElement | null | undefined;
+        const active = doc?.activeElement as HTMLElement | null | undefined;
+        const back = active && active !== doc?.body ? active : returnTo?.querySelector?.<HTMLElement>('button');
         const raf = requestAnimationFrame(() => rootRef.current?.querySelector?.<HTMLElement>('[aria-pressed="true"]')?.focus?.({ preventScroll: true }));
         return () => {
             cancelAnimationFrame(raf);

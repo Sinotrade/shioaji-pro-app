@@ -768,6 +768,20 @@ describe('chart order settings button', () => {
     const fillLegend = () => view.root.findAll(n => typeof n.type === 'string' && n.props['data-fills-legend'])[0];
     const fillPanel = () => view.root.findAll(n => n.props.role === 'dialog' && n.props['aria-label'] === '成交標記設定')[0];
 
+    it('成交圖例列排在武裝提示之前：按它解除武裝、提示收起時，往上移的是下面的委託列，游標下仍是圖例列（不會變成 CANCEL）', async () => {
+        const trade = { contract: stk, order: { id: 'legend-order', action: 'Buy', price: 100, quantity: 1 },
+            status: { status: 'Submitted', deal_quantity: 0, cancel_quantity: 0, modified_price: 0 } };
+        await mount({ contract: stk, trades: [trade] });
+        await act(async () => { button(view.root, '點價買').props.onClick(); });
+        const list = fillLegend()!.parent!;
+        expect(list.props.className).toBe(styles.triggerList);
+        const rows = list.children as ReactTestInstance[];
+        const slot = rows.findIndex(r => typeof r !== 'string' && r.props.className === styles.hintSlot);
+        const orderRow = rows.findIndex(r => typeof r !== 'string' && r.findAll(n => n.type === 'button' && text(n) === 'CANCEL').length > 0);
+        expect(slot).toBeGreaterThan(rows.indexOf(fillLegend()!));
+        expect(orderRow).toBeGreaterThan(slot);
+    });
+
     it.each(['點價買', '點價賣'].flatMap(side => ['成交', '隱藏成交標記', '成交標記設定', '移除成交標記', '成交明細']
         .flatMap(label => (['PointerDown', 'KeyDown'] as const).map(kind => [side, label, kind] as const))))
     ('武裝%s後操作成交控制項%s的%s，先解除武裝且重新武裝才能下單', async (side, label, kind) => {

@@ -94,11 +94,14 @@ const resizeTo = (width: number) => act(() => { for (const cb of resizeCallbacks
 const chart = (props: any) => createElement(CandleChart, { fillsReady: true, ...props });
 // 設定面板根節點的假 DOM 節點：只有焦點測試會給（要有 ownerDocument 與 querySelector），平常用下面那個通用的
 let settingsNode: unknown = null;
+// 圖例列的假 DOM 節點：焦點測試要看關閉時焦點有沒有回到圖例列的第一顆鈕
+let legendNode: unknown = null;
 function mountElement(element: ReactElement) {
     let r!: ReactTestRenderer;
     act(() => {
         r = create(element, {
-            createNodeMock: (el) => settingsNode && (el.props as { className?: string }).className === fillStyles.settings ? settingsNode : ({ clientWidth: 800, clientHeight: 400, getBoundingClientRect: () => ({ width: 800, height: 400, left: 0, top: 0 }), addEventListener() {}, removeEventListener() {}, style: {}, querySelector: () => null, focus() {} }),
+            createNodeMock: (el) => settingsNode && (el.props as { className?: string }).className === fillStyles.settings ? settingsNode
+                : legendNode && (el.props as Record<string, unknown>)['data-fills-legend'] ? legendNode : ({ clientWidth: 800, clientHeight: 400, getBoundingClientRect: () => ({ width: 800, height: 400, left: 0, top: 0 }), addEventListener() {}, removeEventListener() {}, style: {}, querySelector: () => null, focus() {} }),
         });
     });
     mounted.push(r);
@@ -188,6 +191,7 @@ beforeEach(() => {
     setChartFillBuy('');
     setChartFillSell('');
     settingsNode = null;
+    legendNode = null;
 });
 afterEach(() => {
     for (const m of mounted.splice(0)) act(() => m.unmount());
@@ -1194,6 +1198,56 @@ describe('CandleChart 實際成交標記', () => {
         await frame();
         expect(selected.focus).not.toHaveBeenCalled();
     });
+    it('從「指標」加回（原本已移除）並打開設定：打開時焦點不在任何元素上，關閉時還給圖例列的「成交」，不會掉到 body', async () => {
+        setNow('2026-10-08T09:16:00'); fetchMock.mockResolvedValue(DATA);
+        const queued: (() => void)[] = [];
+        vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => queued.push(() => cb(0)));
+        vi.stubGlobal('cancelAnimationFrame', (id: number) => { queued[id - 1] = () => {}; });
+        const frame = () => act(async () => { queued.splice(0).forEach((run) => run()); });
+        const doc = { body: {}, activeElement: null as unknown };
+        doc.activeElement = doc.body; // 對話框卸載，原本在對話框裡的焦點掉到 body
+        settingsNode = { ownerDocument: doc, querySelector: () => null };
+        const name = { focus: vi.fn() };
+        legendNode = { clientWidth: 800, clientHeight: 400, getBoundingClientRect: () => ({ width: 800, height: 400, left: 0, top: 0 }), addEventListener() {}, removeEventListener() {}, style: {}, focus() {},
+            querySelector: (selector: string) => (selector === 'button' ? name : null) };
+        const r = mountWorkspace({ contract: stk, trades: trades(), initial: 'off' }); await flush();
+        expect(legend(r)).toBeUndefined();
+        await act(async () => r.root.findAll((n) => n.type === 'button' && text(n) === '指標')[0]!.props.onClick());
+        await act(async () => r.root.findAll((n) => n.type === 'button' && text(n).startsWith('成交標記'))[0]!.props.onClick());
+        expect(panel(r)).toBeDefined();
+        await frame();
+        await press(r, '成交');
+        expect(panel(r)).toBeUndefined();
+        expect(name.focus.mock.calls).toEqual([[{ preventScroll: true }]]);
+    });
+
+    it('從「指標」點「成交標記」：對話框關掉的同時放一層透明遮罩，0.5 秒內的點擊在 window 就攔下（雙擊的第二下不會穿到底下），之後拿掉', async () => {
+        setNow('2026-10-08T09:16:00'); fetchMock.mockResolvedValue(DATA);
+        const r = mountWorkspace({ contract: stk, trades: trades() }); await flush();
+        vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+        const add = vi.spyOn(window, 'addEventListener');
+        const remove = vi.spyOn(window, 'removeEventListener');
+        const shield = () => r.root.findAll((n) => n.props['data-click-shield'] === '');
+        const types = ['click', 'dblclick', 'mousedown', 'mouseup', 'pointerdown', 'pointerup'];
+        // 只看指標類事件（Esc 堆疊等也會在 window 註冊 keydown）
+        const guarded = (spy: typeof add) => spy.mock.calls.filter((c) => c[2] === true && types.includes(c[0])).map((c) => c[0]).sort();
+        await act(async () => r.root.findAll((n) => n.type === 'button' && text(n) === '指標')[0]!.props.onClick());
+        await act(async () => r.root.findAll((n) => n.type === 'button' && text(n).startsWith('成交標記'))[0]!.props.onClick());
+        expect(panel(r)).toBeDefined();
+        expect(shield()).toHaveLength(1);
+        expect(guarded(add)).toEqual(types);
+        expect(guarded(remove)).toEqual([]);
+        await act(async () => { vi.advanceTimersByTime(499); });
+        expect(shield()).toHaveLength(1);
+        await act(async () => { vi.advanceTimersByTime(1); });
+        expect(shield()).toHaveLength(0);
+        expect(guarded(remove)).toEqual(types);
+        expect(panel(r)).toBeDefined(); // 設定面板照樣開著
+        // 從圖例列打開不放遮罩（那裡沒有被拿掉的全視窗遮罩）
+        await press(r, '成交'); await press(r, '成交');
+        expect(shield()).toHaveLength(0);
+    });
+
     it.each(['成交', '成交標記設定'] as const)('隱藏中按「%s」：先恢復顯示（交回 on）再打開設定面板', async (name) => {
         setNow('2026-10-08T09:16:00'); fetchMock.mockResolvedValue(DATA);
         const log: ChartFillsState[] = [];

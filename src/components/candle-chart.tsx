@@ -41,6 +41,7 @@ import {
     X,
 } from 'lucide-react';
 import { useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { createPortal } from 'react-dom';
 import {
     DEFAULT_CHART_INTERVAL,
     isChartInterval,
@@ -342,6 +343,20 @@ export function CandleChart({
         setFillSettingsOpen(false);
         setFills(state);
     };
+    // 從「指標」打開設定會當場拿掉全視窗遮罩：雙擊那一列的第二下不能穿到底下的閃電下單、刪單鈕或已武裝的圖。
+    // 透明遮罩接住雙擊間隔內的點擊；在 window 就攔下，剛打開的設定面板也不會當成點外面而關掉
+    const [clickShield, setClickShield] = useState(false);
+    useEffect(() => {
+        if (!clickShield) return;
+        const swallow = (e: Event) => e.stopPropagation();
+        const types = ['pointerdown', 'pointerup', 'mousedown', 'mouseup', 'click', 'dblclick'];
+        types.forEach((t) => window.addEventListener(t, swallow, true));
+        const timer = setTimeout(() => setClickShield(false), 500);
+        return () => {
+            clearTimeout(timer);
+            types.forEach((t) => window.removeEventListener(t, swallow, true));
+        };
+    }, [clickShield]);
     const [fillListOpen, setFillListOpen] = useState(false);
     // 明細「這根 K 棒」：最近查看的那根（提示框停留夠久才算，移到工具列途中掠過的別根不算；render 時寫 ref，不多 render；用一次就忘，不設時間限制）
     const lastFillBarRef = useRef<{ scope: string; time: number } | null>(null);
@@ -2470,12 +2485,11 @@ export function CandleChart({
                         onClose={() => setPickerOpen(false)}
                         fills={fillsEnabled ? {
                             added: fills !== 'off', colors: fillColors,
-                            // 和圖例列一樣，動到成交標記就先解除點價武裝（對話框關掉後點圖不會下單）。
-                            // 打開設定前先把焦點交給圖例列的「成交」：對話框卸載後，Esc 關面板才有地方還焦點
+                            // 和圖例列一樣，動到成交標記就先解除點價武裝（對話框關掉後點圖不會下單）
                             onOpen: () => {
                                 drawings.onInteraction();
-                                fillLegendEl?.querySelector?.<HTMLElement>('button')?.focus?.({ preventScroll: true });
                                 setPickerOpen(false);
+                                setClickShield(true);
                                 openFillSettings();
                             },
                             onRemove: () => { drawings.onInteraction(); setFillsClosing('off'); },
@@ -2486,6 +2500,7 @@ export function CandleChart({
                         } : undefined}
                     />
                 )}
+                {clickShield && createPortal(<div className={fillStyles.clickShield} data-click-shield='' aria-hidden />, document.body)}
                 {settingsInst && (
                     <IndicatorSettingsModal
                         inst={settingsInst}
@@ -2538,7 +2553,8 @@ export function CandleChart({
                                 colors={colors}
                             />
                         )}
-                        {modeHintEl}
+                        {/* 成交圖例列排在武裝提示之前：按它會解除武裝、提示收起，排在後面的話整列上移，
+                            第一下落空、再按就按到移上來的委託列 CANCEL 或觸價 × */}
                         {fillsEnabled && fills !== 'off' && (
                             // 成交標記的圖例列（同指標）：名稱或齒輪開設定、眼睛暫時隱藏、× 從這張圖移除（從「指標」加回）。
                             // 操作前先解除點價武裝；控制鈕一直顯示，第一次用的人才看得到設定在哪
@@ -2578,9 +2594,10 @@ export function CandleChart({
                         {fillSettingsOpen && fillsEnabled && showFills && fillLegendEl && (
                             <Popover anchor={fillLegendEl} label='成交標記設定' onClose={() => setFillSettingsOpen(false)} onInteraction={drawings.onInteraction}>
                                 <ChartFillSettings shape={fillShape} style={fillStyle} color={fillColorMode} scope={fillScope} colors={fillColors}
-                                    custom={{ buy: fillBuy, sell: fillSell }} account={chartAccountLabel(orderAccountView)} />
+                                    custom={{ buy: fillBuy, sell: fillSell }} account={chartAccountLabel(orderAccountView)} returnTo={fillLegendEl} />
                             </Popover>
                         )}
+                        {modeHintEl}
                         {mainLegendInsts.map((inst) =>
                             renderLegendRow(inst),
                         )}

@@ -1,5 +1,6 @@
 import { globalStyle, style } from '@vanilla-extract/css';
 import { vars } from '../theme.css';
+import { seg } from './chart-order-popover.css';
 
 export const tooltip = style({
     position: 'absolute', top: 8, right: 72, zIndex: 7, pointerEvents: 'none',
@@ -60,8 +61,8 @@ export const settings = style({
     display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: '8px', padding: '4px',
     width: 'min(19rem, calc(100vw - 32px))', whiteSpace: 'normal',
 });
-// 分段鈕外框 overflow: hidden 會裁掉預設焦點框：一律畫在元素內側
-globalStyle(`${settings} :focus-visible`, { outline: `2px solid ${vars.color.accent}`, outlineOffset: '-2px' });
+// 分段鈕外框 overflow: hidden 會裁掉預設焦點框：分段鈕的焦點框畫在內側（其他控制項用預設的，色塊的焦點框才不會跟色塊同色）
+globalStyle(`${settings} ${seg} > button:focus-visible`, { outline: `2px solid ${vars.color.accent}`, outlineOffset: '-2px' });
 // 樣式鈕裡的示意標籤（「買」「962」）
 export const sample = style({
     display: 'inline-block', marginLeft: '2px', padding: '0 3px', border: '1px solid currentColor', borderRadius: '3px',
@@ -81,3 +82,5 @@ export const link = style({
     padding: '2px 0', border: 'none', background: 'transparent', cursor: 'pointer',
     font: 'inherit', color: vars.color.foreground, textDecoration: 'underline',
 });
+// 從「指標」打開設定後雙擊間隔內的透明遮罩（同對話框遮罩的層級）
+export const clickShield = style({ position: 'fixed', inset: 0, zIndex: 2000 });
