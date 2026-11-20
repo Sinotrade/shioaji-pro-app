@@ -156,14 +156,28 @@ export function triggerSendText(s: FlashTriggerSend, c: { market: FlashMarketKin
 
 /** Entry or protective exit, and the futures position effect it goes out with.
  * Futures opposite and within the position (自動) or 平倉: a protective exit
- * sent as Cover (close only, never blocked by the risk limits). Everything
- * else is an entry (risk checks apply when it fires). */
+ * sent as Cover (close only, never blocked by the risk limits).
+ * Stocks (#403), only in plain cash (no 融資券, not 當沖先賣):
+ * - a buy within today's 當沖先賣 still to cover (`coverRoom`, from the order
+ *   and fill reports — not the position projection, #401) is a 回補 exit;
+ * - a sell within the cash shares held (`effect` reduce on plain cash rows,
+ *   `exitSafe`; unknown holdings are none) is an exit.
+ * Everything else is an entry (risk checks apply when it fires). An exit
+ * that no longer reduces by the time it fires: the background engine sends
+ * a stock exit only against the shares it finds held then; the window
+ * engine applies the risk checks to it (`stockExitRoom`). */
 export function triggerIntent(c: {
     market: FlashMarketKind;
     octype?: FuturesOCType;
     effect: PositionEffect;
     /** the position rows are plain (one direction, cash for stocks) */
     exitSafe: boolean;
+    /** stocks: the side, quantity (order unit) and credit fields it goes out with */
+    action?: Action;
+    qty?: number;
+    credit?: { orderCond?: string; daytradeShort?: boolean };
+    /** stocks: today's 當沖先賣 still to cover by a cash buy (order unit) */
+    coverRoom?: number;
 }): { role: 'entry' | 'exit'; octype?: FuturesOCType } {
     if (c.market === 'F') {
         const oc = c.octype ?? 'Auto';
@@ -171,9 +185,11 @@ export function triggerIntent(c: {
         if (oc === 'Auto' && c.effect === 'reduce' && c.exitSafe) return { role: 'exit', octype: 'Cover' };
         return { role: 'entry', ...(oc !== 'Auto' ? { octype: oc } : {}) };
     }
-    // stocks: always an entry (risk checks apply). The window engine does not
-    // re-check holdings or reserve them for a plain trigger, so a sell that
-    // looked like an exit could later open an unchecked short
+    const cash = (!c.credit?.orderCond || c.credit.orderCond === 'Cash') && !c.credit?.daytradeShort;
+    const qty = c.qty ?? 0;
+    if (!cash || !(qty > 0)) return { role: 'entry' };
+    if (c.action === 'Buy' && qty <= (c.coverRoom ?? 0)) return { role: 'exit' };
+    if (c.action === 'Sell' && c.effect === 'reduce' && c.exitSafe) return { role: 'exit' };
     return { role: 'entry' };
 }
 
