@@ -37,8 +37,9 @@ import type {
 } from '../lib/types/portfolio';
 import { canonicalBrokerCode, resolveRealizedName } from '../lib/realized-name';
 import { bizDateLabel, settleDateLabel } from '../lib/settle-date';
-import { classifyAccountQueryError, classifyBrokerQueryError } from '../lib/trading-limits-error';
-import { TRADING_LIMITS_WINDOW, windowLabel, type TwQueryWindow } from '../lib/tw-query-window';
+import { classifyAccountQueryError, classifyBrokerQueryError, TRADING_LIMITS_NOT_SENT } from '../lib/trading-limits-error';
+import { useServerInfo } from '../lib/server-info-store';
+import { TRADING_LIMITS_WINDOW, twQueryWindowState, windowLabel, type TwQueryWindow } from '../lib/tw-query-window';
 import { useTwQueryWindow } from '../hooks/use-tw-query-window';
 import { fmtMoney, fmtSigned } from '../lib/utils/format';
 import { vars } from '../theme.css';
@@ -338,6 +339,10 @@ function SettleSection({
                     </div>
                 ))
             )}
+            {/* 保留上一份資料時的暫時性刷新失敗：灰字標示這份不是剛更新的 */}
+            {!failed && error && classifyAccountQueryError(error) && (
+                <AccountQueryFailure what='交割' error={error} onRetry={onRetry} />
+            )}
         </section>
     );
 }
@@ -520,6 +525,10 @@ function LimitsSection({
                         label='融券 可用/上限'
                         value={`${money(limits.short_available)} / ${money(limits.short_limit)}`}
                     />
+                    {/* 保留上一份額度時券商 AS400 斷線：灰字標示，不進狀態列 */}
+                    {error && classifyBrokerQueryError(error) === 'unavailable' && (
+                        <UnavailableHint what='額度' raw={error} />
+                    )}
                 </>
             )}
         </section>
@@ -662,6 +671,10 @@ function ReserveSection({
                 <span className={styles.acctTitleNote}>查詢</span>
             </div>
             {body}
+            {/* 保留上一份資料時的暫時性刷新失敗：灰字標示這份不是剛更新的 */}
+            {reserve !== undefined && !sim && error && classifyAccountQueryError(error) && (
+                <AccountQueryFailure what='預收' error={error} onRetry={onRetry} />
+            )}
         </section>
     );
 }
@@ -727,21 +740,27 @@ function AccountPaneContent({ positions, balance, margin, funds, market, scopeAc
     const wide = sizeClassOf(width) === 'wide';
 
     // 模擬環境判斷：空狀態文案（無法查詢 vs 非交易時段）與額度時段閘門靠這個分流。
-    // undefined＝還沒問到；問不到（null）當正式環境處理
-    const [simulation, setSimulation] = useState<boolean | null | undefined>(undefined);
+    // 以共用的 server-info store 為準（sidecar 換模式重啟時會被清掉，這裡跟著重問）；
+    // store 沒資料時用自己問到的結果。undefined＝還沒問到；問不到（null）當正式環境處理
+    const storeInfo = useServerInfo();
+    const [fetchedSimulation, setFetchedSimulation] = useState<boolean | null | undefined>(undefined);
+    const storeKnown = !!storeInfo;
     useEffect(() => {
+        if (storeKnown) return;
         let alive = true;
+        setFetchedSimulation(undefined);
         fetchInfo()
             .then((i) => {
-                if (alive) setSimulation(i.simulation);
+                if (alive) setFetchedSimulation(i.simulation);
             })
             .catch(() => {
-                if (alive) setSimulation(null);
+                if (alive) setFetchedSimulation(null);
             });
         return () => {
             alive = false;
         };
-    }, []);
+    }, [storeKnown]);
+    const simulation = storeInfo ? storeInfo.simulation : fetchedSimulation;
     const sim = simulation === true;
     const infoKnown = simulation !== undefined;
 
@@ -853,15 +872,20 @@ function AccountPaneContent({ positions, balance, margin, funds, market, scopeAc
     // 交易額度（證券）
     const { data: limits, refresh: refreshLimits, loading: loadingLimits, error: errorLimits } = useQuery<TradingLimits | null>(
         useCallback(
-            () =>
-                Promise.all(stockAccounts.map(a => fetchTradingLimits(a))).then(results => {
+            () => {
+                // 送出當下再確認一次時段：React 狀態可能比牆鐘晚（計時器延後、睡眠喚醒）
+                if (!sim && !twQueryWindowState(Date.now(), TRADING_LIMITS_WINDOW).open) {
+                    return Promise.reject(new Error(TRADING_LIMITS_NOT_SENT));
+                }
+                return Promise.all(stockAccounts.map(a => fetchTradingLimits(a))).then(results => {
                     if (!results.length) return null;
                     const total: TradingLimits = { ...results[0]! };
                     for (const key of Object.keys(total) as (keyof TradingLimits)[]) total[key] = results.reduce((sum, row) => sum + row[key], 0);
                     return total;
-                }),
+                });
+            },
             // eslint-disable-next-line react-hooks/exhaustive-deps
-            [showStock, selKey],
+            [showStock, selKey, sim],
         ),
         `trading-limits:${selKey}:${showStock}:${limitsSession}`,
         limitsEnabled, stockAccounts,
@@ -901,9 +925,12 @@ function AccountPaneContent({ positions, balance, margin, funds, market, scopeAc
     // 額度時段外／AS400 未連線，交割、預收的暫時性失敗都是預期狀態，區塊內已有灰字提示，
     // 不算報表錯誤（#381）。保留上一份資料時畫面沒有提示，刷新失敗仍要留在狀態列，
     // 否則舊資料看起來像剛更新
-    const limitsExpected = limits === undefined && !!classifyBrokerQueryError(errorLimits);
-    const settleExpected = settlements === undefined && !!classifyAccountQueryError(errorSettle);
-    const reserveExpected = reserve === undefined && !sim && !!classifyAccountQueryError(errorReserve);
+    // 額度保留舊資料時只有 AS400 斷線在區塊內有灰字；時段錯誤仍留狀態列（#381）
+    const limitsKind = classifyBrokerQueryError(errorLimits);
+    const limitsExpected = limits === undefined ? !!limitsKind : limitsKind === 'unavailable';
+    // 交割、預收的暫時性失敗不論有無舊資料，區塊內都有灰字提示
+    const settleExpected = !!classifyAccountQueryError(errorSettle);
+    const reserveExpected = !sim && !!classifyAccountQueryError(errorReserve);
     const reportsError = [
         settleExpected ? null : errorSettle,
         errorPnl,

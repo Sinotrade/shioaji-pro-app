@@ -314,6 +314,44 @@ describe('正式環境台股帳務查詢時段與券商暫時性錯誤', () => {
             expect(text()).toContain('8,642');
         });
 
+    it('送出當下已過 15:00（計時器還沒觸發）：額度查詢不送出', async () => {
+        vi.setSystemTime(new Date('2026-11-20T14:59:58+08:00'));
+        await mount();
+        expect(fixture.limits).toHaveBeenCalledTimes(2);
+        vi.setSystemTime(new Date('2026-11-20T15:00:00.010+08:00'));
+        await act(async () => { await controls!.refresh(); });
+        expect(fixture.limits).toHaveBeenCalledTimes(2);
+        // 假計時器的 tick 不跟 setSystemTime 跳：邊界計時器排在掛載後約 2 秒
+        await act(async () => { vi.advanceTimersByTime(2100); });
+        expect(text()).toContain('非交易時段無額度資料');
+        expect(fixture.limits).toHaveBeenCalledTimes(2);
+    });
+
+    it('已有交割／預收資料時遇到暫時性錯誤：保留資料、灰字提示、不進狀態列', async () => {
+        vi.setSystemTime(new Date('2026-11-20T01:54:00+08:00'));
+        fixture.settlements.mockReset().mockResolvedValue([{ T: 0, date: '2026-11-20', amount: 1000 }]);
+        fixture.reserve.mockReset().mockResolvedValue({ stocks: [] });
+        await mount();
+        expect(text()).toContain('2,000');
+        fixture.settlements.mockReset().mockRejectedValue(new Error('503 Service Unavailable'));
+        fixture.reserve.mockReset().mockRejectedValue(new Error('500 Internal Server Error'));
+        await act(async () => { vi.advanceTimersByTime(1600); await controls!.refresh(); });
+        expect(text()).toContain('2,000');
+        expect(text()).toContain('目前無可預收股票與預收紀錄');
+        expect(text().match(/券商暫時查不到資料，稍後再試/g)).toHaveLength(2);
+        expect(controls!.error).toBeNull();
+    });
+
+    it('已有額度時 AS400 斷線：保留資料、灰字、不進狀態列', async () => {
+        vi.setSystemTime(new Date('2026-11-20T10:00:00+08:00'));
+        await mount();
+        fixture.limits.mockReset().mockRejectedValue(new Error(AS400));
+        await act(async () => { vi.advanceTimersByTime(1600); await controls!.refresh(); });
+        expect(text()).toContain('現股 可用/上限');
+        expect(text()).toContain('券商額度服務目前未開放');
+        expect(controls!.error).toBeNull();
+    });
+
     it('交割的其他錯誤仍是紅字錯誤＋重試，並留在狀態列', async () => {
         vi.setSystemTime(new Date('2026-11-20T10:00:00+08:00'));
         fixture.settlements.mockReset().mockRejectedValue(new Error('500 Query error: session disconnected'));

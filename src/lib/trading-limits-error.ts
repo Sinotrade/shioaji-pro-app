@@ -10,7 +10,11 @@ const QCREDIT_QUERY_FAIL = /\bQCredit\s*:?\s*Query\s*fail\b/i;
 const START_TIME = /\bStartTime\s*[=:]\s*\d+/i;
 const END_TIME = /\bEndTime\s*[=:]\s*\d+/i;
 
+// App 自己在送出當下發現已出時段、沒有送出查詢時用的訊息；視同時段錯誤
+export const TRADING_LIMITS_NOT_SENT = '非交易時段，交易額度查詢未送出';
+
 export function isTradingLimitsWindowError(message: string | null | undefined): boolean {
+    if (message === TRADING_LIMITS_NOT_SENT) return true;
     return !!message
         && QCREDIT_QUERY_FAIL.test(message)
         && START_TIME.test(message)
@@ -48,8 +52,10 @@ export function classifyBrokerQueryError(message: string | null | undefined): Br
 //   「整段就是 500 Internal Server Error」的情形；帶其他訊息的 500 仍是真錯誤。
 // 只給這幾個帳務查詢用：其他地方的裸 500 不能當成暫時性。
 const HTTP_503 = /^503\b/;
+// 裸 "500"：HTTP/2 或 Tauri 的回應可能沒有 statusText，throwApiError 只剩狀態碼
 const BARE_500 = /^500(\s+Internal\s+Server\s+Error)?$/i;
-const TKAP01_NO_TRADE_STATUS = /\b6044\b|無法取得交易狀態/;
+// 6044 必須跟 TKAP01／錯誤碼欄位相鄰，避免帳號、數量等其他數字誤判
+const TKAP01_NO_TRADE_STATUS = /無法取得交易狀態|\bTKAP01\D{0,8}6044\b|\berror_?code\W{0,4}6044\b/i;
 
 export type AccountQueryErrorKind = BrokerQueryErrorKind | 'temporary';
 
