@@ -211,7 +211,8 @@ export function usSessionView(args: {
     // 退回的值是不是前一日收盤：快照當天還沒有一般盤開盤價（盤前快照 close＝前一日收盤），
     // 或用的是還沒開盤的 tick 帶的一般盤值
     const fromPrev = !!fallback && (fallback === snapMain ? !(snap!.open > 0) : !started);
-    const main = live ?? (fallback && fromPrev && !fallback.chg
+    // tick 已進入新交易日（夜盤）而一般盤值只能取前一天的快照：那天的漲跌不屬於新交易日，一律標昨收
+    const main = live ?? (fallback && ((fromPrev && !fallback.chg) || (tickNewerDay && fallback === snapMain))
         ? { ...fallback, chg: undefined, pct: undefined, prevClose: true }
         : fallback);
 

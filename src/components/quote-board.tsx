@@ -252,8 +252,14 @@ export function QuoteBoard({
     const usSameDaySnap = isUs && usSnap && tick && usSnap.tradeDate && usSnap.tradeDate === usTickTradeDate(tick) ? usSnap : null;
     const usOhl = (live: string | undefined, snap: number | undefined) =>
         Number(live) > 0 ? Number(live) : snap !== undefined && snap > 0 ? snap : undefined;
+    // 快照比 tick 新（時段界線重抓到新交易日的快照、或斷線後的舊 tick）：開高低跟主行一樣取快照
+    const usTickDate = isUs && tick ? usTickTradeDate(tick) : '';
+    const usSnapNewer = !!(isUs && tick && usSnap?.tradeDate && (usSnap.tradeDate > usTickDate
+        || (usSnap.tradeDate === usTickDate && usSnap.ts && tick.us?.ts && usSnap.ts > tick.us.ts)));
     const dayOhl = isUs
-        ? tick
+        ? usSnapNewer
+            ? { open: usOhl(undefined, usSnap!.open), high: usOhl(undefined, usSnap!.high), low: usOhl(undefined, usSnap!.low) }
+            : tick
             ? { open: usOhl(tick.open, usSameDaySnap?.open), high: usOhl(tick.high, usSameDaySnap?.high), low: usOhl(tick.low, usSameDaySnap?.low) }
             : { open: usOhl(undefined, snapshot?.open), high: usOhl(undefined, snapshot?.high), low: usOhl(undefined, snapshot?.low) }
         : {

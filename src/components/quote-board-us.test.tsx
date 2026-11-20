@@ -192,6 +192,18 @@ describe('QuoteBoard (US through the TW board)', () => {
         expect(extBlock().props.title).toContain('美東 21:00:05');
     });
 
+    it('a newer-day snapshot also supplies open/high/low (yesterday\'s tick OHLC is not shown)', () => {
+        atEt(5, 0, 20);
+        m.usSnap = usSnap({ tradeDate: '2026-11-20', open: 0, high: 0, low: 0, close: 98.5, reference: 98.5, changePrice: 0, changeRate: 0, session: 'PreMarket', ts: Date.UTC(2026, 10, 20, 10, 0) });
+        m.quote = { tick: { code: 'US:AAPL', date: '2026-11-19', time: '19:59:00', close: '98.6', open: '84', high: '99', low: '82', total_volume: 10, volume: 1,
+            us: { session: 'AfterHours', tradeDate: '2026-11-19', ts: Date.UTC(2026, 10, 20, 0, 59), regular: '98.5', regularChg: '', regularPct: '', extClose: '98.6', extHigh: '', extLow: '' } } };
+        mount();
+        const t = text();
+        expect(t).not.toContain('84.00');
+        expect(t).not.toContain('99.00');
+        expect(view!.root.find(n => n.props['data-testid'] === 'us-board-prev-close').children).toEqual(['昨收']);
+    });
+
     it('halt replaces the session badge', () => {
         m.usSnap = usSnap();
         m.halt = { scope: 'Symbol' };
