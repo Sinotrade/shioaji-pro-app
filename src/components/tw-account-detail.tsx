@@ -38,7 +38,8 @@ import * as panel from './panel.css';
 
 const acctKey = (a: Account) => `${a.account_type}:${a.broker_id}:${a.account_id}`;
 const amountDir = (v: number): 'up' | 'down' | 'flat' => (v > 0 ? 'up' : v < 0 ? 'down' : 'flat');
-const money = (v: number, priv: boolean) => maskMoney(Math.round(v).toLocaleString('en-US'), priv);
+// 期貨手續費／稅可能有小數（SDK 為 f64）：保留到 2 位，整數不顯示小數
+const money = (v: number, priv: boolean) => maskMoney(v.toLocaleString('en-US', { maximumFractionDigits: 2 }), priv);
 const signed = (v: number, priv: boolean) => maskMoney(fmtSigned(v, 0), priv);
 /** 只在有任何一列非 0 時才顯示的欄位（融資、利息、股利等） */
 const ifAny = <T,>(rows: T[], pick: (r: T) => number, col: DetailColumn<T>): DetailColumn<T>[] => (rows.some(r => pick(r) !== 0) ? [col] : []);

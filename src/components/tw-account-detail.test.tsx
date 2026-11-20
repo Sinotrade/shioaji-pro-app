@@ -133,7 +133,7 @@ const futRow = { id: 2, code: 'MXFK6', quantity: 1, pnl: -14850, date: '20261020
 it('realized table: same expand-row interaction as US, stock in shares, futures in contracts', async () => {
     m.pnlDetail.mockImplementation(async (_a: Account, market: 'S' | 'F') => (market === 'S'
         ? normalizeProfitDetail('S', [{ date: '2026-11-03', code: '2330', quantity: 1500, price: 1000, cost: 1500020, fee: 20, tax: 0, interest: 0, shortselling_fee: 0, ex_dividend_amt: 0 }])
-        : normalizeProfitDetail('F', [{ date: '20261020', code: 'MXFK6', quantity: 1, direction: 'Buy', entry_date: '20261019', entry_price: 46681, cover_price: 46384, pnl: -14850, fee: 25, tax: 93 }])));
+        : normalizeProfitDetail('F', [{ date: '20261020', code: 'MXFK6', quantity: 1, direction: 'Buy', entry_date: '20261019', entry_price: 46681, cover_price: 46384, pnl: -14850, fee: 25.5, tax: 93 }])));
     const rows = [{ account: S(), market: 'S' as const, row: stockRow }, { account: F(), market: 'F' as const, row: futRow }];
     await act(async () => { view = create(createElement(TwRealizedTable, { rows, priv: false, version: 1 })); });
     let t = all();
@@ -150,7 +150,8 @@ it('realized table: same expand-row interaction as US, stock in shares, futures 
     expect(t).toContain('原成交日條件股數原成交價成本手續費交易稅');
     expect(t).toContain('2026-11-03現股1張+500股1,0001,500,020200');
     expect(t).toContain('開倉日方向口數開倉價平倉價損益手續費交易稅');
-    expect(t).toContain('2026-10-19多1 口46,68146,384-14,8502593');
+    // 期貨手續費可有小數，不四捨五入成整數
+    expect(t).toContain('2026-10-19多1 口46,68146,384-14,85025.593');
 });
 
 it('realized table masks quantities and amounts under privacy', async () => {
