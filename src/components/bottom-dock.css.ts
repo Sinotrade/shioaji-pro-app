@@ -453,13 +453,31 @@ export const pnlCount = style({
 
 export const pnlDetailRow = style({
     display: 'grid',
-    gridTemplateColumns: '3.4rem 1fr 3.6rem 5.6rem',
+    gridTemplateColumns: '4.4rem 1fr auto 5.6rem',
     alignItems: 'baseline',
     columnGap: vars.space.sm,
     fontFamily: vars.font.mono,
     fontSize: '0.7rem',
     fontVariantNumeric: 'tabular-nums',
     lineHeight: 1.8,
+});
+
+export const pnlDetailRowClickable = style({
+    cursor: 'pointer',
+    ':hover': { color: vars.color.accent },
+});
+
+export const pnlDetailCode = style({
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '2px',
+    whiteSpace: 'nowrap',
+});
+
+// 今日已實現損益每筆展開的沖銷明細：欄位多，窄欄時左右捲動
+export const pnlCloseDetail = style({
+    overflowX: 'auto',
+    padding: '2px 0 6px 12px',
 });
 
 export const pnlDetailName = style({

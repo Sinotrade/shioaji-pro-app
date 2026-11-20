@@ -28,6 +28,8 @@ import { AsyncStatus } from './async-status';
 import { AccountQueryFailure } from './account-query-failure';
 import type { QueryFailure } from '../lib/trading-state';
 import { UsPositionDetail } from './us-account-panels';
+import { DetailToggle } from './account-detail';
+import { TwPositionDetail } from './tw-account-detail';
 import * as panel from './panel.css';
 import * as styles from './bottom-dock.css';
 import {
@@ -115,7 +117,10 @@ export function PositionsPane({
     us = null,
     failure = null,
     onRetry,
+    twVersion = 0,
 }: {
+    /** 台股持倉快照版本（查詢時間）：庫存明細的 id 每次查詢重新編號 */
+    twVersion?: number;
     positions: AccountedPosition[];
     /** 台股持倉查詢只因券商暫時性／未開放失敗（TKAP01 6044、503、AS400）：灰字＋重試 */
     failure?: QueryFailure | null;
@@ -138,9 +143,9 @@ export function PositionsPane({
     const privMoney = usePrivacyMoney();
     const [armed, setArmed] = useState(false);
     const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
-    // 美股庫存列展開的取得批次明細（list_position_detail）
-    const [usOpen, setUsOpen] = useState<ReadonlySet<string>>(new Set());
-    const toggleUsOpen = (key: string) => setUsOpen(prev => {
+    // 庫存列展開的逐筆明細（list_position_detail）：台股、美股同一種互動
+    const [detailOpen, setDetailOpen] = useState<ReadonlySet<string>>(new Set());
+    const toggleDetail = (key: string) => setDetailOpen(prev => {
         const next = new Set(prev);
         if (next.has(key)) next.delete(key); else next.add(key);
         return next;
@@ -346,6 +351,15 @@ export function PositionsPane({
 
     const maxAbsPnl = Math.max(1, ...rows.map((p) => Math.abs(p.pnl)));
 
+    // 台股庫存明細：只有券商快照的列（id ≥ 0；本地成交推估的新列是負 id）且帳戶歸屬明確
+    const twDetailOf = (p: AccountedPosition): { account: NonNullable<AccountedPosition['account']>; market: 'S' | 'F' } | null => {
+        const account = p.account;
+        if (!account || !['S', 'F'].includes(account.account_type) || !Number.isInteger(p.id) || p.id < 0) return null;
+        const market = account.account_type as 'S' | 'F';
+        if ((isStockPosition(p) ? 'S' : 'F') !== market) return null;
+        return { account, market };
+    };
+
     const selectionCell = (p: AccountedPosition) => (
         <input
             type='checkbox'
@@ -362,7 +376,7 @@ export function PositionsPane({
     const usTableRow = (p: UsPositionRow, sz: SizeClass) => {
         const dir = usAmountDir(p.pnl);
         const rowKey = usPositionRowKey(p);
-        const open = usOpen.has(rowKey);
+        const open = detailOpen.has(rowKey);
         const detailId = Number(p.id);
         return (
             <Fragment key={rowKey}>
@@ -371,21 +385,9 @@ export function PositionsPane({
                 onClick={() => onSelectCode(usLinkKey(p.code))}
                 title='點擊連動圖表與下單面板（美股請由下單面板賣出）'
             >
+                <td className={styles.td} />
                 <td className={styles.td}>
-                    {Number.isInteger(detailId) && (
-                        <button
-                            type='button'
-                            className={styles.cancelBtn}
-                            aria-expanded={open}
-                            aria-label={open ? '收合庫存明細' : '展開庫存明細'}
-                            title={open ? '收合庫存明細' : '展開庫存明細'}
-                            onClick={e => { e.stopPropagation(); toggleUsOpen(rowKey); }}
-                        >
-                            {open ? <ChevronDown size={12} aria-hidden /> : <ChevronRight size={12} aria-hidden />}
-                        </button>
-                    )}
-                </td>
-                <td className={styles.td}>
+                    {Number.isInteger(detailId) && <DetailToggle open={open} what='庫存明細' onToggle={() => toggleDetail(rowKey)} />}
                     {p.code}
                     <UsTag />
                 </td>
@@ -518,9 +520,12 @@ export function PositionsPane({
                 {list.map((p) => {
                     const dir = p.pnl > 0 ? 'up' : p.pnl < 0 ? 'down' : 'flat';
                     const retPct = retPctOf(p);
+                    const rowKey = posKey(p);
+                    const detail = twDetailOf(p);
+                    const open = !!detail && detailOpen.has(rowKey);
                     return (
+                        <Fragment key={rowKey}>
                         <tr
-                            key={posKey(p)}
                             className={styles.clickableRow}
                             onClick={() => onSelectCode(p.code)}
                             title='點擊連動圖表與下單面板'
@@ -531,7 +536,10 @@ export function PositionsPane({
                             >
                                 {selectionCell(p)}
                             </td>
-                            <td className={styles.td}>{p.code}</td>
+                            <td className={styles.td}>
+                                {detail && <DetailToggle open={open} what='庫存明細' onToggle={() => toggleDetail(rowKey)} />}
+                                {p.code}
+                            </td>
                             {sz === 'wide' && (
                                 <td className={styles.td}>
                                     {names[p.code] ?? ''}
@@ -654,6 +662,20 @@ export function PositionsPane({
                                 </td>
                             )}
                         </tr>
+                        {open && detail && (
+                            <tr>
+                                <td className={styles.td} />
+                                <td className={styles.td} colSpan={sz === 'wide' ? 11 : 6}>
+                                    <TwPositionDetail
+                                        account={detail.account}
+                                        market={detail.market}
+                                        row={{ id: p.id, code: p.code, direction: p.direction, cond: 'cond' in p ? p.cond : undefined, quantity: p.quantity }}
+                                        version={twVersion}
+                                    />
+                                </td>
+                            </tr>
+                        )}
+                        </Fragment>
                     );
                 })}
                 {usList.map((p) => usTableRow(p, sz))}

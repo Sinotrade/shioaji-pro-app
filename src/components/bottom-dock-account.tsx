@@ -9,7 +9,7 @@ import { accountMatches } from '../lib/flash-account';
 import { maskAccountId, usePrivacyMode } from '../lib/privacy';
 import { useAccounts } from '../lib/account-store';
 import { ChevronDown, ChevronRight } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { useQuery } from '../hooks/use-query';
 import { maskMoney, usePrivacyMoney } from '../lib/privacy';
 import {
@@ -55,6 +55,7 @@ import { AsyncStatus } from './async-status';
 import { AccountQueryFailure, QueryError } from './account-query-failure';
 import type { QueryFailure } from '../lib/trading-state';
 import * as panel from './panel.css';
+import { TwPnlDetail, twRealizedQty } from './tw-account-detail';
 
 // ---- helpers ----
 
@@ -333,7 +334,7 @@ function SettleSection({
 
 // ---- 今日已實現損益 ----
 
-type AccountedPnl = ProfitLoss & { market: 'S' | 'F'; accountKey: string };
+type AccountedPnl = ProfitLoss & { market: 'S' | 'F'; accountKey: string; account: Account };
 
 const nameKey = (r: AccountedPnl) => `${r.market}:${r.code}`;
 
@@ -359,6 +360,13 @@ function PnlSection({
     // 失敗時 data 維持 undefined，不能當成載入中；已有資料的刷新失敗保留上一份
     const failed = pnl === undefined && !!error;
     const [open, setOpen] = useState(false);
+    // 每筆展開沖銷明細（list_profit_loss_detail），同 30 日損益面板與美股
+    const [detailOpen, setDetailOpen] = useState<ReadonlySet<string>>(new Set());
+    const toggleDetail = (key: string) => setDetailOpen((prev) => {
+        const next = new Set(prev);
+        if (next.has(key)) next.delete(key); else next.add(key);
+        return next;
+    });
     // 股名 lazy 解析：展開時才查、component 內快取，不訂閱行情。
     // 以「市場:列上代號」為 key（#240 #286）：正式環境券商損益的期貨代號不保證
     // 與合約代號一字不差，resolveRealizedName 會正規化並逐一嘗試替代格式；
@@ -428,31 +436,49 @@ function PnlSection({
                         </span>
                     </button>
                     {open &&
-                        pnl.rows.map((r) => (
-                            <div
-                                key={`${r.accountKey}-${r.market}-${r.id}-${'dseq' in r ? r.dseq : r.date}`}
-                                className={styles.pnlDetailRow}
-                            >
-                                <span
-                                    // 查不到名稱時滑過顯示券商回傳的原始代號（含看不到的字元），方便回報
-                                    title={names[nameKey(r)] ? undefined : `原始代號 ${JSON.stringify(r.code)}`}
-                                >
-                                    {canonicalBrokerCode(r.code) || r.code}
-                                </span>
-                                <span className={styles.pnlDetailName}>
-                                    {names[nameKey(r)] ?? ''}
-                                </span>
-                                <span className={styles.pnlDetailQty}>
-                                    {/* 平倉筆的數量帶方向正負 — 顯示絕對值；遮金額時一併遮（#268） */}
-                                    {maskMoney(`${Math.abs(r.quantity).toLocaleString()}${r.market === 'S' ? '張' : '口'}`, privMoney)}
-                                </span>
-                                <span
-                                    className={`${styles.pnlDetailVal} ${panel.dirText[dirOfAmount(r.pnl)]}`}
-                                >
-                                    {maskMoney(fmtSigned(r.pnl, 0), privMoney)}
-                                </span>
-                            </div>
-                        ))}
+                        pnl.rows.map((r) => {
+                            const key = `${r.accountKey}-${r.market}-${r.id}-${'dseq' in r ? r.dseq : r.date}`;
+                            const rowOpen = detailOpen.has(key);
+                            return (
+                                <Fragment key={key}>
+                                    <div
+                                        className={`${styles.pnlDetailRow} ${styles.pnlDetailRowClickable}`}
+                                        role='button'
+                                        tabIndex={0}
+                                        aria-expanded={rowOpen}
+                                        title='展開沖銷明細'
+                                        onClick={() => toggleDetail(key)}
+                                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleDetail(key); } }}
+                                    >
+                                        <span
+                                            className={styles.pnlDetailCode}
+                                            // 查不到名稱時滑過顯示券商回傳的原始代號（含看不到的字元），方便回報
+                                            title={names[nameKey(r)] ? undefined : `原始代號 ${JSON.stringify(r.code)}`}
+                                        >
+                                            {rowOpen ? <ChevronDown size={10} aria-hidden /> : <ChevronRight size={10} aria-hidden />}
+                                            {canonicalBrokerCode(r.code) || r.code}
+                                        </span>
+                                        <span className={styles.pnlDetailName}>
+                                            {names[nameKey(r)] ?? ''}
+                                        </span>
+                                        <span className={styles.pnlDetailQty}>
+                                            {/* 平倉筆的數量帶方向正負 — 顯示絕對值；遮金額時一併遮（#268） */}
+                                            {maskMoney(twRealizedQty(r.market, r.quantity), privMoney)}
+                                        </span>
+                                        <span
+                                            className={`${styles.pnlDetailVal} ${panel.dirText[dirOfAmount(r.pnl)]}`}
+                                        >
+                                            {maskMoney(fmtSigned(r.pnl, 0), privMoney)}
+                                        </span>
+                                    </div>
+                                    {rowOpen && (
+                                        <div className={styles.pnlCloseDetail}>
+                                            <TwPnlDetail account={r.account} market={r.market} row={r} />
+                                        </div>
+                                    )}
+                                </Fragment>
+                            );
+                        })}
                 </>
             )}
             {/* 保留上一份損益時的暫時性刷新失敗：灰字標示這份不是剛更新的 */}
@@ -867,10 +893,11 @@ function AccountPaneContent({ positions, balance, margin, funds, market, scopeAc
                 const m = account.account_type as 'S' | 'F';
                 const sel = account;
                 const [list, sum] = await settleAccountQueries([
-                    fetchProfitLoss(m, sel),
+                    // 股票用股數（Share）：Common 會把零股截成 0 張
+                    fetchProfitLoss(m, sel, undefined, undefined, m === 'S' ? 'Share' : undefined),
                     fetchProfitLossSummary(m, sel),
                 ]);
-                for (const r of list) rows.push({ ...r, market: m, accountKey: `${account.broker_id}:${account.account_id}` });
+                for (const r of list) rows.push({ ...r, market: m, accountKey: `${account.broker_id}:${account.account_id}`, account });
                 const haveSum =
                     sum &&
                     (sum.total.pnl !== 0 || sum.profitloss_sum.length > 0);

@@ -23,6 +23,10 @@ vi.mock('../lib/us/us-order-actions', async () => {
 });
 vi.mock('../lib/risk', () => ({ checkUsOrderAllowed: () => null }));
 vi.mock('./us-account-panels', () => ({ UsPositionDetail: ({ detailId }: { detailId: number }) => `DETAIL#${detailId}` }));
+vi.mock('./tw-account-detail', () => ({
+    TwPositionDetail: ({ market, row, version }: { market: string; row: { id: number; code: string; direction: string; cond?: string; quantity: number }; version: number }) =>
+        `TWDETAIL#${market}:${row.id}:${row.code}:${row.direction}:${row.cond ?? '-'}:${row.quantity}:v${version}`,
+}));
 vi.mock('./bottom-dock-shared', async original => ({ ...await original<object>(), useMeasuredWidth: () => ({ ref: () => undefined, width: 1400 }) }));
 import { OrdersPane, mergeNewestFirst, type OrderRow } from './bottom-dock-orders';
 import { PositionsPane } from './bottom-dock-positions';
@@ -169,14 +173,35 @@ it('expands a US position row into its lot detail without selecting the symbol',
     const props = posProps();
     await act(async () => { view = create(createElement(PositionsPane, props)); });
     expect(all()).not.toContain('DETAIL#0');
-    const toggle = view!.root.findAll(n => n.type === 'button' && n.props['aria-label'] === '展開庫存明細')[0]!;
+    const toggle = rowOf('AAPL').findAll(n => n.type === 'button' && n.props['aria-label'] === '展開庫存明細')[0]!;
     const stop = vi.fn();
     await act(async () => { toggle.props.onClick({ stopPropagation: stop }); });
     expect(stop).toHaveBeenCalled();
+    expect(props.onSelectCode).not.toHaveBeenCalled();
     expect(all()).toContain('DETAIL#0');
+    expect(all()).not.toContain('TWDETAIL');
     const close = view!.root.findAll(n => n.type === 'button' && n.props['aria-label'] === '收合庫存明細')[0]!;
     await act(async () => { close.props.onClick({ stopPropagation: vi.fn() }); });
     expect(all()).not.toContain('DETAIL#0');
+});
+
+it('expands a TW position row into its lot detail with the same toggle, keyed by the positions version', async () => {
+    const fut = { account: { ...S, account_type: 'F', broker_id: 'F002' }, id: 0, code: 'TXFL6', direction: 'Sell', quantity: 2, price: 23000, last_price: 22900, pnl: 20000 } as AccountedPosition;
+    const projected = { ...twPos, id: -1790000000000, code: '2317' } as AccountedPosition;
+    const props = posProps({ positions: [twPos, fut, projected], twVersion: 42 });
+    await act(async () => { view = create(createElement(PositionsPane, props)); });
+    // 同一顆展開鈕、在代碼欄；本地推估的新列（負 id）沒有明細
+    expect(rowOf('2330').findAll(n => n.type === 'button' && n.props['aria-label'] === '展開庫存明細')).toHaveLength(1);
+    expect(rowOf('TXFL6').findAll(n => n.type === 'button' && n.props['aria-label'] === '展開庫存明細')).toHaveLength(1);
+    expect(rowOf('2317').findAll(n => n.type === 'button' && n.props['aria-label'] === '展開庫存明細')).toHaveLength(0);
+    await act(async () => { rowOf('2330').findAll(n => n.type === 'button' && n.props['aria-label'] === '展開庫存明細')[0]!.props.onClick({ stopPropagation: vi.fn() }); });
+    expect(props.onSelectCode).not.toHaveBeenCalled();
+    expect(all()).toContain('TWDETAIL#S:1:2330:Buy:Cash:1000:v42');
+    await act(async () => { rowOf('TXFL6').findAll(n => n.type === 'button' && n.props['aria-label'] === '展開庫存明細')[0]!.props.onClick({ stopPropagation: vi.fn() }); });
+    expect(all()).toContain('TWDETAIL#F:0:TXFL6:Sell:-:2:v42');
+    // 明細列橫跨表格其餘欄位
+    const detailCell = view!.root.findAll(n => n.type === 'td' && n.props.colSpan === 11);
+    expect(detailCell).toHaveLength(2);
 });
 
 // 美股帳務另見 us-account-panels.test.tsx

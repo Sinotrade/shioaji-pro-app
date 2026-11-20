@@ -19,8 +19,12 @@ import { AccountQueryFailure } from './account-query-failure';
 import { classifyAccountQueryError } from '../lib/trading-limits-error';
 import { useServerInfo } from '../lib/server-info-store';
 import { UsRealizedPnlSection } from './us-account-panels';
+import type { ProfitLoss } from '../lib/shioaji';
+import { twIsoDate } from '../lib/tw-account-detail';
+import { TwRealizedTable, type TwRealizedRow } from './tw-account-detail';
 
-interface PnlRow {
+interface PnlRow extends TwRealizedRow {
+    /** YYYY-MM-DD（期貨回 YYYYMMDD、股票回 YYYY-MM-DD，統一後才能排序） */
     date: string;
     pnl: number;
 }
@@ -29,14 +33,16 @@ async function fetchPnl(accounts: Account[]): Promise<PnlRow[]> {
     const query = createAccountQuery();
     const rows: PnlRow[] = [];
     for (const account of accounts) {
-        const result = await query.read(account.account_type as 'S' | 'F', account, current => apiPost<PnlRow[]>('/api/v1/portfolio/profit_loss', {
+        const market = account.account_type as 'S' | 'F';
+        const result = await query.read(market, account, current => apiPost<ProfitLoss[]>('/api/v1/portfolio/profit_loss', {
             begin_date: dateStrOffset(30), end_date: dateStrOffset(0),
             account_type: current.account_type, broker_id: current.broker_id,
-            account_id: current.account_id, ...(current.account_type === 'S' ? { unit: 'Common' } : {}),
+            // 股票用股數（Share）：Common 會把零股截成 0 張；損益金額不受 unit 影響
+            account_id: current.account_id, ...(current.account_type === 'S' ? { unit: 'Share' } : {}),
         }, { beforeDispatch: query.assertCurrent }));
-        rows.push(...result);
+        for (const r of result) rows.push({ account, market, row: r, date: twIsoDate(r.date), pnl: Number(r.pnl) || 0 });
     }
-    return rows.map(r => ({ date: r.date, pnl: Number(r.pnl) || 0 })).sort((a, b) => a.date.localeCompare(b.date));
+    return rows.sort((a, b) => a.date.localeCompare(b.date));
 }
 
 function EquityCurve({ rows }: { rows: PnlRow[] }) {
@@ -179,6 +185,10 @@ export function PnlPanel() {
                     </span>
                 </div>
             </div>
+            <section aria-label='台股已實現損益明細' className={dock.acctSection}>
+                <div className={dock.usNote}>台股 30 日已實現損益（點列展開沖銷明細）</div>
+                <TwRealizedTable rows={[...rows].reverse()} priv={privMoney} />
+            </section>
             {usSection}
         </div>
     );

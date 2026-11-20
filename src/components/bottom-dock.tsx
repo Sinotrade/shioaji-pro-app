@@ -386,6 +386,7 @@ export function BottomDock({
                     initialStatus={positionsStatus}
                     failure={positionsFailure}
                     onRetry={() => void refreshTradingState('positions')}
+                    twVersion={positionsQuery.updatedAt ?? 0}
                     mode={mode}
                     market={market}
                     scopeKey={scope}
