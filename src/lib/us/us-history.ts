@@ -23,7 +23,7 @@ import { knownServerInfo } from '../server-info-store';
 import type { ContractBase } from '../types/contract';
 import type { Candle } from '../types/market';
 import { wallClockToUtc } from '../utils/kbars';
-import { nyDateTime, nyWallClockSec, type UsTradingSession } from './us-quotes';
+import { nyDateTime, nyWallClockSec, usSessionOf, type UsTradingSession } from './us-quotes';
 
 // ---- availability ----
 
@@ -226,12 +226,7 @@ export interface UsHistoryTick {
     oddLot: boolean;
 }
 
-const SESSIONS: readonly UsTradingSession[] = ['Unknown', 'PreMarket', 'Regular', 'AfterHours'];
-function sessionOf(v: unknown): UsTradingSession | null {
-    if (typeof v === 'number') return SESSIONS[v] ?? 'Unknown';
-    if (typeof v === 'string') return (SESSIONS as readonly string[]).includes(v) ? v as UsTradingSession : 'Unknown';
-    return null;
-}
+const sessionOf = usSessionOf;
 
 /** 時間欄位 → epoch µs（ns 數字取整到 µs；字串取小數秒前 6 位） */
 // ns 的 JSON 數字（約 1.8e18）超過 2^53，JSON.parse 時已經四捨五入到 256 ns
@@ -391,10 +386,11 @@ export function fetchUsSnapshots(contracts: Pick<ContractBase, 'code' | 'exchang
 const SNAPSHOT_TTL_MS = 15_000;
 const snapshotCache = new Map<string, { at: number; promise: Promise<UsSnapshot | null> }>();
 
-export function fetchUsSnapshotShared(contract: Pick<ContractBase, 'code' | 'exchange'>, nowMs = Date.now()): Promise<UsSnapshot | null> {
+export function fetchUsSnapshotShared(contract: Pick<ContractBase, 'code' | 'exchange'>, nowMs = Date.now(), opts?: { force?: boolean }): Promise<UsSnapshot | null> {
     const key = `${baseKey(getApiBase())}|${contract.exchange}|${contract.code.trim().toUpperCase()}`;
     const hit = snapshotCache.get(key);
-    if (hit && nowMs - hit.at < SNAPSHOT_TTL_MS) return hit.promise;
+    // force（美東時段界線後重抓）：不用快取，但抓到的結果照樣給其他面板共用
+    if (hit && !opts?.force && nowMs - hit.at < SNAPSHOT_TTL_MS) return hit.promise;
     const promise = fetchUsSnapshots([contract]).then(rows => rows[0] ?? null);
     snapshotCache.set(key, { at: nowMs, promise });
     promise.catch(() => { if (snapshotCache.get(key)?.promise === promise) snapshotCache.delete(key); });

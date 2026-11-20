@@ -34,7 +34,50 @@ export const US_STREAM_PATHS: Record<string, string> = {
 /** 美股可訂閱的 quote_type（沒有 Quote） */
 export const US_QUOTE_TYPES = ['Tick', 'BidAsk'] as const;
 
-export type UsTradingSession = 'Unknown' | 'PreMarket' | 'Regular' | 'AfterHours';
+/**
+ * SDK session：0 Unknown、1 PreMarket、2 Regular、3 AfterHours、4 Overnight（Nasdaq 23x5
+ * 夜盤，2026-12-06 起；SDK 1.8.0）。HTTP SSE 送名稱，舊路徑可能送數字。
+ */
+export type UsTradingSession = 'Unknown' | 'PreMarket' | 'Regular' | 'AfterHours' | 'Overnight';
+
+const US_SESSIONS: readonly UsTradingSession[] = ['Unknown', 'PreMarket', 'Regular', 'AfterHours', 'Overnight'];
+
+/**
+ * session 原值 → UsTradingSession：數字（含數字字串）照 SDK 編號，名稱照原字；
+ * 不認得的值一律 Unknown（不會被當成一般盤）。沒有值回 null。
+ */
+export function usSessionOf(v: unknown): UsTradingSession | null {
+    if (v === null || v === undefined || v === '') return null;
+    if (typeof v === 'number' || (typeof v === 'string' && /^\d+$/.test(v))) {
+        const n = Number(v);
+        return Number.isInteger(n) ? US_SESSIONS[n] ?? 'Unknown' : 'Unknown';
+    }
+    if (typeof v === 'string') return (US_SESSIONS as readonly string[]).includes(v) ? v as UsTradingSession : 'Unknown';
+    return 'Unknown';
+}
+
+/** YYYY-MM-DD 之後的第 n 個平日（n=0：本身是平日就是本身，否則下一個平日） */
+export function nextUsWeekday(date: string, n = 1): string {
+    let t = Date.parse(`${date}T00:00:00Z`);
+    if (!Number.isFinite(t)) return date;
+    const weekend = () => { const d = new Date(t).getUTCDay(); return d === 0 || d === 6; };
+    while (weekend() && n === 0) t += 86_400_000;
+    for (let i = 0; i < n; i++) {
+        t += 86_400_000;
+        while (weekend()) t += 86_400_000;
+    }
+    return new Date(t).toISOString().slice(0, 10);
+}
+
+/**
+ * 成交所屬的交易日：交易日 D＝[D−1 20:00, D 20:00) ET。只有夜盤 20:00 之後的成交
+ * 歸下一個交易日；其他時段（含 20:00 整的盤後寬限成交）就是美東日期。
+ */
+export function usTradeDateOf(epochUs: number, session: UsTradingSession | null | undefined): string {
+    const { date, time } = nyDateTime(epochUs);
+    if (!date || session !== 'Overnight' || time < '20:00:00') return date;
+    return nextUsWeekday(date, 1);
+}
 export type UsFreshnessStatus = 'Realtime' | 'Stale' | 'Delayed';
 
 /** feat/198-us-quotes-v3 UsTick（只列用到的欄位） */
@@ -66,7 +109,10 @@ export interface RawUsTick {
     ext_close?: string | null;
     ext_high?: string | null;
     ext_low?: string | null;
-    session?: UsTradingSession;
+    /** 舊路徑可能是數字（0–4）；一律經 usSessionOf 讀 */
+    session?: UsTradingSession | number;
+    /** 交易日（SDK 有送時優先；沒送就由時間與 session 推，見 usTradeDateOf） */
+    trade_date?: string | null;
     freshness?: { status?: UsFreshnessStatus; stale?: boolean; age_us?: number };
 }
 
@@ -201,7 +247,8 @@ export function knownUsReference(key: string, tradeDate: string): string | null 
  * reference 時不給漲跌（畫面顯示「—」，等快照或合約檔補上再算）。
  */
 export function usTickChange(raw: Pick<RawUsTick, 'price_chg' | 'pct_chg' | 'session'>, price: string, reference: string | null): { priceChg?: string; pctChg?: string } {
-    const extended = raw.session === 'PreMarket' || raw.session === 'AfterHours';
+    const session = usSessionOf(raw.session);
+    const extended = session === 'PreMarket' || session === 'AfterHours' || session === 'Overnight';
     if (extended) return usChangeFrom(price, reference);
     return { priceChg: str(raw.price_chg) || undefined, pctChg: str(raw.pct_chg) || undefined };
 }
@@ -213,6 +260,10 @@ export function normalizeUsTick(raw: RawUsTick): { tick: SseTick; meta: UsTickMe
     if (!raw?.code || !price || !Number.isFinite(Number(price))) return null;
     const key = usLinkKey(raw.code);
     const { date, time } = nyDateTime(raw.datetime);
+    const session = usSessionOf(raw.session) ?? 'Unknown';
+    const tradeDate = typeof raw.trade_date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(raw.trade_date)
+        ? raw.trade_date
+        : usTradeDateOf(raw.datetime, session);
     const change = usTickChange(raw, price, knownUsReference(key, date));
     const tick: SseTick = {
         code: key,
@@ -239,7 +290,9 @@ export function normalizeUsTick(raw: RawUsTick): { tick: SseTick; meta: UsTickMe
         simtrade: false,
         // 報價顯示用的一般盤與延長時段值（close 上面是這筆成交價，圖表用，不改）
         us: {
-            session: raw.session ?? 'Unknown',
+            session,
+            tradeDate,
+            ts: Math.floor(raw.datetime / 1000),
             regular: positiveDec(raw.close),
             regularChg: str(raw.price_chg),
             regularPct: str(raw.pct_chg),
@@ -254,7 +307,7 @@ export function normalizeUsTick(raw: RawUsTick): { tick: SseTick; meta: UsTickMe
         meta: {
             key,
             price,
-            session: raw.session ?? 'Unknown',
+            session,
             freshness: raw.freshness?.status ?? null,
             ts: Math.floor(raw.datetime / 1000),
             tsUs: raw.datetime,
@@ -443,6 +496,7 @@ export const US_SESSION_LABEL: Record<UsTradingSession, string> = {
     PreMarket: '盤前',
     Regular: '盤中',
     AfterHours: '盤後',
+    Overnight: '夜盤',
 };
 
 export function resetUsQuotesForTest() {

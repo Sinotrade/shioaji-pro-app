@@ -261,6 +261,9 @@ export function useWatchlist() {
         if (lastUsClock.current === usClock) return;
         lastUsClock.current = usClock;
         attachUsSnapshots(itemsRef.current.map((i) => i.contract));
+        // 伺服器剛過界線可能還沒換：30 秒後再抓一次（晚回來的舊快照由 isNewerUsSnapshot 擋掉）
+        const again = setTimeout(() => attachUsSnapshots(itemsRef.current.map((i) => i.contract)), 30_000);
+        return () => clearTimeout(again);
     }, [usClock, attachUsSnapshots]);
 
     const keepCommittedOrder = useCallback((id: string, list: ServerWatchlist) => {

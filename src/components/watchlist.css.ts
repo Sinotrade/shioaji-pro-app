@@ -115,17 +115,8 @@ export const usExtClosed = style({
     opacity: 0.7,
 });
 
-export const usExtBadge = style({
-    fontFamily: vars.font.body,
-    fontSize: '0.54rem',
-    fontWeight: 600,
-    padding: '0 3px',
-    lineHeight: '12px',
-    alignSelf: 'center',
-    borderRadius: vars.radius.sm,
-    color: vars.color.mutedForeground,
-    border: `1px solid ${vars.color.border}`,
-});
+// 時段圖示（日出／日落／月亮）：淡色，不跟漲跌顏色
+export const usExtIcon = style({ color: vars.color.mutedForeground, alignSelf: 'center' });
 
 export const usExtPrice = style({ fontWeight: 600 });
 

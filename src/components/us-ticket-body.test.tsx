@@ -9,6 +9,7 @@ const m = vi.hoisted(() => ({
     stock: vi.fn(), future: vi.fn(), twRisk: vi.fn(() => null), onPlaced: vi.fn(),
     quote: undefined as unknown,
     snap: null as unknown,
+    session: undefined as string | undefined,
     quoteKeys: [] as (string | null)[],
     accounts: [
         { account_type: 'S', broker_id: '9A95', account_id: '0000001', signed: true, person_id: 'P', username: 'u' },
@@ -27,8 +28,8 @@ vi.mock('../hooks/use-stream', () => ({
 vi.mock('../hooks/use-us-snapshot', async importOriginal => ({ ...(await importOriginal<object>()), useUsSnapshot: () => m.snap }));
 vi.mock('../lib/us/us-quotes', async importOriginal => ({
     ...(await importOriginal<typeof import('../lib/us/us-quotes')>()),
-    getUsTickMeta: () => ({ session: 'Regular' }),
-    US_SESSION_LABEL: { Unknown: '', PreMarket: '盤前', Regular: '盤中', AfterHours: '盤後' },
+    getUsTickMeta: () => ({ session: m.session ?? 'Regular' }),
+    US_SESSION_LABEL: { Unknown: '', PreMarket: '盤前', Regular: '盤中', AfterHours: '盤後', Overnight: '夜盤' },
 }));
 vi.mock('../lib/us/us-api', () => ({ placeUsOrder: m.place, usErrorText: (e: unknown) => (e instanceof Error ? e.message.replace(/^\d{3}\s+/, '') : String(e)) }));
 vi.mock('../lib/us/us-trading-state', () => ({ observeUsTrade: m.observe }));
@@ -242,4 +243,17 @@ it('limits price input to one dot and 4 decimals', () => {
     expect(sanitizeUsPriceInput('12.34567')).toBe('12.3456');
     expect(sanitizeUsPriceInput('1.2.3')).toBe('1.23');
     expect(sanitizeUsPriceInput('a1b')).toBe('1');
+});
+
+it('shows the extended-session icon (aria-label 盤後) instead of text', async () => {
+    m.session = 'AfterHours';
+    try {
+        m.quote = { tick: { close: '231.2345' }, bidask: { bid_price: ['231.2'], ask_price: ['231.25'] } };
+        await mount();
+        const icon = view.root.find((n: any) => n.props?.role === 'img' && n.props['aria-label'] === '盤後');
+        expect(icon.props['data-us-session']).toBe('AfterHours');
+        expect(all()).not.toContain('盤中');
+    } finally {
+        m.session = undefined;
+    }
 });

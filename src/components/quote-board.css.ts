@@ -593,20 +593,14 @@ export const usExtBlock = style({
     fontVariantNumeric: 'tabular-nums',
     whiteSpace: 'nowrap',
     opacity: 0.85,
+    // 固定最小寬度（圖示＋價格、漲跌＋幅度都放得下）：有值、沒值、換時段時寬度不變，看板不跳
+    minWidth: '15ch',
 });
 export const usExtEmpty = style({ visibility: 'hidden' });
 // 大字是前一日收盤：漲跌格改標「昨收」
 export const usPrevClose = style({ fontFamily: vars.font.body, color: vars.color.mutedForeground });
 // 盤後已結束（20:00–04:00 ET、週末）：保留最後的盤後價，轉灰
 export const usExtClosed = style({ color: vars.color.mutedForeground, opacity: 0.7 });
-export const usExtBadge = style({
-    fontFamily: vars.font.body,
-    fontSize: '0.56rem',
-    fontWeight: 600,
-    padding: '0 3px',
-    marginRight: 4,
-    color: vars.color.mutedForeground,
-    border: `1px solid ${vars.color.border}`,
-    borderRadius: vars.radius.sm,
-});
+// 時段圖示（日出／日落／月亮）：淡色，不跟漲跌顏色；和價格間留一點距離
+export const usExtIcon = style({ color: vars.color.mutedForeground, marginRight: 4 });
 globalStyle(sTiers(STOCK_NARROW, usExtBlock), { display: 'none' });

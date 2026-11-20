@@ -147,7 +147,9 @@ it('US rows always reserve the extended-hours line (no row-height jump); TW rows
         expect(us).toContain('24.10'); // 主行：前一日收盤
         expect(us).toContain('昨收'); // 漲跌 0 沒有意義
         expect(us).not.toContain('0.00%');
-        expect(us).toContain('盤前');
+        const icon = rowByKey('US:T').find((n) => n.props.role === 'img' && n.props['data-us-session']);
+        expect(icon.props['aria-label']).toBe('盤前'); // 日出圖示
+        expect(icon.props.title).toContain('盤前');
         expect(us).toContain('24.60');
         expect(us).toContain('+0.50');
         act(() => r?.unmount());

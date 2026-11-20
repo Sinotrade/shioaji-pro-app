@@ -10,7 +10,7 @@ import { usLinkKey } from '../lib/contract-key';
 import { noteUsReference, usReferenceFor } from '../lib/us/us-quotes';
 import type { SseTick } from '../lib/types/market';
 import { useUsMarketClock } from './use-us-market-clock';
-import { usSessionView, type UsClockPhase, type UsSessionView } from '../lib/us/us-session-view';
+import { usSessionView, usTickTradeDate, type UsClock, type UsSessionView } from '../lib/us/us-session-view';
 
 /**
  * 快照有沒有可顯示的東西：有成交價，或有最佳一檔。剛上市還沒成交的 IPO
@@ -19,6 +19,12 @@ import { usSessionView, type UsClockPhase, type UsSessionView } from '../lib/us/
  */
 export function usSnapshotHasData(row: Pick<UsSnapshot, 'close' | 'buyPrice' | 'sellPrice'>): boolean {
     return row.close > 0 || (row.buyPrice ?? 0) > 0 || (row.sellPrice ?? 0) > 0;
+}
+
+/** row 是否不比 current 舊（交易日較新，或同一天時間較新） */
+export function isNewerSnapshot(row: Pick<UsSnapshot, 'tradeDate' | 'ts'>, current: Pick<UsSnapshot, 'tradeDate' | 'ts'>): boolean {
+    if (row.tradeDate !== current.tradeDate) return row.tradeDate > current.tradeDate;
+    return row.ts === null || current.ts === null || row.ts >= current.ts;
 }
 
 export function useUsSnapshot(contract: Pick<ContractInfo, 'code' | 'exchange'>, enabled: boolean): UsSnapshot | null {
@@ -33,15 +39,21 @@ export function useUsSnapshot(contract: Pick<ContractInfo, 'code' | 'exchange'>,
     useEffect(() => {
         if (!enabled || fresh) return;
         let cancelled = false;
-        fetchUsSnapshotShared(contract)
+        const load = (force: boolean) => fetchUsSnapshotShared(contract, Date.now(), { force })
             .then(row => {
                 if (row?.tradeDate) noteUsReference(usLinkKey(contract.code), row.tradeDate, row.reference);
-                if (!cancelled && row && usSnapshotHasData(row)) setSnap({ key, phase, row });
+                if (cancelled || !row || !usSnapshotHasData(row)) return;
+                // 晚回來的舊請求不蓋掉較新的快照（先比交易日再比時間）
+                setSnap(prev => (prev?.key === key && !isNewerSnapshot(row, prev.row) ? { ...prev, phase } : { key, phase, row }));
             })
             .catch(() => { /* 沒有快照：呼叫端維持原本的顯示 */ });
-        return () => { cancelled = true; };
+        // 時段換了（已有舊的那筆）：不用 15 秒共用快取，免得拿到界線前的快照；伺服器剛過界線
+        // 可能還沒換，30 秒後再抓一次
+        void load(have);
+        const again = have ? setTimeout(() => void load(true), 30_000) : undefined;
+        return () => { cancelled = true; if (again) clearTimeout(again); };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [key, enabled, fresh, phase]);
+    }, [key, enabled, phase]);
     return have ? snap!.row : null;
 }
 
@@ -75,9 +87,11 @@ export function usSessionViewFor(
     contract: Pick<ContractInfo, 'us_reference' | 'reference_date'>,
     tick: SseTick | undefined,
     snap: UsSnapshot | null,
-    now: { phase: UsClockPhase; date: string },
+    now: UsClock,
 ): UsSessionView {
-    const refTick = tick && (!snap?.tradeDate || !tick.date || tick.date >= snap.tradeDate) ? tick : undefined;
-    const reference = refTick || snap ? pickUsReference(refTick ?? { date: snap!.tradeDate }, snap, contract).price : null;
+    // 交易日取 tick（夜盤 20:00 後已是下一個交易日）與快照中較新的那個
+    const tickDate = usTickTradeDate(tick);
+    const date = [tickDate, snap?.tradeDate ?? ''].sort().pop() ?? '';
+    const reference = date ? pickUsReference({ date }, snap, contract).price : null;
     return usSessionView({ tick, snap, reference, now });
 }

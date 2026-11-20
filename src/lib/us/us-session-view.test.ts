@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import type { SseTick, UsTickSessionFields } from '../types/market';
 import { parseUsSnapshotRow, type UsSnapshot } from './us-history';
-import { normalizeUsTick, type RawUsTick } from './us-quotes';
+import { nextUsWeekday, normalizeUsTick, usSessionOf, usTradeDateOf, type RawUsTick } from './us-quotes';
 import { msToNextUsBoundary, usMarketPhase, usSessionView } from './us-session-view';
 
 // 2026-11-19（四）美東是 EST（UTC−5）
@@ -22,15 +22,22 @@ const snap = (over: Partial<UsSnapshot> = {}): UsSnapshot => ({
 });
 
 describe('usMarketPhase', () => {
-    it('splits the New York day at 04:00, 09:30, 16:00 and 20:00; weekends are closed', () => {
-        expect(at(19, 3, 59).phase).toBe('closed');
-        expect(at(19, 4)).toEqual({ phase: 'pre', date: '2026-11-19' });
+    it('splits the New York day at 04:00, 09:30, 16:00 and 20:00; trading day D = [D-1 20:00, D 20:00)', () => {
+        expect(at(19, 3, 59)).toEqual({ phase: 'overnight', date: '2026-11-19', lastPost: '2026-11-18' });
+        expect(at(19, 4)).toEqual({ phase: 'pre', date: '2026-11-19', lastPost: '2026-11-18' });
         expect(at(19, 9, 29).phase).toBe('pre');
         expect(at(19, 9, 30).phase).toBe('regular');
-        expect(at(19, 16).phase).toBe('post');
+        expect(at(19, 16)).toEqual({ phase: 'post', date: '2026-11-19', lastPost: '2026-11-19' });
         expect(at(19, 19, 59).phase).toBe('post');
-        expect(at(19, 20).phase).toBe('closed');
-        expect(at(21, 12)).toEqual({ phase: 'closed', date: '2026-11-21' }); // 週六
+        // 週四 20:00：夜盤，交易日是週五
+        expect(at(19, 20)).toEqual({ phase: 'overnight', date: '2026-11-20', lastPost: '2026-11-19' });
+        // 週五 20:00 到週日 20:00：收盤，交易日是下週一，保留週五盤後
+        expect(at(20, 20)).toEqual({ phase: 'closed', date: '2026-11-23', lastPost: '2026-11-20' });
+        expect(at(21, 12)).toEqual({ phase: 'closed', date: '2026-11-23', lastPost: '2026-11-20' }); // 週六
+        expect(at(22, 19, 59).phase).toBe('closed');
+        // 週日 20:00：夜盤開始，交易日週一
+        expect(at(22, 20)).toEqual({ phase: 'overnight', date: '2026-11-23', lastPost: '2026-11-20' });
+        expect(at(23, 2)).toEqual({ phase: 'overnight', date: '2026-11-23', lastPost: '2026-11-20' });
     });
     it('schedules the next check at the next boundary, at most 30 minutes ahead', () => {
         expect(msToNextUsBoundary(et(19, 9, 25))).toBe(5 * 60_000 + 250);
@@ -44,7 +51,7 @@ describe('normalizeUsTick session fields', () => {
     it('keeps close as the trade price for charts and adds the regular / extended state', () => {
         const t = normalizeUsTick(raw)!.tick;
         expect(t.close).toBe('135.63');
-        expect(t.us).toEqual({ session: 'Regular', regular: '135.62', regularChg: '-10.36', regularPct: '-7.1', extClose: '', extHigh: '', extLow: '', updatesLast: false });
+        expect(t.us).toEqual({ session: 'Regular', tradeDate: '2026-11-20', ts: 1795194455317, regular: '135.62', regularChg: '-10.36', regularPct: '-7.1', extClose: '', extHigh: '', extLow: '', updatesLast: false });
     });
     it('reads ext_* during the extended session', () => {
         const t = normalizeUsTick({ ...raw, session: 'AfterHours', ext_close: '136.10', ext_high: '136.5', ext_low: '135.9' })!.tick;
@@ -56,7 +63,8 @@ describe('usSessionView', () => {
     it('pre-market: main is the previous close from the snapshot, secondary is the ext price vs the reference', () => {
         // 2026-11-19 美東盤前的真實快照（close＝reference＝前一日收盤）
         const row = parseUsSnapshotRow({ region: 'US', ts: 1795092423642980000, trade_date: '2026-11-19', code: 'AAPL', exchange: 'NASDAQ', open: 0.0, high: 0.0, low: 0.0, close: 352.45, reference: 352.45, change_price: 0.0, change_rate: 0.0, session: 'PreMarket', last_price: 354.06, ext_close: 353.98, ext_high: 356.0, ext_low: 353.58 })!;
-        const t = tick('2026-11-19', { session: 'PreMarket', regular: '', extClose: '354.12', extHigh: '356', extLow: '353.58' }, { open: '', close: '354.13' });
+        // 即時 tick 比快照新（ts 較晚）：取即時的延長時段價
+        const t = tick('2026-11-19', { session: 'PreMarket', regular: '', extClose: '354.12', extHigh: '356', extLow: '353.58', ts: 1795092500000 }, { open: '', close: '354.13' });
         const v = usSessionView({ tick: t, snap: row, reference: '352.45', now: at(19, 7) });
         // 漲跌 0 沒有意義：標昨收，不給 0.00 0.00%
         expect(v.main).toEqual({ price: 352.45, chg: undefined, pct: undefined, prevClose: true });
@@ -119,9 +127,12 @@ describe('usSessionView', () => {
         expect(v.ext).toMatchObject({ label: '盤前', price: 355, base: 353.1 });
     });
 
-    it('snapshot-only fallback: post-market ext_close vs the snapshot close; last_price only when the session is explicit', () => {
-        const post = snap({ session: 'AfterHours', close: 352, lastPrice: 353, extClose: null });
+    it('snapshot-only fallback: post-market ext_close vs the snapshot close; last_price alone never makes a secondary line', () => {
+        const post = snap({ session: 'AfterHours', close: 352, lastPrice: 352.5, extClose: 353 });
         expect(usSessionView({ snap: post, reference: '349', now: at(19, 18) }).ext).toMatchObject({ price: 353, base: 352 });
+        // 盤後還沒有整股成交：last_price 可能是收盤競價或零股，不算延長時段價
+        const noExt = snap({ session: 'AfterHours', close: 102, lastPrice: 102, extClose: null });
+        expect(usSessionView({ snap: noExt, reference: '100', now: at(19, 17) }).ext).toBeNull();
         // 20:00 後 session 不再標盤後，但有 ext_close：仍是那天的盤後
         const late = snap({ session: 'Unknown', close: 352, lastPrice: 352, extClose: 351.5 });
         expect(usSessionView({ snap: late, reference: '349', now: at(19, 22) }).ext).toMatchObject({ label: '盤後', price: 351.5, closed: true });
@@ -157,5 +168,84 @@ describe('usSessionView', () => {
     it('legacy tick without session fields: close is the regular price', () => {
         const v = usSessionView({ tick: { date: '2026-11-19', close: '25.3', open: '', price_chg: '1.2', pct_chg: '4.98' }, snap: null, reference: null, now: at(19, 12) });
         expect(v).toEqual({ main: { price: 25.3, chg: 1.2, pct: 4.98 }, ext: null });
+    });
+});
+
+describe('overnight (Nasdaq 23x5, session 4) and trading-day rollover', () => {
+    it('parses session 4 / Overnight; unknown values are Unknown, never Regular', () => {
+        expect(usSessionOf(4)).toBe('Overnight');
+        expect(usSessionOf('4')).toBe('Overnight');
+        expect(usSessionOf('Overnight')).toBe('Overnight');
+        expect(usSessionOf(2)).toBe('Regular');
+        expect(usSessionOf(7)).toBe('Unknown');
+        expect(usSessionOf('Closed')).toBe('Unknown');
+        expect(usSessionOf({})).toBe('Unknown');
+        expect(usSessionOf(null)).toBeNull();
+        expect(parseUsSnapshotRow({ region: 'US', code: 'AAPL', close: 1, session: 4 })!.session).toBe('Overnight');
+        expect(parseUsSnapshotRow({ region: 'US', code: 'AAPL', close: 1, session: 9 })!.session).toBe('Unknown');
+    });
+
+    it('an overnight print after 20:00 belongs to the next trading day (Sunday night → Monday)', () => {
+        expect(nextUsWeekday('2026-12-06', 1)).toBe('2026-12-07');
+        expect(nextUsWeekday('2026-12-04', 1)).toBe('2026-12-07');
+        expect(nextUsWeekday('2026-12-05', 0)).toBe('2026-12-07');
+        // 2026-12-06（日）21:00 ET＝12-07 02:00Z
+        const us = Date.UTC(2026, 11, 7, 2, 0) * 1000;
+        expect(usTradeDateOf(us, 'Overnight')).toBe('2026-12-07');
+        expect(usTradeDateOf(us, 'AfterHours')).toBe('2026-12-06'); // 20:00 後的盤後寬限成交不換日
+        const raw = { exchange: 'NASDAQ', code: 'AAPL', datetime: us, price: '230.5', volume: 100, close: '229', open: null, price_chg: '0', pct_chg: '0', updates_last: false, session: 4, ext_close: '230.5', ext_high: '231', ext_low: '230' } as unknown as RawUsTick;
+        const t = normalizeUsTick(raw)!.tick;
+        expect(t.close).toBe('230.5'); // 圖表照樣拿到這筆
+        expect(t.date).toBe('2026-12-06'); // 圖表時間軸仍是美東日期
+        expect(t.us).toMatchObject({ session: 'Overnight', tradeDate: '2026-12-07', extClose: '230.5' });
+    });
+
+    it('an overnight print at 21:00 shows live (not greyed) vs the new day reference, replacing the greyed post-market', () => {
+        // 週四 21:00：tick 是夜盤（交易日週五），快照還停在週四盤後
+        const night = tick('2026-11-19', { session: 'Overnight', tradeDate: '2026-11-20', regular: '353.10', extClose: '354.50', ts: et(19, 21) }, { open: '', time: '21:00:05' });
+        const post = snap({ session: 'AfterHours', close: 353.1, extClose: 354, ts: et(19, 19, 59) });
+        const v = usSessionView({ tick: night, snap: post, reference: '353.1', now: at(19, 21) });
+        expect(v.ext).toMatchObject({ session: 'Overnight', label: '夜盤', price: 354.5, base: 353.1, closed: false, date: '2026-11-20', time: '21:00:05' });
+        expect(v.ext!.chg).toBeCloseTo(1.4, 6);
+        // 主行仍是週四一般盤收盤（快照當天已開盤，漲跌照給）
+        expect(v.main).toMatchObject({ price: 353.1, chg: 3 });
+    });
+
+    it('before overnight data exists the post-market stays greyed through the night and clears at 04:00', () => {
+        const t = tick('2026-11-19', { session: 'AfterHours', regular: '353.10', extClose: '354.00', ts: et(19, 19) });
+        expect(usSessionView({ tick: t, snap: null, reference: '349', now: at(19, 21) }).ext).toMatchObject({ session: 'AfterHours', closed: true });
+        expect(usSessionView({ tick: t, snap: null, reference: '349', now: at(20, 3) }).ext).toMatchObject({ closed: true });
+        expect(usSessionView({ tick: t, snap: null, reference: '349', now: at(20, 4) }).ext).toBeNull();
+    });
+
+    it('yesterday\'s post-market does not reappear the next evening (no post trades that day)', () => {
+        const t = tick('2026-11-18', { session: 'AfterHours', regular: '353.10', extClose: '354.00' });
+        expect(usSessionView({ tick: t, snap: null, reference: '349', now: at(19, 21) }).ext).toBeNull();
+    });
+
+    it('Friday post-market stays greyed over the weekend until Sunday-night overnight trades arrive', () => {
+        const fri = tick('2026-11-20', { session: 'AfterHours', regular: '353.10', extClose: '354.00', ts: et(20, 19) });
+        expect(usSessionView({ tick: fri, snap: null, reference: '349', now: at(21, 12) }).ext).toMatchObject({ closed: true });
+        expect(usSessionView({ tick: fri, snap: null, reference: '349', now: at(22, 20, 30) }).ext).toMatchObject({ session: 'AfterHours', closed: true });
+        const sun = tick('2026-11-22', { session: 'Overnight', tradeDate: '2026-11-23', regular: '353.10', extClose: '355', ts: et(22, 20, 31) }, { open: '' });
+        expect(usSessionView({ tick: sun, snap: null, reference: '353.1', now: at(22, 20, 31) }).ext).toMatchObject({ session: 'Overnight', closed: false, price: 355 });
+    });
+
+    it('the overnight value carries into pre-market until a pre-market trade arrives', () => {
+        const night = snap({ tradeDate: '2026-11-20', session: 'Overnight', open: 0, close: 353.1, reference: 353.1, changePrice: 0, changeRate: 0, extClose: 354.5, ts: et(20, 3, 59) });
+        const atFour = usSessionView({ snap: night, reference: '353.1', now: at(20, 4, 1) });
+        expect(atFour.ext).toMatchObject({ session: 'Overnight', closed: false });
+        expect(atFour.main).toMatchObject({ price: 353.1, prevClose: true });
+        const pre = tick('2026-11-20', { session: 'PreMarket', regular: '353.10', extClose: '355.2', ts: et(20, 4, 2) }, { open: '' });
+        expect(usSessionView({ tick: pre, snap: night, reference: '353.1', now: at(20, 4, 2) }).ext).toMatchObject({ session: 'PreMarket', price: 355.2 });
+    });
+
+    it('a stale same-day tick does not override a newer snapshot (main and post-market base)', () => {
+        // 斷線前最後一筆是 15:59 的一般盤；16:00 後重抓的快照有收盤競價後的收盤與盤後價
+        const stale = tick('2026-11-19', { regular: '352.80', ts: et(19, 15, 59) }, { open: '350' });
+        const fresh = snap({ close: 353.1, changePrice: 4.1, changeRate: 1.17, session: 'AfterHours', extClose: 353.6, ts: et(19, 18) });
+        const v = usSessionView({ tick: stale, snap: fresh, reference: '349', now: at(19, 18, 1) });
+        expect(v.main).toMatchObject({ price: 353.1, chg: 4.1 });
+        expect(v.ext).toMatchObject({ price: 353.6, base: 353.1 });
     });
 });

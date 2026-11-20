@@ -26,6 +26,7 @@ import type { UsPriceType, UsTimeInForce } from '../lib/types/us';
 import { decMul, decNormalize, decRound, fmtDec, fmtUsPrice } from '../lib/us/decimal';
 import { placeUsOrder, usErrorText } from '../lib/us/us-api';
 import { getUsTickMeta, US_SESSION_LABEL } from '../lib/us/us-quotes';
+import { hasUsSessionIcon, UsSessionIcon } from './us-session-icon';
 import {
     buildUsOrderReq,
     US_PRICE_MAX_DECIMALS,
@@ -114,7 +115,9 @@ export function UsTicketBody({
     const bid = quote?.bidask?.bid_price?.[0];
     const ask = quote?.bidask?.ask_price?.[0];
     const meta = last ? getUsTickMeta(linkKey) : undefined;
-    const sessionLabel = meta ? US_SESSION_LABEL[meta.session] : '';
+    // 盤前／盤後／夜盤用時段圖示（和自選、報價板同一套）；一般盤照舊寫「盤中」
+    const sessionIcon = meta && hasUsSessionIcon(meta.session) ? meta.session : null;
+    const sessionLabel = meta && !sessionIcon ? US_SESSION_LABEL[meta.session] : '';
     // 參考價跟報價板同一條規則（快照優先於可能落後一天的合約檔）
     const snap = useUsSnapshot(contract, !last);
     const { price: reference, date: referenceDate } = pickUsReference(last ? quote?.tick : undefined, snap, contract);
@@ -186,6 +189,8 @@ export function UsTicketBody({
                     <>
                         <span className={styles.refValue}>{fmtUsPrice(last)}</span>
                         <span className={styles.quoteMeta}>
+                            {sessionIcon && <UsSessionIcon session={sessionIcon} size={11} />}
+                            {sessionIcon ? ' ' : ''}
                             {[
                                 sessionLabel,
                                 bid || ask ? `買 ${bid ? fmtUsPrice(bid) : '—'} / 賣 ${ask ? fmtUsPrice(ask) : '—'}` : '',

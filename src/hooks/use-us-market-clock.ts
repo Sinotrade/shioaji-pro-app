@@ -5,9 +5,9 @@
 // 換到正確的狀態（盤後轉灰、04:00 清掉）。
 
 import { useSyncExternalStore } from 'react';
-import { msToNextUsBoundary, usMarketPhase, type UsClockPhase } from '../lib/us/us-session-view';
+import { msToNextUsBoundary, usMarketPhase, type UsClock } from '../lib/us/us-session-view';
 
-type Clock = { phase: UsClockPhase; date: string };
+type Clock = UsClock;
 
 let current: Clock = usMarketPhase(Date.now());
 const listeners = new Set<() => void>();
@@ -16,7 +16,7 @@ let timer: ReturnType<typeof setTimeout> | null = null;
 function tick() {
     timer = null;
     const next = usMarketPhase(Date.now());
-    if (next.phase !== current.phase || next.date !== current.date) {
+    if (next.phase !== current.phase || next.date !== current.date || next.lastPost !== current.lastPost) {
         current = next;
         listeners.forEach(l => l());
     }
@@ -32,7 +32,7 @@ function subscribe(listener: () => void) {
     listeners.add(listener);
     // 重新訂閱時（例如電腦睡醒後重新掛載）先對一次現在的時段
     const now = usMarketPhase(Date.now());
-    if (now.phase !== current.phase || now.date !== current.date) current = now;
+    if (now.phase !== current.phase || now.date !== current.date || now.lastPost !== current.lastPost) current = now;
     schedule();
     return () => {
         listeners.delete(listener);

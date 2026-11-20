@@ -264,7 +264,11 @@ export interface SseTick {
 
 /** 美股 tick 的時段欄位（SDK UsTick；decimal 字串，沒有值是 ''） */
 export interface UsTickSessionFields {
-    session: 'Unknown' | 'PreMarket' | 'Regular' | 'AfterHours';
+    session: 'Unknown' | 'PreMarket' | 'Regular' | 'AfterHours' | 'Overnight';
+    /** 交易日（D＝[D−1 20:00, D 20:00) ET；夜盤 20:00 後的成交屬下一個交易日） */
+    tradeDate?: string;
+    /** 這筆的時間，epoch ms（和快照 ts 比新舊） */
+    ts?: number;
     /** 一般盤最新價（SDK close：只有 updates_last 的成交會更新，零股、盤前盤後不動） */
     regular: string;
     /** SDK 的一般盤漲跌與幅度（基準是 reference） */

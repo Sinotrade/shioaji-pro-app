@@ -43,7 +43,8 @@ import { fmtUsPrice, usPriceDecimals } from '../lib/us/decimal';
 import type { UsSnapshot } from '../lib/us/us-history';
 import { usSessionViewFor } from '../hooks/use-us-snapshot';
 import { useUsMarketClock } from '../hooks/use-us-market-clock';
-import { usMarketPhase, type UsClockPhase, type UsExtLine } from '../lib/us/us-session-view';
+import { usExtTitle, usMarketPhase, type UsClock, type UsExtLine } from '../lib/us/us-session-view';
+import { UsSessionIcon } from './us-session-icon';
 import type { SseTick } from '../lib/types/market';
 import { Sparkline } from './sparkline';
 import { RefreshButton } from './refresh-button';
@@ -70,7 +71,7 @@ export function usRowView(
     contract: ContractInfo,
     tick: SseTick | undefined,
     snap: UsSnapshot | null | undefined,
-    now: { phase: UsClockPhase; date: string },
+    now: UsClock,
 ) {
     return usSessionViewFor(contract, tick, snap ?? null, now);
 }
@@ -395,18 +396,14 @@ function useMainPriceFlash(price: number | undefined): { seq: number; dir: 'up' 
 function UsExtRow({ ext }: { ext: UsExtLine | null }) {
     if (!ext) return <span className={styles.usExt} aria-hidden='true' data-us-ext='none'>{'\u00a0'}</span>;
     const dir = ext.chg === undefined || ext.chg === 0 ? 'flat' : ext.chg > 0 ? 'up' : 'down';
-    const title = [
-        `${ext.label}${ext.closed ? '（已收盤）' : ''} ${fmtUsPrice(ext.price)}`,
-        ext.high !== undefined && ext.low !== undefined ? `${ext.label}高 ${fmtUsPrice(ext.high)}　低 ${fmtUsPrice(ext.low)}` : undefined,
-        ext.base !== null ? `${ext.session === 'PreMarket' ? '對參考價' : '對一般盤收盤'} ${fmtUsPrice(ext.base)}` : undefined,
-    ].filter(Boolean).join('\n');
+    const title = usExtTitle(ext, fmtUsPrice);
     return (
         <span
             className={`${styles.usExt} ${ext.closed ? styles.usExtClosed : panel.dirText[dir]}`}
             data-us-ext={ext.closed ? 'closed' : ext.session}
             title={title}
         >
-            <span className={styles.usExtBadge}>{ext.label}</span>
+            <UsSessionIcon session={ext.session} size={11} title={title} className={styles.usExtIcon} />
             <span className={styles.usExtPrice}>{fmtUsPrice(ext.price)}</span>
             <span>{fmtSigned(ext.chg, usPriceDecimals(ext.price))} {fmtPct(ext.pct)}</span>
         </span>

@@ -8,6 +8,8 @@ import { contractLinkKey } from '../lib/contract-key';
 import { usPriceDecimals } from '../lib/us/decimal';
 import { usHaltLabel, useUsHalt } from '../lib/us/us-halts';
 import { getUsTickMeta } from '../lib/us/us-quotes';
+import { usExtTitle as usExtTitleOf } from '../lib/us/us-session-view';
+import { UsSessionIcon } from './us-session-icon';
 import { useBoardTier } from '../hooks/use-board-tier';
 import { useSnapshotBaseline } from '../hooks/use-display-book';
 import { useQuote } from '../hooks/use-stream';
@@ -491,13 +493,7 @@ export function QuoteBoard({
     const usFreshness = usMeta?.freshness === 'Delayed' ? '延遲' : usMeta?.freshness === 'Stale' ? '過時' : undefined;
     const usStatus = isUs ? (usHalt ? usHaltLabel(usHalt) : contract.trading_suspended ? '暫停交易' : undefined) : undefined;
     const usExtDir = usExt?.chg === undefined || usExt.chg === 0 ? 'flat' : usExt.chg > 0 ? 'up' : 'down';
-    const usExtTitle = usExt
-        ? [
-              `${usExt.label}${usExt.closed ? '（已收盤）' : ''} ${boardPrice(usExt.price)}`,
-              usExt.high !== undefined && usExt.low !== undefined ? `${usExt.label}高 ${boardPrice(usExt.high)}　低 ${boardPrice(usExt.low)}` : undefined,
-              usExt.base !== null ? `${usExt.session === 'PreMarket' ? '對參考價' : '對一般盤收盤'} ${boardPrice(usExt.base)}` : undefined,
-          ].filter(Boolean).join('\n')
-        : undefined;
+    const usExtTitle = usExt ? usExtTitleOf(usExt, boardPrice) : undefined;
     // 指數與個股各自記收合偏好
     const { tier, toggle } = useBoardTier(
         boardRef,
@@ -817,7 +813,7 @@ export function QuoteBoard({
                     data-us-ext={usExt ? (usExt.closed ? 'closed' : usExt.session) : 'none'}
                 >
                     <span>
-                        <span className={styles.usExtBadge}>{usExt?.label ?? '盤後'}</span>
+                        <UsSessionIcon session={usExt?.session} placeholder={!usExt} size={12} title={usExtTitle} className={styles.usExtIcon} />
                         {boardPrice(usExt ? usExt.price : close)}
                     </span>
                     <span>
