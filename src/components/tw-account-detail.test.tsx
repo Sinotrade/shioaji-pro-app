@@ -97,7 +97,34 @@ it('broker transient failures are gray with retry; a stale-cache mismatch is a p
     await act(async () => { view = create(createElement(TwPositionDetail, { account: S(), market: 'S', row: { id: 1, code: '2330', direction: 'Buy', quantity: 2500 }, version: 2 })); });
     await settle();
     expect(all()).toContain(TW_POSITION_DETAIL_MISMATCH);
-    expect(all()).not.toContain('重試');
+    expect(all()).not.toContain('資訊查詢失敗');
+    expect(all()).not.toContain('券商暫時查不到資料');
+    // 對不上的提示也能重試（更新持倉後 id 會變）
+    m.posDetail.mockReset().mockResolvedValue(stockLots);
+    await new Promise(r => setTimeout(r, 1600));
+    await act(async () => { view!.root.findAll(n => n.type === 'button' && text(n).includes('重試'))[0]!.props.onClick(); });
+    await settle();
+    expect(all()).toContain('2026-11-03');
+});
+
+it('closing detail is keyed by the P&L list version: a refreshed list re-queries instead of reusing a stale result', async () => {
+    m.pnlDetail.mockRejectedValueOnce(new Error('損益資料已變動，找不到這一筆；請更新損益後再展開'))
+        .mockResolvedValueOnce(normalizeProfitDetail('S', [{ date: '2026-11-03', code: '2330', quantity: 1500, price: 1000, cost: 1500020, fee: 20, tax: 0 }]));
+    const account = S();
+    const mount = async (version: number) => {
+        await act(async () => { view = create(createElement(TwRealizedTable, { rows: [{ account, market: 'S' as const, row: stockRow }], priv: false, version })); });
+        await act(async () => { view!.root.findAll(n => n.type === 'tr' && n.props['aria-expanded'] !== undefined)[0]!.props.onClick(); });
+        await settle();
+    };
+    await mount(1);
+    expect(all()).toContain('找不到這一筆');
+    await act(async () => view!.unmount());
+    await mount(1);
+    expect(m.pnlDetail).toHaveBeenCalledTimes(1); // 同一版本沿用
+    await act(async () => view!.unmount());
+    await mount(2);
+    expect(m.pnlDetail).toHaveBeenCalledTimes(2);
+    expect(all()).toContain('1,500,020');
 });
 
 const stockRow = { id: 7, code: '2330', quantity: 1500, pnl: 4321, date: '2026-11-20', dseq: 'D1', price: 1010, pr_ratio: 0.01, pnl_pct: 1, cond: 'Cash', seqno: 'S1' };
@@ -108,7 +135,7 @@ it('realized table: same expand-row interaction as US, stock in shares, futures 
         ? normalizeProfitDetail('S', [{ date: '2026-11-03', code: '2330', quantity: 1500, price: 1000, cost: 1500020, fee: 20, tax: 0, interest: 0, shortselling_fee: 0, ex_dividend_amt: 0 }])
         : normalizeProfitDetail('F', [{ date: '20261020', code: 'MXFK6', quantity: 1, direction: 'Buy', entry_date: '20261019', entry_price: 46681, cover_price: 46384, pnl: -14850, fee: 25, tax: 93 }])));
     const rows = [{ account: S(), market: 'S' as const, row: stockRow }, { account: F(), market: 'F' as const, row: futRow }];
-    await act(async () => { view = create(createElement(TwRealizedTable, { rows, priv: false })); });
+    await act(async () => { view = create(createElement(TwRealizedTable, { rows, priv: false, version: 1 })); });
     let t = all();
     expect(t).toContain('2026-11-2023301張+500股1,010+4,321+1.00%');
     expect(t).toContain('2026-10-20MXFK6多1 口46,384-14,850—');
@@ -128,7 +155,7 @@ it('realized table: same expand-row interaction as US, stock in shares, futures 
 
 it('realized table masks quantities and amounts under privacy', async () => {
     const rows = [{ account: S(), market: 'S' as const, row: stockRow }];
-    await act(async () => { view = create(createElement(TwRealizedTable, { rows, priv: true })); });
+    await act(async () => { view = create(createElement(TwRealizedTable, { rows, priv: true, version: 1 })); });
     const t = all();
     expect(t).not.toMatch(/1張\+500股|4,321/);
     expect(t).toContain('•••••');

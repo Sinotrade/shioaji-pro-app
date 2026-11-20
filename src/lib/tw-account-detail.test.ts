@@ -2,7 +2,14 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 
 const m = vi.hoisted(() => ({ posDetail: vi.fn(), pnl: vi.fn(), pnlDetail: vi.fn() }));
-vi.mock('./shioaji', () => ({ fetchPositionDetail: m.posDetail, fetchProfitLoss: m.pnl, fetchProfitLossDetail: m.pnlDetail }));
+// fetchProfitLossDetailOf 的行為：查當天列表 → pick → 用找回的 id 查明細（鎖另見 profit-loss-cache-lock.test）
+vi.mock('./shioaji', () => ({
+    fetchPositionDetail: m.posDetail,
+    fetchProfitLossDetailOf: async (market: string, account: unknown, day: string, pick: (rows: unknown[]) => { id: number } | undefined) => {
+        const row = pick(await m.pnl(market, account, day));
+        return row ? { row, detail: await m.pnlDetail(market, account, row.id) } : null;
+    },
+}));
 
 import {
     fetchTwPositionDetail,
@@ -85,8 +92,8 @@ it('profit detail re-queries that day first, then asks with the refreshed id (st
     m.pnl.mockResolvedValue([{ ...stockRow, id: 0, dseq: 'OTHER' }, { ...stockRow, id: 1 }]);
     m.pnlDetail.mockResolvedValue([{ date: '2026-11-03', code: '2330', quantity: 1500, price: 1000, cost: 1500020, fee: 20, tax: 0 }]);
     const rows = await fetchTwProfitDetail(S, 'S', stockRow);
-    expect(m.pnl).toHaveBeenCalledWith('S', S, '2026-11-20', '2026-11-20', 'Share');
-    expect(m.pnlDetail).toHaveBeenCalledWith('S', S, 1, 'Share');
+    expect(m.pnl).toHaveBeenCalledWith('S', S, '2026-11-20');
+    expect(m.pnlDetail).toHaveBeenCalledWith('S', S, 1);
     expect(rows[0]).toMatchObject({ market: 'S', quantity: 1500, cost: 1500020 });
 });
 
@@ -94,8 +101,8 @@ it('futures profit detail converts the YYYYMMDD row date for the re-query', asyn
     m.pnl.mockResolvedValue([{ ...futRow, id: 5 }]);
     m.pnlDetail.mockResolvedValue([{ date: '20261020', code: 'MXFK6', quantity: 1, direction: 'Buy', entry_date: '20261019', entry_price: 46681, cover_price: 46384, pnl: -14850, fee: 25, tax: 93 }]);
     await fetchTwProfitDetail(F, 'F', futRow);
-    expect(m.pnl).toHaveBeenCalledWith('F', F, '2026-10-20', '2026-10-20', undefined);
-    expect(m.pnlDetail).toHaveBeenCalledWith('F', F, 5, 'Common');
+    expect(m.pnl).toHaveBeenCalledWith('F', F, '2026-10-20');
+    expect(m.pnlDetail).toHaveBeenCalledWith('F', F, 5);
 });
 
 it('profit detail refuses when the row is gone or the detail is for another symbol', async () => {

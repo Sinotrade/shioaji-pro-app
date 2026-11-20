@@ -21,6 +21,7 @@ import { useServerInfo } from '../lib/server-info-store';
 import { UsRealizedPnlSection } from './us-account-panels';
 import type { ProfitLoss } from '../lib/shioaji';
 import { twIsoDate } from '../lib/tw-account-detail';
+import { profitLossCacheKey, withProfitLossCache } from '../lib/profit-loss-cache-lock';
 import { TwRealizedTable, type TwRealizedRow } from './tw-account-detail';
 
 interface PnlRow extends TwRealizedRow {
@@ -34,12 +35,13 @@ async function fetchPnl(accounts: Account[]): Promise<PnlRow[]> {
     const rows: PnlRow[] = [];
     for (const account of accounts) {
         const market = account.account_type as 'S' | 'F';
-        const result = await query.read(market, account, current => apiPost<ProfitLoss[]>('/api/v1/portfolio/profit_loss', {
+        // 和沖銷明細共用 sidecar 的 profit_loss 快取：同帳戶依序執行
+        const result = await query.read(market, account, current => withProfitLossCache(profitLossCacheKey(current, market), () => apiPost<ProfitLoss[]>('/api/v1/portfolio/profit_loss', {
             begin_date: dateStrOffset(30), end_date: dateStrOffset(0),
             account_type: current.account_type, broker_id: current.broker_id,
             // 股票用股數（Share）：Common 會把零股截成 0 張；損益金額不受 unit 影響
             account_id: current.account_id, ...(current.account_type === 'S' ? { unit: 'Share' } : {}),
-        }, { beforeDispatch: query.assertCurrent }));
+        }, { beforeDispatch: query.assertCurrent })));
         for (const r of result) rows.push({ account, market, row: r, date: twIsoDate(r.date), pnl: Number(r.pnl) || 0 });
     }
     return rows.sort((a, b) => a.date.localeCompare(b.date));
@@ -98,7 +100,7 @@ export function PnlPanel() {
     const usAccts = accounts.filter(a => canTrade(a) && a.account_type === 'H');
     const usSection = usAccts.length > 0 ? <UsRealizedPnlSection accounts={usAccts} /> : null;
     const key = tradable.map(a => `${a.account_type}:${a.broker_id}:${a.account_id}`).join(',');
-    const { data, error, loading, refresh } = useQuery<PnlRow[]>(
+    const { data, error, loading, refresh, updatedAt } = useQuery<PnlRow[]>(
         useCallback(() => fetchPnl(tradable), [key]), `pnl-30d:${key}`, tradable.length > 0, tradable,
     );
     // 已實現損益經券商 TKAP01 損益後台／r6：夜間偶發 503、6044（裸 500）、AS400 未連線
@@ -187,7 +189,7 @@ export function PnlPanel() {
             </div>
             <section aria-label='台股已實現損益明細' className={dock.acctSection}>
                 <div className={dock.usNote}>台股 30 日已實現損益（點列展開沖銷明細）</div>
-                <TwRealizedTable rows={[...rows].reverse()} priv={privMoney} />
+                <TwRealizedTable rows={[...rows].reverse()} priv={privMoney} version={updatedAt ?? 0} />
             </section>
             {usSection}
         </div>

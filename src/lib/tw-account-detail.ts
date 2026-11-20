@@ -18,14 +18,14 @@
 // detail_id 是 sidecar 的程序內快取索引：position_detail 對照「最近一次」position_unit，
 // profit_loss_detail 對照「最近一次」profit_loss（不分日期區間，同帳戶共用一份）。
 // 今日損益、30 日損益兩個面板各自查 profit_loss，會互相蓋掉快取，所以：
-// - 沖銷明細：先用該列的日期重查一次 profit_loss（刷新快取），找回同一列的 id 再查明細；
+// - 沖銷明細：先用該列的日期重查一次 profit_loss（刷新快取），找回同一列的 id 再查明細，
+//   兩步之間本 App 同帳戶的其他 profit_loss 排隊（profit-loss-cache-lock）；
 // - 庫存明細：查完核對回來的代碼／方向／條件和這一列一致，不一致就不顯示（避免拿別檔的批次）。
 // 模擬環境 SDK 對台股明細直接回空陣列、不送出請求（券商後台才有明細）。
 
 import {
     fetchPositionDetail,
-    fetchProfitLoss,
-    fetchProfitLossDetail,
+    fetchProfitLossDetailOf,
     type FutureProfitLoss,
     type ProfitLoss,
     type StockProfitLoss,
@@ -214,11 +214,9 @@ export function sameRealizedRow(a: ProfitLoss, b: ProfitLoss): boolean {
  * 期貨明細以「代碼＋平倉日＋方向」查，同組多列會回同一份明細。
  */
 export async function fetchTwProfitDetail(account: Account, market: TwMarket, row: ProfitLoss): Promise<TwProfitDetail[]> {
-    const day = twIsoDate(row.date);
-    const list = await fetchProfitLoss(market, account, day, day, market === 'S' ? 'Share' : undefined);
-    const hit = list.find(r => sameRealizedRow(r, row));
+    const hit = await fetchProfitLossDetailOf(market, account, twIsoDate(row.date), list => list.find(r => sameRealizedRow(r, row)));
     if (!hit) throw new Error(TW_PNL_DETAIL_MISMATCH);
-    const detail = normalizeProfitDetail(market, await fetchProfitLossDetail(market, account, hit.id, market === 'S' ? 'Share' : 'Common'));
+    const detail = normalizeProfitDetail(market, hit.detail);
     const code = canonicalBrokerCode(row.code);
     if (detail.some(d => canonicalBrokerCode(d.code) !== code)) throw new Error(TW_PNL_DETAIL_MISMATCH);
     return detail;

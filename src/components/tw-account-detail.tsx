@@ -31,7 +31,7 @@ import {
 } from '../lib/tw-account-detail';
 import type { Account } from '../lib/types/portfolio';
 import { fmtPrice, fmtSigned, fmtStockLots } from '../lib/utils/format';
-import { AccountQueryFailure } from './account-query-failure';
+import { AccountQueryFailure, RetryButton } from './account-query-failure';
 import { DetailTable, DetailView, ExpandableRow, type DetailColumn } from './account-detail';
 import * as dock from './bottom-dock.css';
 import * as panel from './panel.css';
@@ -47,7 +47,7 @@ const ifAny = <T,>(rows: T[], pick: (r: T) => number, col: DetailColumn<T>): Det
 function useDetailError(what: string, retry: () => void) {
     const sim = useServerInfo()?.simulation === true;
     return (error: string) => (error === TW_POSITION_DETAIL_MISMATCH || error === TW_PNL_DETAIL_MISMATCH
-        ? <span className={dock.usNote} role='status'>{error}</span>
+        ? <span className={dock.usNote} role='status'>{error} <RetryButton onRetry={retry} /></span>
         : <AccountQueryFailure what={what} error={error} kind={sim ? null : classifyAccountQueryError(error)} onRetry={retry} />);
 }
 
@@ -132,12 +132,18 @@ function FutureLots({ rows, priv }: { rows: TwFuturePositionDetail[]; priv: bool
 
 const pnlRowKey = (r: ProfitLoss) => ('dseq' in r ? `${r.dseq}:${r.seqno}` : `${r.direction}:${r.entry_price}:${r.cover_price}:${r.quantity}`);
 
-export function TwPnlDetail({ account, market, row }: { account: Account; market: TwMarket; row: ProfitLoss }) {
+export function TwPnlDetail({ account, market, row, version }: {
+    account: Account;
+    market: TwMarket;
+    row: ProfitLoss;
+    /** 損益列表的查詢時間：列表更新後重新展開會重查明細 */
+    version: number;
+}) {
     const priv = usePrivacyMoney();
     const { data, error, loading, refresh } = useQuery(
         // eslint-disable-next-line react-hooks/exhaustive-deps
         useCallback(() => fetchTwProfitDetail(account, market, row), [acctKey(account), market, row.code, row.date, pnlRowKey(row), row.pnl]),
-        `tw-pnl-detail:${acctKey(account)}:${market}:${row.code}:${twIsoDate(row.date)}:${pnlRowKey(row)}:${row.pnl}`, true,
+        `tw-pnl-detail:${acctKey(account)}:${market}:${row.code}:${twIsoDate(row.date)}:${pnlRowKey(row)}:${row.pnl}:v${version}`, true,
     );
     const renderError = useDetailError('沖銷明細', () => void refresh());
     const emptyText = useEmptyText('沖銷明細');
@@ -212,7 +218,7 @@ export function twRealizedQty(market: TwMarket, quantity: number): string {
     return market === 'S' ? fmtStockLots(Math.abs(quantity)) : `${Math.abs(quantity).toLocaleString('en-US')} 口`;
 }
 
-export function TwRealizedTable({ rows, priv }: { rows: TwRealizedRow[]; priv: boolean }) {
+export function TwRealizedTable({ rows, priv, version }: { rows: TwRealizedRow[]; priv: boolean; version: number }) {
     return (
         <table className={dock.table} aria-label='台股已實現損益'>
             <thead>
@@ -236,7 +242,7 @@ export function TwRealizedTable({ rows, priv }: { rows: TwRealizedRow[]; priv: b
                             key={`${acctKey(account)}:${market}:${twIsoDate(row.date)}:${row.code}:${pnlRowKey(row)}:${row.id}`}
                             title='展開沖銷明細'
                             detailSpan={6}
-                            renderDetail={() => <TwPnlDetail account={account} market={market} row={row} />}
+                            renderDetail={() => <TwPnlDetail account={account} market={market} row={row} version={version} />}
                             cells={<>
                                 <td className={dock.td}>{twIsoDate(row.date)}</td>
                                 <td className={dock.td}>

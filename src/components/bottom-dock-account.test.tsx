@@ -4,7 +4,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const fixture = vi.hoisted(() => ({ accounts: ['A', 'B'].map(account_id => ({ account_type: 'F', broker_id: 'BR', account_id, signed: true, person_id: '', username: '' })), pnl: vi.fn(), pnlDetail: vi.fn(), summary: vi.fn(), settlements: vi.fn(), limits: vi.fn(), reserve: vi.fn(), simulation: false }));
 vi.mock('../lib/account-store', () => ({ useAccounts: () => ({ accounts: fixture.accounts }), getAccountState: () => ({ accounts: fixture.accounts }) }));
 vi.mock('../lib/runtime', () => ({ getApiBase: () => 'http://account-pane-fixture.invalid' }));
-vi.mock('../lib/shioaji', () => ({ fetchInfo: async () => ({ simulation: fixture.simulation }), fetchProfitLoss: fixture.pnl, fetchProfitLossDetail: fixture.pnlDetail, fetchPositionDetail: vi.fn(), fetchProfitLossSummary: fixture.summary,
+vi.mock('../lib/shioaji', () => ({ fetchInfo: async () => ({ simulation: fixture.simulation }), fetchProfitLoss: fixture.pnl, fetchPositionDetail: vi.fn(),
+    fetchProfitLossDetailOf: async (market: string, account: unknown, day: string, pick: (rows: unknown[]) => { id: number } | undefined) => {
+        const row = pick(await fixture.pnl(market, account, day, day, market === 'S' ? 'Share' : undefined));
+        return row ? { row, detail: await fixture.pnlDetail(market, account, row.id, market === 'S' ? 'Share' : 'Common') } : null;
+    }, fetchProfitLossSummary: fixture.summary,
     fetchSettlements: fixture.settlements, fetchTradingLimits: fixture.limits, fetchStockReserveSummary: fixture.reserve, fetchStockReserveDetail: fixture.reserve, fetchEarmarkingDetail: fixture.reserve, resolveContract: vi.fn(), fetchFuturesRoots: vi.fn(async () => [{ root: 'NSF', name: '美國那斯達克100期貨' }]) }));
 import { AccountPane, type AccountRefreshControls } from './bottom-dock-account';
 import type { AccountFunds } from '../lib/types/portfolio';

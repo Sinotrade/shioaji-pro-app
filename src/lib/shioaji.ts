@@ -63,6 +63,7 @@ import type {
 import type { HistoryTicks } from './types/tick';
 import { contractMarket } from './contract-market';
 import { todayStr } from './utils/date';
+import { profitLossCacheKey, withProfitLossCache } from './profit-loss-cache-lock';
 import { usLinkKey } from './contract-key';
 import { usSubscriptionBody } from './us/us-quotes';
 
@@ -1267,17 +1268,6 @@ export function fetchPositionDetail(
     return accountQueryPost<unknown>('/api/v1/portfolio/position_detail', accountType, account, { detail_id: detailId });
 }
 
-/** 台股沖銷明細：`detail_id` 是 sidecar 最近一次 profit_loss 回傳的列 `id`（SDK 以快取對照）。
- *  股票 `unit: 'Share'` 回股數；期貨忽略 unit。模擬環境 SDK 直接回空陣列。 */
-export function fetchProfitLossDetail(
-    accountType: 'S' | 'F',
-    account: AccountSelector,
-    detailId: number,
-    unit: 'Common' | 'Share' = 'Share',
-) {
-    return accountQueryPost<unknown>('/api/v1/portfolio/profit_loss_detail', accountType, account, { detail_id: detailId, unit });
-}
-
 export function fetchAccountBalance(account?: AccountSelector) {
     return accountQueryPost<AccountBalance>('/api/v1/portfolio/account_balance', 'S', account);
 }
@@ -1332,6 +1322,14 @@ export interface FutureProfitLoss {
 
 export type ProfitLoss = StockProfitLoss | FutureProfitLoss;
 
+function rawProfitLoss(accountType: AccountTypeName, account: AccountSelector | undefined, beginDate: string, endDate: string, unit?: 'Common' | 'Share') {
+    return accountQueryPost<ProfitLoss[]>('/api/v1/portfolio/profit_loss', accountType, account, {
+        begin_date: beginDate,
+        end_date: endDate,
+        ...(unit && accountType === 'S' ? { unit } : {}),
+    });
+}
+
 export function fetchProfitLoss(
     accountType: AccountTypeName,
     account?: AccountSelector,
@@ -1340,10 +1338,28 @@ export function fetchProfitLoss(
     /** 股票數量單位：Share 回股數（零股不被截成 0 張）；未給沿用 SDK 預設 Common（張） */
     unit?: 'Common' | 'Share',
 ) {
-    return accountQueryPost<ProfitLoss[]>('/api/v1/portfolio/profit_loss', accountType, account, {
-        begin_date: beginDate,
-        end_date: endDate,
-        ...(unit && accountType === 'S' ? { unit } : {}),
+    // 和沖銷明細共用 sidecar 快取：同帳戶依序執行（見 profit-loss-cache-lock）
+    return withProfitLossCache(profitLossCacheKey(account, accountType),
+        () => rawProfitLoss(accountType, account, beginDate, endDate, unit));
+}
+
+/**
+ * 沖銷明細：先查 `day` 當天的 profit_loss（換掉 sidecar 快取），用 `pick` 找回那一列現在的 id，
+ * 再查 profit_loss_detail。兩次查詢之間不讓本 App 同帳戶的其他 profit_loss 插隊。
+ * `pick` 回 null 時不查明細，回 null。
+ */
+export function fetchProfitLossDetailOf(
+    accountType: 'S' | 'F',
+    account: AccountSelector,
+    day: string,
+    pick: (rows: ProfitLoss[]) => ProfitLoss | undefined,
+): Promise<{ row: ProfitLoss; detail: unknown } | null> {
+    const unit = accountType === 'S' ? 'Share' : 'Common';
+    return withProfitLossCache(profitLossCacheKey(account, accountType), async () => {
+        const row = pick(await rawProfitLoss(accountType, account, day, day, accountType === 'S' ? 'Share' : undefined));
+        if (!row) return null;
+        const detail = await accountQueryPost<unknown>('/api/v1/portfolio/profit_loss_detail', accountType, account, { detail_id: row.id, unit });
+        return { row, detail };
     });
 }
 

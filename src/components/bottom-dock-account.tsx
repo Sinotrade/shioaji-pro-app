@@ -345,12 +345,15 @@ interface PnlData {
 
 function PnlSection({
     pnl,
+    version,
     error,
     errorKind,
     privMoney,
     onRetry,
 }: {
     pnl: PnlData | undefined;
+    /** 今日損益查詢時間：更新後重新展開會重查沖銷明細 */
+    version: number;
     error: string | null;
     /** 已分類的錯誤種類（模擬環境不分類，一律 null） */
     errorKind: ReturnType<typeof classifyAccountQueryError>;
@@ -473,7 +476,7 @@ function PnlSection({
                                     </div>
                                     {rowOpen && (
                                         <div className={styles.pnlCloseDetail}>
-                                            <TwPnlDetail account={r.account} market={r.market} row={r} />
+                                            <TwPnlDetail account={r.account} market={r.market} row={r} version={version} />
                                         </div>
                                     )}
                                 </Fragment>
@@ -910,7 +913,7 @@ function AccountPaneContent({ positions, balance, margin, funds, market, scopeAc
         return { rows, total };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [showStock, showFut, selKey]);
-    const { data: pnl, refresh: refreshPnl, loading: loadingPnl, error: errorPnl } = useQuery<PnlData>(
+    const { data: pnl, refresh: refreshPnl, loading: loadingPnl, error: errorPnl, updatedAt: pnlUpdatedAt } = useQuery<PnlData>(
         pnlFetcher,
         `realized-pnl:${selKey}:${showStock}:${showFut}`,
         true, queryAccounts,
@@ -1037,7 +1040,7 @@ function AccountPaneContent({ positions, balance, margin, funds, market, scopeAc
     );
     const right = (
         <div className={styles.acctCol}>
-            <PnlSection pnl={pnl} error={errorPnl} errorKind={pnlKind} privMoney={privMoney} onRetry={() => void refreshPnl()} />
+            <PnlSection pnl={pnl} version={pnlUpdatedAt ?? 0} error={errorPnl} errorKind={pnlKind} privMoney={privMoney} onRetry={() => void refreshPnl()} />
             {showStock && (
                 <ReserveSection
                     reserve={reserve}
