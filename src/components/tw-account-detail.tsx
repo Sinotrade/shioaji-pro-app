@@ -254,7 +254,7 @@ export function TwRealizedTable({ rows, priv, version }: { rows: TwRealizedRow[]
                                 <td className={dock.td}>{maskMoney(twRealizedQty(market, row.quantity), priv)}</td>
                                 <td className={dock.td}>{fmtPrice(stock ? (row as StockProfitLoss).price : row.cover_price)}</td>
                                 <td className={`${dock.td} ${panel.dirText[dir]}`}>{signed(row.pnl, priv)}</td>
-                                <td className={`${dock.td} ${panel.dirText[dir]}`}>{pct === null ? '—' : `${pct > 0 ? '+' : ''}${pct.toFixed(2)}%`}</td>
+                                <td className={`${dock.td} ${pct === null ? '' : panel.dirText[dir]}`}>{pct === null ? '—' : `${pct > 0 ? '+' : ''}${pct.toFixed(2)}%`}</td>
                             </>}
                         />
                     );

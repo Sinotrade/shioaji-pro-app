@@ -211,14 +211,21 @@ export function sameRealizedRow(a: ProfitLoss, b: ProfitLoss): boolean {
 /**
  * 一筆已實現損益的沖銷明細。先以該列日期重查 profit_loss（同一個 unit），
  * 把 sidecar 快取換成這一天、找回這一列現在的 id，再查明細；回來的代碼也要一致。
- * 期貨明細以「代碼＋平倉日＋方向」查，同組多列會回同一份明細。
+ * 期貨明細以「代碼＋平倉日＋方向」查，同組多列會回同一份明細；回來的列再依方向與日期過濾。
  */
 export async function fetchTwProfitDetail(account: Account, market: TwMarket, row: ProfitLoss): Promise<TwProfitDetail[]> {
     const hit = await fetchProfitLossDetailOf(market, account, twIsoDate(row.date), list => list.find(r => sameRealizedRow(r, row)));
     if (!hit) throw new Error(TW_PNL_DETAIL_MISMATCH);
-    const detail = normalizeProfitDetail(market, hit.detail);
     const code = canonicalBrokerCode(row.code);
+    let detail = normalizeProfitDetail(market, hit.detail);
     if (detail.some(d => canonicalBrokerCode(d.code) !== code)) throw new Error(TW_PNL_DETAIL_MISMATCH);
+    if (market === 'F') {
+        // 期貨明細以「代碼＋平倉日＋方向」查，但 sw 的 r6 來源只依代碼＋日期過濾：
+        // 同一天多空兩邊都有平倉時會一起回來，只留這一列的方向與日期
+        const f = row as FutureProfitLoss;
+        const day = twIsoDate(row.date);
+        detail = detail.filter(d => d.market === 'F' && d.direction === f.direction && (!d.date || d.date === day));
+    }
     return detail;
 }
 

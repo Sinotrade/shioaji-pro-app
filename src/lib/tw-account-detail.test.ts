@@ -120,3 +120,12 @@ it('labels stock order conditions', () => {
     expect(twCondLabel('ShortSelling')).toBe('融券');
     expect(twCondLabel('SBLShort')).toBe('借券');
 });
+
+it('futures closing detail keeps only the selected direction and day (r6 filters by code and date only)', async () => {
+    m.pnl.mockResolvedValue([{ ...futRow, id: 5 }]);
+    const close = (direction: string, pnl: number, date = '20261020') => ({ date, code: 'MXFK6', quantity: 1, direction, entry_date: '20261019', entry_price: 46681, cover_price: 46384, pnl, fee: 25, tax: 93 });
+    m.pnlDetail.mockResolvedValue([close('Buy', -14850), close('Sell', 9000), close('Buy', 100, '20261021')]);
+    const rows = await fetchTwProfitDetail(F, 'F', futRow);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ direction: 'Buy', pnl: -14850 });
+});

@@ -1,5 +1,5 @@
 // 同帳戶的 profit_loss／沖銷明細依序執行；不同帳戶不互等；失敗不卡住後面的
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import { profitLossCacheKey, withProfitLossCache } from './profit-loss-cache-lock';
 
 const deferred = () => {
@@ -31,4 +31,13 @@ it('a failed job does not block the next one and still rejects to its caller', a
 it('keys by broker and account like the SDK cache', () => {
     expect(profitLossCacheKey({ broker_id: '9A95', account_id: '1' }, 'S')).toBe('9A95:1');
     expect(profitLossCacheKey(undefined, 'F')).toBe('default:F');
+});
+
+it('uses Web Locks when available so popout windows share the same queue', async () => {
+    const names: string[] = [];
+    vi.stubGlobal('navigator', { locks: { request: async (name: string, cb: () => Promise<unknown>) => { names.push(name); return cb(); } } });
+    try {
+        await expect(withProfitLossCache('BR:9', async () => 7)).resolves.toBe(7);
+        expect(names).toEqual(['sj-pro:profit-loss:BR:9']);
+    } finally { vi.unstubAllGlobals(); }
 });
