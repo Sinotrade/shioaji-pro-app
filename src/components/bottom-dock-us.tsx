@@ -227,6 +227,8 @@ function StepLine({ n, step }: { n: number; step: StepState }) {
 }
 
 export function UsRepriceDialog({ row, onClose }: { row: AccountedUsTrade; onClose: () => void }) {
+    // 回報建立的列可能稍後才補上交易所：跟著 store 重算改價檢查
+    useSyncExternalStore(subscribeUsTradingState, getUsTradingState);
     const [price, setPrice] = useState(() => {
         const shown = fmtUsPrice(row.order.price);
         return shown === '—' ? '' : shown;

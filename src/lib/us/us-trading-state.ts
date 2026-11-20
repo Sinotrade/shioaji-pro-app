@@ -207,9 +207,12 @@ function keepMonotonic(merged: AccountedUsTrade[], account: Account): AccountedU
         if (!dealAhead && !cancelAhead) return t;
         const deals = dealAhead ? dealCur : dealSnap;
         const cancelled = cancelAhead ? cancelCur : cancelSnap;
+        // 成交量取目前狀態時，成交明細與均價也一起取目前狀態（三者要對得上）
+        const avg = dealAhead ? usAveragePrice(cur.status.deals) ?? cur.status.avg_price : t.status.avg_price;
         return { ...t, status: { ...t.status,
             deal_quantity: deals, cancel_quantity: cancelled,
             deals: dealAhead ? cur.status.deals : t.status.deals,
+            ...(avg !== undefined && avg !== null ? { avg_price: avg } : {}),
             status: statusOf(t, t.order.quantity, deals, cancelled) } };
     });
 }
@@ -249,6 +252,7 @@ export function refreshUsAccount(account: Account): Promise<void> {
         // 期間的回報有套不上的：快照可能比回報舊 → 數量取較大值不倒退，再查一次確認
         if (unapplied) merged = keepMonotonic(merged, account);
         publish({ trades: merged, updatedAt: Date.now(), error: null });
+        void fillMissingExchanges();
         if (unapplied) scheduleAccountRefetch(account);
         // 最後一個待對帳帳戶由單一帳戶重查完成（例如全部重查曾失敗）：重算提示；
         // 全部重查進行中則由它收尾
@@ -464,6 +468,30 @@ function newRowFromReport(rows: AccountedUsTrade[], report: OrderEventReport, ac
     return [...rows, row];
 }
 
+/**
+ * 回報建立的委託列在美股合約清單還沒載入時沒有交易所（exchange null）。
+ * 改價第二步重下需要交易所：查到後補上（改價在補上前會被擋，不會先刪單）。
+ */
+const exchangeLookups = new Set<string>();
+export function fillMissingExchanges(): Promise<void> {
+    const codes = [...new Set(state.trades.filter(t => !t.contract.exchange).map(t => t.contract.code.trim().toUpperCase()))]
+        .filter(code => code && !exchangeLookups.has(code));
+    return Promise.all(codes.map(code => {
+        exchangeLookups.add(code);
+        const base = getApiBase();
+        return resolveUsContract(code).then(contract => {
+            if (base !== getApiBase() || !contract.exchange) return;
+            let changed = false;
+            const trades = state.trades.map(t => {
+                if (t.contract.exchange || t.contract.code.trim().toUpperCase() !== code) return t;
+                changed = true;
+                return { ...t, contract: { ...t.contract, exchange: contract.exchange } };
+            });
+            if (changed) publish({ trades });
+        }).catch(() => undefined).finally(() => { exchangeLookups.delete(code); });
+    })).then(() => undefined);
+}
+
 /** 以 current 為準，只用 base 補 current 缺（undefined／null）的欄位 */
 function fillMissing<T extends object>(base: T, current: T): T {
     const out = { ...base } as Record<string, unknown>;
@@ -489,7 +517,7 @@ function onUsReport(report: OrderEventReport) {
     if (!account) return; // 不是本 App 可交易的 H 帳戶
     duringQuery.get(keyOf(account))?.push(report);
     const projected = projectUsReport(state.trades, report, account);
-    if (projected) publish({ trades: projected });
+    if (projected) { publish({ trades: projected }); void fillMissingExchanges(); }
     else scheduleAccountRefetch(account);
     // 成交會改變庫存（美股委託回報只有新單／刪單／減量，不改成交量）
     if (report.kind === 'deal') scheduleDealPositionsRefresh();
@@ -701,6 +729,20 @@ function releasePositionQuotes() {
     lastUsTicks.clear();
 }
 
+/**
+ * H 帳戶清單變了（移除、換帳戶）：不再可交易的帳戶的委託與庫存立刻移除，
+ * 持倉行情訂閱跟著對帳；新帳戶由重查補上。
+ */
+export function dropRemovedAccounts() {
+    const keys = new Set(usAccounts().map(keyOf));
+    const trades = state.trades.filter(t => keys.has(keyOf(t.account)));
+    const positions = state.positions.filter(p => keys.has(keyOf(p.account)));
+    if (trades.length !== state.trades.length || positions.length !== state.positions.length) {
+        publish({ trades, positions, positionsVersion: state.positionsVersion + (positions.length !== state.positions.length ? 1 : 0) });
+    }
+    syncPositionQuotes();
+}
+
 // ---- 啟動與重連 ----
 
 let started = false;
@@ -743,7 +785,9 @@ export function startUsTradingState() {
         const next = usAccounts().map(keyOf).join('|');
         if (next === knownKeys) return;
         knownKeys = next;
+        dropRemovedAccounts();
         if (wasLive) void refreshUsTrades().catch(() => undefined);
+        void refreshUsPositions().catch(() => undefined);
     });
     // 伺服器或模式變了（冷啟動第一次得知模式、模擬↔正式）：舊查詢作廢，穩定後重查
     let knownMode = getServerModeVersion();

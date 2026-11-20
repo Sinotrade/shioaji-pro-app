@@ -194,8 +194,10 @@ export async function placeReplacement(row: AccountedUsTrade, order: UsOrderReq,
     };
     gate();
     const account = currentAccount(row);
+    const exchange = usRowExchange(row);
+    if (!exchange) throw Object.assign(new Error(US_EXCHANGE_PENDING), { mutationNotStarted: true as const });
     try {
-        const trade = await placeUsOrder({ code: row.contract.code, exchange: row.contract.exchange }, order, account, { beforeDispatch: gate });
+        const trade = await placeUsOrder({ code: row.contract.code, exchange }, order, account, { beforeDispatch: gate });
         observeUsTrade(trade, account);
         return trade;
     } catch (error) {
@@ -203,9 +205,18 @@ export async function placeReplacement(row: AccountedUsTrade, order: UsOrderReq,
     }
 }
 
+export const US_EXCHANGE_PENDING = '還在確認這檔美股的交易所，請稍後再改價';
+
+/** 委託列的交易所：列本身沒有時看 store 裡同一筆（回報建立後才補上的） */
+export function usRowExchange(row: AccountedUsTrade): string | null {
+    return row.contract.exchange || findRow(row)?.contract.exchange || null;
+}
+
 /** 改價前的檢查：限價單才可改、價格不同 */
 export function priceChangeProblem(row: AccountedUsTrade, newPrice: string): string | null {
     if (!decIsPositive(usRemaining(row))) return '這筆委託已沒有剩餘股數';
+    // 重下需要交易所：查不到就不讓第一步刪單（避免刪了卻無法重下）
+    if (!usRowExchange(row)) return US_EXCHANGE_PENDING;
     if (row.order.price_type && row.order.price_type !== 'LMT') return '只有限價單可以改價';
     const problem = usOrderProblem({ action: row.order.action, quantity: '1', priceType: 'LMT', timeInForce: 'DAY', price: newPrice });
     if (problem) return problem;

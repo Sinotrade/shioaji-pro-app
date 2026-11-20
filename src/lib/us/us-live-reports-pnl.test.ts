@@ -8,11 +8,13 @@ const m = vi.hoisted(() => ({
     onEvent: null as null | ((r: unknown) => void),
     onTick: null as null | ((t: { code: string; close: string; simtrade?: boolean }) => void),
     retained: [] as string[], released: [] as string[],
+    accountsListener: null as null | (() => void), place: vi.fn(),
 }));
 vi.mock('../account-store', () => ({
     getAccountState: () => ({ accounts: m.accounts }),
-    subscribeAccounts: () => () => undefined,
+    subscribeAccounts: (fn: () => void) => { m.accountsListener = fn; return () => undefined; },
 }));
+vi.mock('../risk', () => ({ checkUsOrderAllowed: () => null }));
 vi.mock('../account-tradable', () => ({ canTrade: () => true }));
 vi.mock('../stream', () => ({
     ensureStream: vi.fn(), getStreamStatus: () => 'down',
@@ -20,7 +22,8 @@ vi.mock('../stream', () => ({
     onAnyTick: (fn: typeof m.onTick) => { m.onTick = fn; return () => undefined; },
     subscribeStatusStore: () => () => undefined,
 }));
-vi.mock('./us-api', () => ({ fetchUsTrades: m.trades, fetchUsTradeCacheHealth: m.health, fetchUsPositions: m.positions }));
+vi.mock('./us-api', () => ({ fetchUsTrades: m.trades, fetchUsTradeCacheHealth: m.health, fetchUsPositions: m.positions,
+    placeUsOrder: m.place, cancelUsOrder: vi.fn(), reduceUsOrderQty: vi.fn(), usErrorText: (e: unknown) => String(e) }));
 vi.mock('../api', () => ({ apiGet: m.apiGet }));
 vi.mock('../quote-ownership', () => ({
     retainQuote: (c: { code: string }) => { m.retained.push(c.code); return () => { m.released.push(c.code); }; },
@@ -34,6 +37,7 @@ import fx from './__fixtures__/intl-order-events.json';
 import { normalizeOrderEvent } from '../order-report';
 import * as us from './us-trading-state';
 import { decDivRound } from './decimal';
+import { placeReplacement, priceChangeProblem, US_EXCHANGE_PENDING } from './us-order-actions';
 import type { Account } from '../types/portfolio';
 import type { IntlPosition, UsTrade } from '../types/us';
 
@@ -58,6 +62,7 @@ const trades = () => us.getUsTradingState().trades;
 
 beforeEach(() => {
     m.accounts = [H];
+    m.place.mockReset();
     m.trades.mockReset(); m.health.mockReset(); m.positions.mockReset(); m.apiGet.mockReset();
     vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
     vi.setSystemTime(Date.UTC(2026, 10, 18, 15, 0));
@@ -251,5 +256,68 @@ describe('US positions: unrealized P&L from live trades', () => {
         expect(m.retained).toEqual(['AAPL']);
         await us.refreshUsPositions();
         expect(m.released).toEqual(['AAPL']);
+    });
+});
+
+describe('review fixes (PR #432)', () => {
+    it('a report-built row without a known exchange cannot start a reprice until the exchange is resolved', async () => {
+        // 合約清單沒有 ZZZZ：回報建立的列 exchange 是 null
+        m.onEvent!(order(1, {}, {}, {}));
+        const raw = { ...fx.orderNew.data.IntlOrder, event_id: 'v1:IO:T:1:50', order: { ...fx.orderNew.data.IntlOrder.order, id: 'z1' },
+            status: { ...fx.orderNew.data.IntlOrder.status, id: 'z1' }, contract: { ...fx.orderNew.data.IntlOrder.contract, code: 'ZZZZ' } };
+        const report = normalizeOrderEvent({ state: 'IntlOrder', data: { IntlOrder: raw } })!;
+        const built = us.projectUsReport([], report, H)!;
+        expect(built[0]!.contract.exchange).toBeNull();
+        expect(priceChangeProblem(built[0]!, '170')).toBe(US_EXCHANGE_PENDING);
+        // 重下前沒有交易所：不送單
+        await expect(placeReplacement(built[0]!, { action: 'Buy', price: '170', quantity: 1, price_type: 'LMT', time_in_force: 'DAY' }, (() => true) as never))
+            .rejects.toThrow(US_EXCHANGE_PENDING);
+        expect(m.place).not.toHaveBeenCalled();
+        // 經 store 收到同一筆回報：查到交易所後補上，改價檢查放行
+        m.onEvent!(report);
+        await flush();
+        const row = trades().find(t => t.order.id === 'z1')!;
+        expect(row.contract.exchange).toBe('NASDAQ');
+        expect(priceChangeProblem(built[0]!, '170')).toBeNull();
+    });
+
+    it('a stale snapshot adopted under keepMonotonic keeps the average price of the deals it keeps', async () => {
+        const base = { account: H, contract: { security_type: 'STK', exchange: 'NASDAQ', code: 'NVDA', region: 'US' },
+            order: { id: '4cb2f7e1', seqno: '21157799', ordno: '00000022', action: 'Buy' as const, price: '180', quantity: '10', trade_date: '20261118' } };
+        us.resetUsTradingStateForTest({ trades: [{ ...base, status: { id: '4cb2f7e1', status: 'PartFilled', status_code: '00', order_quantity: '10',
+            deal_quantity: '3', cancel_quantity: '0', msg: '', avg_price: '173', deals: [{ seq: 's1', ts: 1, price: '173', quantity: '3' }] } }] });
+        let resolve!: (rows: unknown[]) => void;
+        m.trades.mockReturnValueOnce(new Promise(r => { resolve = r; }));
+        const run = us.refreshUsAccount(H);
+        m.onEvent!(deal(1, 's2', '180', '2'));
+        expect(trades()[0]!.status).toMatchObject({ deal_quantity: '5', avg_price: '175.8' });
+        // 較舊的快照：update_status 的彙總成交（seq "1"、ts 0）3 股 @173
+        resolve([{ contract: base.contract, order: base.order, status: { id: '4cb2f7e1', status: 'PartFilled', status_code: '00', order_quantity: '10',
+            deal_quantity: '3', cancel_quantity: '0', msg: '', avg_price: '173', deals: [{ seq: '1', ts: 0, price: '173', quantity: '3' }] } }]);
+        await run;
+        expect(trades()[0]!.status).toMatchObject({ deal_quantity: '5', avg_price: '175.8' });
+        expect(trades()[0]!.status.deals).toHaveLength(2);
+    });
+
+    it('an H account change drops the old account\'s positions and orders and releases their quotes', async () => {
+        m.apiGet.mockResolvedValue({ components: { schemas: { IntlPosition: {} } } });
+        m.positions.mockResolvedValue([{ id: 0, account_type: 'H', code: 'AAPL', direction: 'Buy', quantity: '1', price: '352.83', cost_basis: '352.83',
+            market_price: '352.45', market_value: '352.45', pnl: '-0.38', pnl_pct: '-0.11', currency: 'USD', base_currency: 'USD' }]);
+        await us.refreshUsPositions();
+        m.onEvent!(order(1, {}));
+        await flush();
+        expect(m.retained).toEqual(['AAPL']);
+        expect(trades()).toHaveLength(1);
+        // H 帳戶被移除（或換成另一個 H）：舊帳戶的庫存、委託、行情訂閱立即清掉
+        const H2: Account = { ...H, account_id: '0000002' };
+        m.accounts = [H2];
+        m.positions.mockReturnValue(new Promise(() => undefined)); // 新帳戶的庫存還在查
+        m.accountsListener!();
+        expect(us.getUsTradingState().positions).toEqual([]);
+        expect(trades()).toEqual([]);
+        expect(m.released).toEqual(['AAPL']);
+        // 新帳戶的庫存會重查
+        await flush();
+        expect(m.positions).toHaveBeenCalledWith(H2);
     });
 });
