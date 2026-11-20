@@ -10,7 +10,9 @@ const m = vi.hoisted(() => ({
     retained: [] as string[], released: [] as string[],
     accountsListener: null as null | (() => void), place: vi.fn(),
     base: 'http://a', resolve: null as null | ((code: string) => Promise<unknown>),
+    snapshot: vi.fn(),
 }));
+vi.mock('./us-history', () => ({ fetchUsSnapshotShared: m.snapshot }));
 vi.mock('../runtime', async original => ({ ...await original<object>(), getApiBase: () => m.base }));
 vi.mock('../account-store', () => ({
     getAccountState: () => ({ accounts: m.accounts }),
@@ -40,6 +42,8 @@ import { normalizeOrderEvent } from '../order-report';
 import * as us from './us-trading-state';
 import { decDivRound } from './decimal';
 import { placeReplacement, priceChangeProblem, US_EXCHANGE_PENDING } from './us-order-actions';
+import { __reloadUsPnlPrefsForTest, getUsPnlSession, setUsPnlSession, US_PNL_SESSION_KEY } from './us-pnl-prefs';
+import { recordUsTick, resetUsQuotesForTest } from './us-quotes';
 import type { Account } from '../types/portfolio';
 import type { IntlPosition, UsTrade } from '../types/us';
 
@@ -66,6 +70,9 @@ beforeEach(() => {
     m.accounts = [H];
     m.place.mockReset();
     m.base = 'http://a'; m.resolve = null;
+    m.snapshot.mockReset(); m.snapshot.mockResolvedValue(null);
+    setUsPnlSession('all');
+    resetUsQuotesForTest();
     m.trades.mockReset(); m.health.mockReset(); m.positions.mockReset(); m.apiGet.mockReset();
     vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
     vi.setSystemTime(Date.UTC(2026, 10, 18, 15, 0));
@@ -358,5 +365,72 @@ describe('review fixes round 2 (PR #432)', () => {
         m.trades.mockResolvedValueOnce([response]);
         await us.refreshUsAccount(H);
         expect(trades().some(t => t.account.account_id === H.account_id)).toBe(false);
+    });
+});
+
+describe('US P&L price session setting (含盤前盤後／只用一般盤)', () => {
+    const pos = (): IntlPosition => ({ id: 0, account_type: 'H', code: 'AAPL', direction: 'Buy', quantity: '10.5', price: '180.1234',
+        cost_basis: '1891.2957', market_price: '190.5', market_value: '2000.25', pnl: '108.9543', pnl_pct: '5.76', currency: 'USD', base_currency: 'USD' });
+    /** stream 先 recordUsTick（帶 session）再送 onAnyTick */
+    const tick = (price: string, session: 'PreMarket' | 'Regular' | 'AfterHours') => {
+        recordUsTick({ key: 'US:AAPL', price, session, freshness: 'Realtime', ts: Date.now(), volume: 1 });
+        m.onTick!({ code: 'US:AAPL', close: price });
+    };
+    const aapl = () => us.getUsTradingState().positions[0]!;
+    const load = async () => {
+        m.apiGet.mockResolvedValue({ components: { schemas: { IntlPosition: {} } } });
+        m.positions.mockResolvedValue([pos()]);
+        await us.refreshUsPositions();
+        await flush();
+    };
+
+    it('defaults to including pre-market and after-hours trades, and persists the choice', () => {
+        const store = new Map<string, string>();
+        vi.stubGlobal('localStorage', { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => { store.set(k, v); },
+            removeItem: (k: string) => { store.delete(k); } });
+        localStorage.removeItem(US_PNL_SESSION_KEY);
+        __reloadUsPnlPrefsForTest();
+        expect(getUsPnlSession()).toBe('all');
+        setUsPnlSession('regular');
+        expect(localStorage.getItem(US_PNL_SESSION_KEY)).toBe('regular');
+        setUsPnlSession('all');
+        localStorage.setItem(US_PNL_SESSION_KEY, 'regular');
+        __reloadUsPnlPrefsForTest();
+        expect(getUsPnlSession()).toBe('regular');
+        vi.unstubAllGlobals();
+    });
+
+    it('all sessions (default): an after-hours trade re-marks the holding', async () => {
+        await load();
+        tick('200', 'AfterHours');
+        expect(aapl()).toMatchObject({ market_price: '200', pnl: '208.7043' });
+    });
+
+    it('regular only: extended-session trades are ignored; regular trades mark; switching back uses the latest trade', async () => {
+        setUsPnlSession('regular');
+        await load();
+        tick('195', 'Regular');
+        expect(aapl().market_price).toBe('195');
+        tick('200', 'AfterHours');
+        expect(aapl().market_price).toBe('195');
+        // 切回含盤前盤後：用最新一筆（盤後 200）
+        setUsPnlSession('all');
+        expect(aapl()).toMatchObject({ market_price: '200', pnl: '208.7043' });
+        // 再切回只用一般盤：回到今天最後一筆一般盤 195
+        setUsPnlSession('regular');
+        expect(aapl()).toMatchObject({ market_price: '195', pnl: '156.2043' });
+    });
+
+    it('regular only with no regular trade today: marks with the snapshot regular close, not the extended last price', async () => {
+        m.snapshot.mockResolvedValue({ code: 'AAPL', close: 191.25, lastPrice: 196.5, session: 'PreMarket', tradeDate: '2026-11-18' });
+        await load();
+        tick('196.5', 'PreMarket');
+        expect(aapl().market_price).toBe('196.5');
+        setUsPnlSession('regular');
+        await flush();
+        expect(m.snapshot).toHaveBeenCalledWith({ code: 'AAPL', exchange: 'NASDAQ' });
+        expect(aapl()).toMatchObject({ market_price: '191.25', market_value: '2008.125', pnl: '116.8293' });
+        tick('197', 'PreMarket');
+        expect(aapl().market_price).toBe('191.25');
     });
 });

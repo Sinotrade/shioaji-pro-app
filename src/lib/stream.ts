@@ -187,8 +187,9 @@ function handleUsTick(raw: string) {
     let parsed: ReturnType<typeof normalizeUsTick>;
     try { parsed = normalizeUsTick(JSON.parse(raw) as RawUsTick); } catch { return; }
     if (!parsed) return;
-    ingestTick(parsed.tick);
+    // 先記 meta（session 等）再送 tick：onAnyTick 監聽者（美股庫存計價時段）讀得到這筆的 session
     recordUsTick(parsed.meta);
+    ingestTick(parsed.tick);
 }
 
 function handleUsBidAsk(raw: string) {

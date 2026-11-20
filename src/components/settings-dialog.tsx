@@ -48,6 +48,7 @@ import {
     useRiskSettings,
 } from '../lib/risk';
 import { isTauri } from '../lib/runtime';
+import { setUsPnlSession, useUsPnlSession, type UsPnlSession } from '../lib/us/us-pnl-prefs';
 import { setSoundEnabled, soundEnabled } from '../lib/sounds';
 import {
     setThemeSettings,
@@ -109,6 +110,11 @@ type SettingsTab =
     | 'risk'
     | 'agent'
     | 'layout';
+
+const US_PNL_SESSION_OPTIONS: { key: UsPnlSession; label: string; title: string }[] = [
+    { key: 'all', label: '含盤前盤後', title: '盤前／盤中／盤後的成交都更新美股庫存損益（預設）' },
+    { key: 'regular', label: '只用一般盤', title: '只用一般盤（09:30–16:00 美東）成交計價；延長時段不更新' },
+];
 
 const TABS: { key: SettingsTab; label: string; icon: React.ReactNode }[] = [
     { key: 'appearance', label: '外觀', icon: <Palette size={13} /> },
@@ -441,6 +447,7 @@ export function AccountsSection() {
 function RiskSection() {
     const risk = useRiskSettings();
     const hoverPricePick = useChartHoverPricePick();
+    const usPnlSession = useUsPnlSession();
     const dailyPnl = getDailyPnl();
     // 金額遮蔽也要蓋住這裡的損益估算 — 隱私開關不該在設定 dialog 裡漏底
     const privMoney = usePrivacyMoney();
@@ -551,6 +558,28 @@ function RiskSection() {
             </div>
             <span className={hud.emptyHint}>
                 {'預設關閉，避免游標掃過圖表時改寫已填好的委託價；關閉時仍可點擊 K 線圖或五檔帶價。'}
+            </span>
+            <span className={hud.settingLabel} id='us-pnl-session-label'>美股損益計價 US P&amp;L Price</span>
+            <div
+                className={hud.settingGroup}
+                role='group'
+                aria-labelledby='us-pnl-session-label'
+            >
+                {US_PNL_SESSION_OPTIONS.map((o) => (
+                    <button
+                        key={o.key}
+                        className={hud.opt[usPnlSession === o.key ? 'on' : 'off']}
+                        title={o.title}
+                        aria-pressed={usPnlSession === o.key}
+                        onClick={() => setUsPnlSession(o.key)}
+                    >
+                        {o.label}
+                    </button>
+                ))}
+            </div>
+            <span className={hud.emptyHint}>
+                美股庫存的現價與未實現損益隨即時成交更新。預設含盤前／盤後成交；選「只用一般盤」時忽略延長時段，
+                以今天最後一筆一般盤成交計價，今天還沒有一般盤成交時用前一個一般盤收盤。
             </span>
             <span className={hud.settingLabel}>快捷鍵 Hotkeys</span>
             <div className={hud.switchRow}>
