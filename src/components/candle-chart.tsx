@@ -167,7 +167,7 @@ import { contractMarket, isWarrantContract } from '../lib/contract-market';
 import { WARRANT_FLASH_TEXT, warrantMarketOrderBlock } from '../lib/warrant-rules';
 import { orderStatusWithNumber } from '../lib/order-status-label';
 import { contractLinkKey } from '../lib/contract-key';
-import { getUsTickMeta, subscribeUsSessionTicks } from '../lib/us/us-quotes';
+import { getUsExtendedBars, getUsTickMeta, isUsRegularLabel, subscribeUsSessionTicks } from '../lib/us/us-quotes';
 import { createPriceFormatSync } from '../lib/chart-price-format';
 import { emptyPending, mergePendingTrades, mergeTradeIntoBars, pushPending } from '../lib/chart-live-bars';
 import { candleBarTime, candleMinuteLabel, twChartTrade, usChartTrade, type ChartTrade } from '../lib/chart-trade';
@@ -213,6 +213,15 @@ const TRADE_MODES: { key: TradeMode; label: string }[] = [
 
 // keep paging until this floor — one page per fetch, spans widen with tf
 const MAX_HISTORY_DAYS = 1095; // ~3 years
+
+// 依時間合併兩組 K 棒（同一時間以 b 為準）
+function mergeCandlesByTime(a: Candle[], b: Candle[]): Candle[] {
+    if (b.length === 0) return a;
+    const m = new Map<number, Candle>();
+    for (const x of a) m.set(x.time, x);
+    for (const x of b) m.set(x.time, x);
+    return [...m.values()].sort((x, y) => x.time - y.time);
+}
 
 export type { ChartSessionMode };
 
@@ -282,14 +291,19 @@ export function CandleChart({
     // 僅日盤：aggregate 前濾掉夜盤 1 分 K、live 夜盤 tick 不入圖，指標
     // 也就只吃日盤 K 棒。只開給日盤 08:45–13:45 的期/選，其他商品一律全盤
     // 存檔值只認 all|day，其餘退回全盤
+    // 美股用同一個值：day＝只看一般盤 09:30–16:00（預設），all＝含盤前盤後
     const propMode = parseChartSessionMode(sessionModeProp);
     const [localSessionMode, setLocalSessionMode] =
-        useState<ChartSessionMode>(propMode ?? 'all');
+        useState<ChartSessionMode | undefined>(propMode);
+    const usContract = contract.region === 'US';
+    const sessionPick =
+        (onSessionModeChange ? propMode : localSessionMode) ?? (usContract ? 'day' : 'all');
     const canDayOnly = supportsSessionSplit(contract as SessionContractLike);
-    const dayOnly =
-        canDayOnly &&
-        (onSessionModeChange ? (propMode ?? 'all') : localSessionMode) ===
-            'day';
+    const dayOnly = canDayOnly && sessionPick === 'day';
+    // 美股含盤前盤後：盤前盤後沒有歷史，只畫 App 開著時收到的成交
+    const usExtended = usContract && sessionPick === 'all';
+    // 載入／即時判斷用的時段鍵（全盤、僅日盤、美股含盤前盤後）
+    const sessionKey = dayOnly ? 'day' : usExtended ? 'ext' : 'all';
     const pickSessionMode = (m: ChartSessionMode) => {
         setLocalSessionMode(m);
         onSessionModeChange?.(m);
@@ -331,7 +345,7 @@ export function CandleChart({
     // 轉接美股 kbars、即時成交逐筆併入（見下方美股 effect）；圖上下單、委託線、
     // 觸價警示是台股功能，美股不顯示
     const isUs = contract.region === 'US';
-    const kind = sessionKindOf(contract);
+    const kind = usExtended ? 'US_EXT' : sessionKindOf(contract);
     const quoteKey = contractLinkKey(contract);
     const quote = useQuote(quoteKey);
     const tf = (isUs ? US_TIMEFRAMES : TIMEFRAMES)[tfIdx] ?? TIMEFRAMES[DEFAULT_TF_IDX]!;
@@ -950,7 +964,7 @@ export function CandleChart({
     // pulled on demand by the visible-range subscription (loadMoreRef)
     useEffect(() => {
         let cancelled = false;
-        const loadKey = `${contractLinkKey(contract)}|${tf.minutes}|${dayOnly}`;
+        const loadKey = `${contractLinkKey(contract)}|${tf.minutes}|${sessionKey}`;
         loadedKeyRef.current = ''; // freeze tick updates while loading — 期間的成交先暫存
         pendingTradesRef.current = emptyPending(loadKey);
         const toRaw = (k: Parameters<typeof kbarsToCandles>[0]) => {
@@ -1096,7 +1110,9 @@ export function CandleChart({
         })
             .then((k) => {
                 if (cancelled || !candleSeriesRef.current) return;
-                const raw = toRaw(k);
+                // 美股含盤前盤後：一般盤歷史接上記憶體裡的盤前盤後 1 分 K
+                //（兩者的分鐘標籤不重疊：一般盤 09:31–16:00）
+                const raw = usExtended ? mergeCandlesByTime(toRaw(k), getUsExtendedBars(quoteKey)) : toRaw(k);
                 const bars = aggregate(raw, tf.minutes);
                 if (bars.length === 0) {
                     clearSeries();
@@ -1137,7 +1153,7 @@ export function CandleChart({
         return () => {
             cancelled = true;
         };
-    }, [contract, tf, historySeq, dayOnly]);
+    }, [contract, tf, historySeq, dayOnly, usExtended]);
 
     // Live trade/index quote -> update the current bar. Index products use
     // quote_idx rather than the regular tick stream in Shioaji 1.7.
@@ -1152,7 +1168,7 @@ export function CandleChart({
     applyTradeRef.current = (trade) => {
         const { time: tickTime, price, volume } = trade;
         if (!Number.isFinite(price) || !Number.isFinite(tickTime)) return;
-        const liveKey = `${quoteKey}|${tf.minutes}|${dayOnly}`;
+        const liveKey = `${quoteKey}|${tf.minutes}|${sessionKey}`;
         // history for this (symbol, timeframe) not in place yet — 暫存，
         // 載入完成後補（見 takePending）；滿了會標 overflow 並重抓歷史
         if (loadedKeyRef.current !== liveKey) {
@@ -1174,8 +1190,12 @@ export function CandleChart({
         // live 桶與歷史尾端出現 3 個桶以上的斷層（換時段/上游資料晚發布）
         // → 排程一次歷史補抓把洞補起來；live 桶照常先畫，補抓完成後
         // 整段重建。120s 節流避免上游持續缺料時反覆打
+        // 美股含盤前盤後：盤前盤後本來就沒有歷史、成交稀疏，隔很久才一筆是常態，不補抓
+        const usExtendedOnly =
+            kind === 'US_EXT' && !isUsRegularLabel(label);
         if (
             tail &&
+            !usExtendedOnly &&
             bucket - tail.time > bucketSec * 3 &&
             Date.now() - gapReloadAtRef.current > 120_000
         ) {
@@ -1230,10 +1250,10 @@ export function CandleChart({
         if (!isUs) return;
         return subscribeUsSessionTicks(quoteKey, () => {
             const meta = getUsTickMeta(quoteKey);
-            const trade = meta ? usChartTrade(meta) : null;
+            const trade = meta ? usChartTrade(meta, usExtended) : null;
             if (trade) applyTradeRef.current(trade);
         });
-    }, [isUs, quoteKey]);
+    }, [isUs, quoteKey, usExtended]);
 
     // 自訂指標增刪改 → 重算指標 effect；被刪掉的型別把殘留實例一併清掉
     const [customVer, setCustomVer] = useState(0);
@@ -1741,7 +1761,7 @@ export function CandleChart({
     const drawingArmedRef = useRef(false);
     const drawingsRef = useRef<ChartDrawingsApi | null>(null);
     const cancelOrderDragRef = useRef<() => boolean>(() => false);
-    const orderDragContext = `${contract.security_type}:${contract.code}:${tf.minutes}:${dayOnly}:${historySeq}`;
+    const orderDragContext = `${contract.security_type}:${contract.code}:${tf.minutes}:${sessionKey}:${historySeq}`;
     const orderDragContextRef = useRef(orderDragContext);
     orderDragContextRef.current = orderDragContext;
     // 舊委託線被重建前也要還原／解除拖曳；render 後、effect 前的事件由 context 核對阻擋。
@@ -1959,7 +1979,7 @@ export function CandleChart({
     }, [dataVersion]);
     const drawings = useChartDrawings({
         contract,
-        contextKey: `${tf.minutes}:${dayOnly}:${historySeq}`,
+        contextKey: `${tf.minutes}:${sessionKey}:${historySeq}`,
         hostRef,
         chartRef,
         seriesRef: candleSeriesRef,
@@ -2295,6 +2315,22 @@ export function CandleChart({
                         日盤
                     </button>
                 )}
+                {isUs && (
+                    // 美股沿用同一顆時段鈕（亮＝只看一般盤，預設）
+                    <button
+                        className={styles.tfBtn[usExtended ? 'normal' : 'active']}
+                        title={
+                            usExtended
+                                ? '美東時間・含盤前盤後 04:00–20:00：盤前盤後沒有歷史資料，只畫 App 開著時收到的成交 — 點擊改回只看一般盤'
+                                : '美東時間・只看一般盤 09:30–16:00 — 點擊改為含盤前盤後（盤前盤後只有 App 開著時收到的成交）'
+                        }
+                        aria-pressed={!usExtended}
+                        data-testid='us-session-toggle'
+                        onClick={() => pickSessionMode(usExtended ? 'day' : 'all')}
+                    >
+                        一般盤
+                    </button>
+                )}
                 <button
                     className={styles.iconBtn}
                     onClick={resetView}
@@ -2321,15 +2357,6 @@ export function CandleChart({
                 >
                     <ArrowUpDown size={12} />
                 </button>
-                {isUs && (
-                    <span
-                        className={styles.tfBtn.normal}
-                        style={{ cursor: 'default' }}
-                        title='美股時間軸為美東時間；K 線只含一般盤 09:30–16:00（盤前／盤後成交不入圖）'
-                    >
-                        美東・一般盤
-                    </span>
-                )}
                 {!isUs && (<>
                 <span className={styles.toolbarDivider} />
                 <button

@@ -32,6 +32,7 @@ import {
     contractReferenceApplies,
     getUsTickMeta,
     knownUsReference,
+    getUsExtendedBars,
     nyDateTime,
     subscribeUsSessionTicks,
 } from '../lib/us/us-quotes';
@@ -47,6 +48,7 @@ import {
     parseIntradaySessionMode,
     pastSessionReference,
     pickIntradayWindow,
+    isUsSessionKind,
     sessionKindOf,
     sessionMinutes,
     sessionNow,
@@ -58,7 +60,7 @@ import {
 } from '../lib/intraday-session';
 import { getChartColors, useThemeSettings, themeKey as themeKeyOf, baseMode } from '../lib/theme-store';
 import type { ContractInfo } from '../lib/types/contract';
-import type { KBars, SseTick } from '../lib/types/market';
+import type { Candle, KBars, SseTick } from '../lib/types/market';
 import { fmtPrice } from '../lib/utils/format';
 import {
     dateStrOffset,
@@ -96,6 +98,21 @@ function kbarsToMinBars(k: KBars): MinBar[] {
     }
     out.sort((a, b) => a.time - b.time);
     return out;
+}
+
+// 美股含盤前盤後：一般盤 1 分 K 接上盤前盤後的 1 分 K（成交金額同 us 歷史的近似）
+function withUsExtendedBars(bars: MinBar[], ext: Candle[]): MinBar[] {
+    if (ext.length === 0) return bars;
+    const m = new Map<number, MinBar>();
+    for (const b of bars) m.set(b.time, b);
+    for (const c of ext) {
+        if (m.has(c.time)) continue;
+        m.set(c.time, {
+            time: c.time, open: c.open, close: c.close, high: c.high, low: c.low,
+            vol: c.volume, amt: ((c.high + c.low + c.close) / 3) * c.volume,
+        });
+    }
+    return [...m.values()].sort((a, b) => a.time - b.time);
 }
 
 // legend/live readout — kept in a ref, re-rendered via rAF-throttled bump
@@ -251,6 +268,15 @@ const SESSION_MODES: { key: IntradaySessionMode; label: string; title: string }[
     { key: 'day', label: '日盤', title: '固定顯示最近一段日盤（盤後複盤）' },
     { key: 'night', label: '夜盤', title: '固定顯示最近一段夜盤' },
 ];
+// 美股沿用同一個時段選單：一般盤（預設）／含盤前盤後
+const US_SESSION_MODES: { key: IntradaySessionMode; label: string; title: string }[] = [
+    { key: 'auto', label: '一般盤', title: '美東時間・一般盤 09:30–16:00' },
+    {
+        key: 'all',
+        label: '含盤前盤後',
+        title: '美東時間・盤前 04:00 到盤後 20:00。盤前盤後沒有歷史資料，只畫 App 開著時收到的成交',
+    },
+];
 
 export function IntradayChart({
     contract,
@@ -320,12 +346,18 @@ export function IntradayChart({
     const propMode = parseIntradaySessionMode(sessionModeProp);
     const [localSessionMode, setLocalSessionMode] =
         useState<IntradaySessionMode>(propMode ?? 'auto');
-    const canPickSession = supportsSessionSplit(contract);
-    const sessionMode: IntradaySessionMode = canPickSession
+    // 美股也開放：一般盤（auto，預設）／含盤前盤後（all）
+    const usContract = contract.region === 'US';
+    const canPickSession = usContract || supportsSessionSplit(contract);
+    const pickedMode: IntradaySessionMode = canPickSession
         ? onSessionModeChange
             ? (propMode ?? 'auto')
             : localSessionMode
         : 'auto';
+    // 換商品後沿用的值只取這個商品認得的：美股只有 auto／all，台股沒有 all
+    const sessionMode: IntradaySessionMode = usContract
+        ? pickedMode === 'all' ? 'all' : 'auto'
+        : pickedMode === 'all' ? 'auto' : pickedMode;
     const sessionModeRef = useRef(sessionMode);
     sessionModeRef.current = sessionMode;
     const historyLoadRef = useRef({
@@ -446,8 +478,9 @@ export function IntradayChart({
 
     // 美股（region US）走同一張走勢圖：時段框架是紐約一般盤 09:30–16:00
     // （sessionKindOf → 'US'），行情 key 是 US:CODE，即時成交從逐筆通知進來
-    const sk = sessionKindOf(contract);
-    const isUs = sk === 'US';
+    // 美股含盤前盤後的時段框架是 04:00–20:00（'US_EXT'）
+    const sk = usContract && sessionMode === 'all' ? 'US_EXT' : sessionKindOf(contract);
+    const isUs = isUsSessionKind(sk);
     const quoteKey = contractLinkKey(contract);
     const quote = useQuote(quoteKey);
     // 美股參考價（漲跌基準）：快照的 reference 優先 — 抓一次快照，
@@ -729,7 +762,7 @@ export function IntradayChart({
     // 成交在這個時段框架的分鐘標籤：台股照 main 的 tickBucket；美股收盤
     // 競價（16:00:00–16:00:15）歸 16:00（見 chart-trade）
     const liveLabel = (win: SessionWindow, t: number) =>
-        sk === 'US' ? Math.min(usTradeMinuteLabel(t), win.end) : tickBucket(win, t);
+        isUs ? Math.min(usTradeMinuteLabel(t, sk === 'US_EXT'), win.end) : tickBucket(win, t);
     // 價格軸小數位依「目前價格」（最新成交／歷史最後一筆）決定；還沒有價格
     // 才用參考價。參考價（快照晚到、price_chg 回推）不能蓋掉成交價定的位數
     const syncPricePrecision = () => {
@@ -1026,6 +1059,8 @@ export function IntradayChart({
             .then(async (k) => {
                 if (cancelled || !priceSeriesRef.current) return;
                 let all = kbarsToMinBars(k);
+                // 美股含盤前盤後：一般盤歷史接上記憶體裡的盤前盤後 1 分 K（分鐘標籤不重疊）
+                if (sk === 'US_EXT') all = withUsExtendedBars(all, getUsExtendedBars(quoteKey));
                 const lastRecent = all[all.length - 1];
                 const needNight = sessionMode === 'night' ||
                     (sessionMode === 'auto' && lastRecent !== undefined &&
@@ -1355,7 +1390,7 @@ export function IntradayChart({
             if (missedVolume) return throttledReload();
         }
         // 開盤那一刻：美股 09:30:00 整的成交歸 09:31；台股照 main 不收
-        if (sk === 'US' ? t < win.start : t <= win.start) return false;
+        if (isUs ? t < win.start : t <= win.start) return false;
         const label = liveLabel(win, t);
         if (label < lastLabelRef.current) return false; // out-of-order tick
         if (simRef.current) simRef.current = null; // 開盤了 — 試搓讀值退場
@@ -1476,8 +1511,9 @@ export function IntradayChart({
             const total = meta.totalVolume ?? 0;
             const missed = prev.key === quoteKey && prev.total > 0 && total > 0 && total - prev.total > meta.volume;
             usPrevTotalRef.current = { key: quoteKey, total };
-            // 一般盤＋收盤競價才畫；盤後成交不能動到一般盤的收盤與量
-            const trade = usChartTrade(meta);
+            // 一般盤＋收盤競價才畫；盤後成交不能動到一般盤的收盤與量。
+            // 選了含盤前盤後才畫盤前、盤後
+            const trade = usChartTrade(meta, sk === 'US_EXT');
             if (!trade) return;
             const t = trade.time;
             const { date, time } = nyDateTime(meta.tsUs ?? meta.ts * 1000);
@@ -1488,7 +1524,7 @@ export function IntradayChart({
             } as SseTick;
             processLiveRef.current(tick, tick, undefined, { t, missed });
         });
-    }, [isUs, quoteKey]);
+    }, [isUs, quoteKey, sk]);
     // 快照晚到：當天的參考價補上（只在畫的就是快照那個交易日時）
     useEffect(() => {
         const win = sessionRef.current;
@@ -1542,7 +1578,9 @@ export function IntradayChart({
             : null;
     const chipLabel =
         sessionLabel ??
-        (sessionMode === 'day'
+        (usContract
+            ? sessionMode === 'all' ? '含盤前盤後' : '一般盤'
+            : sessionMode === 'day'
             ? '日盤'
             : sessionMode === 'night'
               ? '夜盤'
@@ -1591,7 +1629,11 @@ export function IntradayChart({
                                 ]
                             }
                             title={
-                                sessionMode === 'auto'
+                                usContract
+                                    ? sessionMode === 'all'
+                                        ? `時段：美東含盤前盤後 04:00–20:00（盤前盤後只畫 App 開著時收到的成交）— 點選切換`
+                                        : '時段：美東一般盤 09:30–16:00 — 點選可改為含盤前盤後'
+                                    : sessionMode === 'auto'
                                     ? '時段：自動（點選可固定日盤/夜盤）'
                                     : `時段：固定${sessionMode === 'day' ? '日盤' : '夜盤'}（點選切換）`
                             }
@@ -1618,7 +1660,7 @@ export function IntradayChart({
                                         >
                                             時段
                                         </span>
-                                        {SESSION_MODES.map((m) => (
+                                        {(usContract ? US_SESSION_MODES : SESSION_MODES).map((m) => (
                                             <button
                                                 key={m.key}
                                                 role='menuitemradio'

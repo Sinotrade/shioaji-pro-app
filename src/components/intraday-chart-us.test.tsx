@@ -232,4 +232,41 @@ describe('IntradayChart (US)', () => {
         pushUs('2026-11-19T14:30:00.000', '100.5');
         expect(lastUpdate()).toEqual({ time: T('2026-11-19T09:31:00'), value: 100.5 });
     });
+
+    describe('session: 一般盤／含盤前盤後', () => {
+        const filler = () => created.filter((c) => c.kind === 'Line').at(-1)!;
+        const vol = () => created.filter((c) => c.kind === 'Histogram').at(-1)!;
+        const chip = (r: ReactTestRenderer) => r.root.find((n) => n.type === 'button' && n.props['aria-haspopup'] === 'menu');
+
+        it('offers the same session menu with 一般盤 as the default', async () => {
+            fetchMock.mockResolvedValue(MORNING);
+            snap.value = { tradeDate: '2026-11-19', reference: 99 };
+            const r = mount({ contract: aapl });
+            await flush();
+            expect(chip(r).children.join('')).toBe('一般盤');
+            act(() => chip(r).props.onClick());
+            const items = r.root.findAll((n) => n.type === 'button' && n.props.role === 'menuitemradio').map((n) => n.children.join(''));
+            expect(items).toEqual(['一般盤', '含盤前盤後']);
+            expect(filler().last.at(0)).toMatchObject({ time: T('2026-11-19T09:31:00') });
+        });
+
+        it('extended: x-axis covers 04:00–20:00, extended bars and live after-hours trades are drawn with their volume', async () => {
+            vi.setSystemTime(new Date('2026-11-19T21:40:00Z')); // 紐約 16:40
+            pushUs('2026-11-19T13:00:30', '98', { session: 'PreMarket', volume: 50 }); // 08:01（App 開著時收到）
+            fetchMock.mockResolvedValue(kbars([['2026-11-19T09:30:00', '2026-11-19T16:00:00', () => 100]]));
+            snap.value = { tradeDate: '2026-11-19', reference: 99 };
+            const r = mount({ contract: aapl, sessionMode: 'all' });
+            await flush();
+            expect(chip(r).children.join('')).toBe('含盤前盤後');
+            const f = filler().last as any[];
+            expect(f[0].time).toBe(T('2026-11-19T04:01:00'));
+            expect(f.at(-1).time).toBe(T('2026-11-19T20:00:00'));
+            const p = price().last as any[];
+            expect(p[0]).toEqual({ time: T('2026-11-19T08:01:00'), value: 98 });
+            expect((vol().last as any[])[0]).toMatchObject({ time: T('2026-11-19T08:01:00'), value: 50 });
+            pushUs('2026-11-19T21:30:10', '101', { session: 'AfterHours', volume: 7 });
+            expect(lastUpdate()).toEqual({ time: T('2026-11-19T16:31:00'), value: 101 });
+            expect(vol().update.mock.calls.at(-1)![0]).toMatchObject({ time: T('2026-11-19T16:31:00'), value: 7 });
+        });
+    });
 });

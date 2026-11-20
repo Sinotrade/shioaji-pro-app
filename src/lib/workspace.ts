@@ -130,7 +130,7 @@ export interface Block {
     // 時段選擇（issue #73）— K 線全盤/僅日盤、當日走勢自動/日盤/夜盤，
     // 跟版面一起持久化；缺省 = 全盤 / 自動
     chartSession?: 'all' | 'day';
-    intradaySession?: 'auto' | 'day' | 'night';
+    intradaySession?: 'auto' | 'day' | 'night' | 'all';
     // K 線週期（#331）— 跟版面一起持久化；缺省 = 5m
     chartInterval?: ChartInterval;
     // K 線圖下單設定（#204，每市場一組）— 跟版面一起持久化
@@ -281,7 +281,7 @@ export function popoutSessionFromQuery(q: URLSearchParams): SessionConfigPatch {
     return {
         chartSession: v === 'all' || v === 'day' ? v : undefined,
         intradaySession:
-            v === 'auto' || v === 'day' || v === 'night' ? v : undefined,
+            v === 'auto' || v === 'day' || v === 'night' || v === 'all' ? v : undefined,
         chartInterval: isChartInterval(q.get('interval'))
             ? (q.get('interval') as ChartInterval)
             : undefined,

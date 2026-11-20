@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { getUsTickMeta, subscribeUsSessionTicks, normalizeUsBidAsk, normalizeUsTick, nyDateTime, recordUsTick, resetUsQuotesForTest, usSubscriptionBody, usTickChange, usChangeFrom, usReferenceFor, contractReferenceApplies, noteUsReference } from './us-quotes';
+import { getUsExtendedBars, isUsExtendedTrade, usMinuteLabel, getUsTickMeta, subscribeUsSessionTicks, normalizeUsBidAsk, normalizeUsTick, nyDateTime, recordUsTick, resetUsQuotesForTest, usSubscriptionBody, usTickChange, usChangeFrom, usReferenceFor, contractReferenceApplies, noteUsReference } from './us-quotes';
 
 // 2026-11-17 14:30:05 America/New_York（EST, UTC-5）
 const T = Date.UTC(2026, 10, 17, 19, 30, 5) * 1000;
@@ -64,5 +64,40 @@ describe('US quote adapter', () => {
     });
     it('formats New York local time', () => {
         expect(nyDateTime(T)).toEqual({ date: '2026-11-17', time: '14:30:05' });
+    });
+});
+
+describe('US extended-hours bars (live only)', () => {
+    const D = Date.UTC(2026, 10, 19) / 1000;
+    const hm = (h: number, m: number, s = 0) => D + h * 3600 + m * 60 + s;
+    const tick = (isoUtc: string, price: string, volume: number, session: 'PreMarket' | 'Regular' | 'AfterHours') => {
+        const ms = Date.parse(`${isoUtc}Z`);
+        recordUsTick({ key: 'US:AAPL', price, session, freshness: null, ts: ms, tsUs: ms * 1000, volume });
+    };
+    beforeEach(() => resetUsQuotesForTest());
+
+    it('labels: regular keeps 09:31/16:00 clamps, extended covers 04:01–20:00', () => {
+        expect(usMinuteLabel(hm(9, 30))).toBe(hm(9, 31));
+        expect(usMinuteLabel(hm(16, 2))).toBe(hm(16, 0)); // 一般盤：收盤寬限內歸 16:00
+        expect(usMinuteLabel(hm(16, 0, 1.4), true)).toBe(hm(16, 0)); // 收盤競價
+        expect(usMinuteLabel(hm(16, 0, 20), true)).toBe(hm(16, 1));
+        expect(usMinuteLabel(hm(4, 0), true)).toBe(hm(4, 1));
+        expect(usMinuteLabel(hm(9, 29, 59.5), true)).toBe(hm(9, 30));
+        expect(usMinuteLabel(hm(20, 1), true)).toBe(hm(20, 0));
+        expect(isUsExtendedTrade('AfterHours', hm(16, 0, 1))).toBe(false); // 收盤競價屬一般盤
+        expect(isUsExtendedTrade('AfterHours', hm(16, 30))).toBe(true);
+        expect(isUsExtendedTrade('PreMarket', hm(3, 59))).toBe(false);
+    });
+
+    it('keeps pre-market and after-hours trades as 1-minute bars, never regular trades or the closing cross', () => {
+        tick('2026-11-19T13:00:10', '100', 5, 'PreMarket'); // 08:00:10 → 08:01
+        tick('2026-11-19T13:00:40', '102', 3, 'PreMarket');
+        tick('2026-11-19T15:00:00', '110', 9, 'Regular');
+        tick('2026-11-19T21:00:01', '111', 1_000, 'AfterHours'); // 收盤競價
+        tick('2026-11-19T21:30:10', '105', 4, 'AfterHours'); // 16:31
+        expect(getUsExtendedBars('US:AAPL')).toEqual([
+            { time: hm(8, 1), open: 100, high: 102, low: 100, close: 102, volume: 8 },
+            { time: hm(16, 31), open: 105, high: 105, low: 105, close: 105, volume: 4 },
+        ]);
     });
 });

@@ -202,7 +202,7 @@ describe('popout session param', () => {
         const q = (v: string) => popoutSessionFromQuery(new URLSearchParams({ session: v }));
         expect(q('day')).toEqual({ chartSession: 'day', intradaySession: 'day' });
         expect(q('night')).toEqual({ chartSession: undefined, intradaySession: 'night' });
-        expect(q('all')).toEqual({ chartSession: 'all', intradaySession: undefined });
+        expect(q('all')).toEqual({ chartSession: 'all', intradaySession: 'all' }); // 美股含盤前盤後
         expect(q('foo')).toEqual({ chartSession: undefined, intradaySession: undefined });
         expect(popoutSessionFromQuery(new URLSearchParams())).toEqual({ chartSession: undefined, intradaySession: undefined });
     });

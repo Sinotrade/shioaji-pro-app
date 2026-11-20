@@ -5,13 +5,18 @@
 // 08:45–13:45 yields labels 08:46 … 13:45.
 
 import type { Region, SecurityType } from './types/contract';
-import { nyWallClockSec } from './us/us-quotes';
+import { isUsRegularTrade, nyWallClockSec } from './us/us-quotes';
 import { nowWallClockUtc } from './utils/kbars';
 
-// 時段框架的種類：台股依商品類別；美股（region US）一律 'US' — 紐約牆鐘
-// 一般盤 09:30–16:00（時間編碼同台股，只是牆鐘換成美東）。美股 1 分 K 歷史
-// 只有一般盤，盤前／盤後不畫進走勢與 K 線（見 isUsChartSession）。
-export type SessionKind = SecurityType | 'US';
+// 時段框架的種類：台股依商品類別；美股（region US）預設 'US' — 紐約牆鐘
+// 一般盤 09:30–16:00（時間編碼同台股，只是牆鐘換成美東）。圖表選「含盤前
+// 盤後」時用 'US_EXT'：04:00–20:00（盤前盤後沒有歷史，只有即時，見
+// us-quotes 的 getUsExtendedBars）。
+export type SessionKind = SecurityType | 'US' | 'US_EXT';
+
+export function isUsSessionKind(kind: SessionKind): kind is 'US' | 'US_EXT' {
+    return kind === 'US' || kind === 'US_EXT';
+}
 
 export function sessionKindOf(c: { security_type: SecurityType; region?: Region | string }): SessionKind {
     return c.region === 'US' ? 'US' : c.security_type;
@@ -24,7 +29,7 @@ export function nyWallClockNow(nowMs = Date.now()): number {
 
 /** 這種時段框架的「現在」（牆鐘編碼）：台股台北、美股紐約 */
 export function sessionNow(kind: SessionKind): number {
-    return kind === 'US' ? nyWallClockNow() : nowWallClockUtc();
+    return isUsSessionKind(kind) ? nyWallClockNow() : nowWallClockUtc();
 }
 
 /** 收盤競價的成交標 AfterHours、時間在 16:00:01 左右；這段秒數內的 AfterHours 才算一般盤 */
@@ -40,10 +45,7 @@ export const US_CLOSING_CROSS_SEC = 15;
  * wallSec 是紐約牆鐘編碼秒數（nyWallClockSec）。
  */
 export function isUsChartTrade(session: string | null | undefined, wallSec: number): boolean {
-    if (session === 'Regular') return true;
-    if (session !== 'AfterHours' || !Number.isFinite(wallSec)) return false;
-    const close = Math.floor(wallSec / DAY) * DAY + 16 * H;
-    return wallSec >= close && wallSec < close + US_CLOSING_CROSS_SEC;
+    return isUsRegularTrade(session, wallSec);
 }
 
 export interface SessionWindow {
@@ -67,6 +69,10 @@ export function sessionWindowFor(
     // 美股：當天（紐約）一般盤 09:30–16:00
     if (secType === 'US') {
         return { start: d0 + 9.5 * H, end: d0 + 16 * H, night: false };
+    }
+    // 美股含盤前盤後：04:00–20:00
+    if (secType === 'US_EXT') {
+        return { start: d0 + 4 * H, end: d0 + 20 * H, night: false };
     }
     if (secType === 'FUT' || secType === 'OPT') {
         if (tod <= 5 * H) {
@@ -144,15 +150,16 @@ export function filterDaySession<T extends { time: number }>(
 }
 
 // 當日走勢的時段選擇：auto = 依資料所在（原行為）；day/night =
-// 使用者手動鎖定，取「有資料的最近一段」該種時段（晚上複盤今天日盤）
-export type IntradaySessionMode = 'auto' | 'day' | 'night';
+// 使用者手動鎖定，取「有資料的最近一段」該種時段（晚上複盤今天日盤）；
+// all = 美股含盤前盤後（美股其餘值都是一般盤）
+export type IntradaySessionMode = 'auto' | 'day' | 'night' | 'all';
 export type ChartSessionMode = 'all' | 'day';
 
 // 存檔讀回的時段值只接受已知值，其餘（舊版/手改/壞檔）退回預設
 export function parseIntradaySessionMode(
     v: unknown,
 ): IntradaySessionMode | undefined {
-    return v === 'auto' || v === 'day' || v === 'night' ? v : undefined;
+    return v === 'auto' || v === 'day' || v === 'night' || v === 'all' ? v : undefined;
 }
 
 export function parseChartSessionMode(v: unknown): ChartSessionMode | undefined {

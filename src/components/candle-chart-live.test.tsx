@@ -252,3 +252,47 @@ describe('CandleChart TW buckets stay as main', () => {
         expect(updates().at(-1)).toMatchObject({ time: T('2026-09-25T13:47:00'), close: 71 });
     });
 });
+
+describe('CandleChart US session (一般盤／含盤前盤後)', () => {
+    const extTick = (isoUtc: string, price: string, volume: number, session: 'PreMarket' | 'AfterHours') => {
+        const ms = Date.parse(`${isoUtc}Z`);
+        act(() => recordUsTick({ key: 'US:AAPL', price, session, freshness: null, ts: ms, tsUs: ms * 1000, volume }));
+    };
+    const toggle = (r: ReactTestRenderer) => r.root.find((n) => n.type === 'button' && n.props['data-testid'] === 'us-session-toggle');
+
+    it('defaults to regular hours, reusing the session toggle button', async () => {
+        vi.setSystemTime(new Date('2026-11-19T21:40:00Z'));
+        fetchMock.mockResolvedValue(kbars([['2026-11-19T15:50:00', '2026-11-19T16:00:00', () => 352]]));
+        const r = mount({ contract: aapl, interval: '1m' });
+        await flush();
+        expect(toggle(r).props['aria-pressed']).toBe(true);
+        const n = updates().length;
+        extTick('2026-11-19T21:30:10', '355', 7, 'AfterHours'); // 16:30 盤後 → 一般盤不畫
+        expect(updates().length).toBe(n);
+    });
+
+    it('extended hours: merges the extended bars seen so far with regular history, then draws live after-hours trades', async () => {
+        vi.setSystemTime(new Date('2026-11-19T21:40:00Z'));
+        // App 開著時收到的盤前成交（沒有歷史，只在記憶體）
+        extTick('2026-11-19T13:00:30', '340', 50, 'PreMarket'); // 08:00:30 → 08:01
+        extTick('2026-11-19T13:00:50', '341', 20, 'PreMarket');
+        fetchMock.mockResolvedValue(kbars([['2026-11-19T15:50:00', '2026-11-19T16:00:00', () => 352]]));
+        const onSessionModeChange = vi.fn();
+        const r = mount({ contract: aapl, interval: '1m', sessionMode: 'all', onSessionModeChange });
+        await flush();
+        expect(toggle(r).props['aria-pressed']).toBe(false);
+        const data = lastData();
+        expect(data[0]).toMatchObject({ time: T('2026-11-19T08:01:00'), open: 340, close: 341 });
+        const vol = created.filter((c) => c.kind === 'Histogram').at(-1)!.last as any[];
+        expect(vol[0]).toMatchObject({ time: T('2026-11-19T08:01:00'), value: 70 });
+        expect(data.at(-1)).toMatchObject({ time: T('2026-11-19T16:00:00') });
+        const fetches = fetchMock.mock.calls.length;
+        extTick('2026-11-19T21:30:10', '355', 7, 'AfterHours'); // 16:30:10 → 16:31
+        expect(updates().at(-1)).toMatchObject({ time: T('2026-11-19T16:31:00'), close: 355 });
+        // 盤後成交稀疏是常態：不當成缺口重抓歷史
+        await flush();
+        expect(fetchMock.mock.calls.length).toBe(fetches);
+        act(() => toggle(r).props.onClick());
+        expect(onSessionModeChange).toHaveBeenCalledWith('day');
+    });
+});

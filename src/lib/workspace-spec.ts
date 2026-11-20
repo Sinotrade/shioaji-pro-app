@@ -72,7 +72,7 @@ export const WORKSPACE_SPEC_SETTINGS: Partial<
     },
     intraday: {
         session: {
-            values: ['auto', 'day', 'night'],
+            values: ['auto', 'day', 'night', 'all'],
             field: 'intradaySession',
             fallback: 'auto',
         },
