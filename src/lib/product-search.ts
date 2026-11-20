@@ -19,7 +19,8 @@ import { SearchRequestCache } from './search-request';
 import { getProductCatalogVersion, subscribeProductCatalog } from './product-catalog-version';
 import { loadIndexSuggestions } from './index-catalog';
 import { usLinkKey } from './contract-key';
-import { cachedUsInfo, loadUsInfo, searchUsCodes, usCatalogStatus, usContractName, toUsContractInfo } from './us/us-contracts';
+import { cachedUsInfo, getUsContractRecord, loadUsInfo, searchUsCodes, usCatalogStatus, usContractName, toUsContractInfo } from './us/us-contracts';
+import { searchUsNames } from './us/us-names';
 
 export interface ProductSuggestion {
     code: string;
@@ -65,13 +66,23 @@ function usSuggestion(record: { code: string; exchange: string }): ProductSugges
     };
 }
 
+/** 代碼前綴命中在前，再補名稱命中（apple、蘋果）；名稱命中的代碼要在美股清單內才算 */
+function searchUsHits(rawQuery: string, limit: number) {
+    const byCode = looksLikeUsCode(rawQuery) ? searchUsCodes(rawQuery, limit) : [];
+    const seen = new Set(byCode.map(record => record.code.toUpperCase()));
+    // 先剔除重複與不在清單內的，再取前 limit 筆；否則清單缺幾檔時會佔掉名額、什麼都不剩
+    const byName = searchUsNames(rawQuery, limit, code => !seen.has(code) && !!getUsContractRecord(code))
+        .flatMap(code => getUsContractRecord(code) ?? []);
+    return [...byCode, ...byName].slice(0, limit);
+}
+
 /**
- * 美股代碼命中（只在美股清單已載入時；清單由 useProductSearch 延後載入）。
+ * 美股命中：代碼前綴與名稱（只在美股清單已載入時；清單由 useProductSearch 延後載入）。
  * 可見列的名稱逐筆查商品資訊（限流、今日快取），最多等 US_NAME_WAIT_MS。
  */
 export async function searchUsSuggestions(rawQuery: string, limit = US_SUGGESTION_LIMIT, signal?: AbortSignal): Promise<ProductSuggestion[]> {
-    if (usCatalogStatus() !== 'ready' || !looksLikeUsCode(rawQuery)) return [];
-    const hits = searchUsCodes(rawQuery, limit);
+    if (usCatalogStatus() !== 'ready') return [];
+    const hits = searchUsHits(rawQuery, limit);
     if (!hits.length) return [];
     const missing = hits.filter(hit => !usContractName(hit.code) || !cachedUsInfo(hit.code));
     if (missing.length) {

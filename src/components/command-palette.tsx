@@ -158,7 +158,7 @@ export function CommandPalette({
                 <input
                     ref={inputRef}
                     className={styles.input}
-                    placeholder='輸入代碼跳轉商品（2330、TXFR1、AAPL…）'
+                    placeholder='輸入代碼跳轉商品（2330、TXFR1、AAPL、蘋果…）'
                     role='combobox'
                     aria-autocomplete='list'
                     aria-expanded={rowCount > 0}

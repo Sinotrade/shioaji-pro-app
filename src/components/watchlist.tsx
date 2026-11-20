@@ -927,7 +927,7 @@ export function Watchlist({
                 <input
                     ref={inputRef}
                     className={styles.addInput}
-                    placeholder='股票、期貨、指數或美股（如 台積電期、AAPL）'
+                    placeholder='股票、期貨、指數或美股（如 台積電期、AAPL、蘋果）'
                     role='combobox'
                     aria-autocomplete='list'
                     aria-expanded={suggestions.length > 0}
