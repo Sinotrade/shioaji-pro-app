@@ -290,18 +290,19 @@ export function CandleChart({
     };
     // 僅日盤：aggregate 前濾掉夜盤 1 分 K、live 夜盤 tick 不入圖，指標
     // 也就只吃日盤 K 棒。只開給日盤 08:45–13:45 的期/選，其他商品一律全盤
-    // 存檔值只認 all|day，其餘退回全盤
-    // 美股用同一個值：day＝只看一般盤 09:30–16:00（預設），all＝含盤前盤後
+    // 存檔值只認 all|day|ext，其餘退回全盤
+    // 美股：ext＝含盤前盤後，其餘（含預設 all）＝只看一般盤 09:30–16:00。
+    // 用獨立的 ext，台股的 all 仍是 spec 省略的預設值，美股的選擇才能套版保留
     const propMode = parseChartSessionMode(sessionModeProp);
     const [localSessionMode, setLocalSessionMode] =
         useState<ChartSessionMode | undefined>(propMode);
     const usContract = contract.region === 'US';
     const sessionPick =
-        (onSessionModeChange ? propMode : localSessionMode) ?? (usContract ? 'day' : 'all');
+        (onSessionModeChange ? propMode : localSessionMode) ?? 'all';
     const canDayOnly = supportsSessionSplit(contract as SessionContractLike);
     const dayOnly = canDayOnly && sessionPick === 'day';
     // 美股含盤前盤後：盤前盤後沒有歷史，只畫 App 開著時收到的成交
-    const usExtended = usContract && sessionPick === 'all';
+    const usExtended = usContract && sessionPick === 'ext';
     // 載入／即時判斷用的時段鍵（全盤、僅日盤、美股含盤前盤後）
     const sessionKey = dayOnly ? 'day' : usExtended ? 'ext' : 'all';
     const pickSessionMode = (m: ChartSessionMode) => {
@@ -345,6 +346,24 @@ export function CandleChart({
     // 轉接美股 kbars、即時成交逐筆併入（見下方美股 effect）；圖上下單、委託線、
     // 觸價警示是台股功能，美股不顯示
     const isUs = contract.region === 'US';
+    // 時段切換鈕：台股期選與美股共用同一顆，只差文案與切換的值
+    const sessionBtn: { active: boolean; label: string; title: string; next: ChartSessionMode } = isUs
+        ? {
+              active: !usExtended,
+              label: '一般盤',
+              title: usExtended
+                  ? '美東時間・含盤前盤後 04:00–20:00：盤前盤後沒有歷史資料，只畫 App 開著時收到的成交 — 點擊改回只看一般盤'
+                  : '美東時間・只看一般盤 09:30–16:00 — 點擊改為含盤前盤後（盤前盤後只有 App 開著時收到的成交）',
+              next: usExtended ? 'all' : 'ext',
+          }
+        : {
+              active: dayOnly,
+              label: '日盤',
+              title: dayOnly
+                  ? `僅日盤（${daySessionLabel(contract.security_type)}），指標也只用日盤計算 — 點擊切回全盤`
+                  : `全盤（日盤＋夜盤）— 點擊改為僅日盤 ${daySessionLabel(contract.security_type)}`,
+              next: dayOnly ? 'all' : 'day',
+          };
     const kind = usExtended ? 'US_EXT' : sessionKindOf(contract);
     const quoteKey = contractLinkKey(contract);
     const quote = useQuote(quoteKey);
@@ -580,6 +599,10 @@ export function CandleChart({
     // raw 1-min candles backing the current view — history pages merge here
     // and re-aggregate so buckets spanning a page seam stay correct
     const rawRef = useRef<Candle[]>([]);
+    // 往前翻頁的界線＝已載入「一般盤歷史」最早一根的時間。不能用 rawRef
+    // 第一根：美股含盤前盤後會併入記憶體裡的盤前盤後 K 棒，它可能比已載入
+    // 的歷史更早（例如上週五盤前），拿它當界線會把中間的一般盤歷史濾掉
+    const historyBoundaryRef = useRef(Infinity);
     const loadMoreRef = useRef<(() => void) | null>(null);
     const indSeriesRef = useRef<ISeriesApi<'Line' | 'Histogram'>[]>([]);
     // 觸價警示與委託線只有台股（美股委託走下單／閃電面板與委託分頁）
@@ -985,6 +1008,7 @@ export function CandleChart({
             barsRef.current = [];
             rawRef.current = [];
             gapReloadAtRef.current = 0;
+            historyBoundaryRef.current = Infinity;
             setDataVersion((v) => v + 1); // 指標跟著清
         }
         setEmpty(false);
@@ -1000,6 +1024,7 @@ export function CandleChart({
             rawRef.current = [];
             setDataVersion((v) => v + 1);
             lastBarRef.current = null;
+            historyBoundaryRef.current = Infinity;
             priceFmtRef.current.sync(contract, lastPriceRef.current);
             loadedKeyRef.current = loadKey; // live bars may build from here
         };
@@ -1072,7 +1097,7 @@ export function CandleChart({
                 .then((k) => {
                     if (cancelled || loadedKeyRef.current !== loadKey) return;
                     oldestDay = from;
-                    const boundary = rawRef.current[0]?.time ?? Infinity;
+                    const boundary = historyBoundaryRef.current;
                     const older = toRaw(k).filter(
                         (b) => b.time < boundary,
                     );
@@ -1081,7 +1106,13 @@ export function CandleChart({
                         return;
                     }
                     dryPages = 0;
-                    rawRef.current = [...older, ...rawRef.current];
+                    historyBoundaryRef.current = older[0]!.time;
+                    // 併入的盤前盤後可能比這頁還早 → 依時間合併，否則直接接在前面
+                    const cur = rawRef.current;
+                    rawRef.current =
+                        cur.length > 0 && older[older.length - 1]!.time >= cur[0]!.time
+                            ? mergeCandlesByTime(older, cur)
+                            : [...older, ...cur];
                     const bars = aggregate(rawRef.current, tf.minutes);
                     // re-attach the live tail built from ticks since load —
                     // raw history doesn't contain those bars
@@ -1112,7 +1143,8 @@ export function CandleChart({
                 if (cancelled || !candleSeriesRef.current) return;
                 // 美股含盤前盤後：一般盤歷史接上記憶體裡的盤前盤後 1 分 K
                 //（兩者的分鐘標籤不重疊：一般盤 09:31–16:00）
-                const raw = usExtended ? mergeCandlesByTime(toRaw(k), getUsExtendedBars(quoteKey)) : toRaw(k);
+                const regular = toRaw(k);
+                const raw = usExtended ? mergeCandlesByTime(regular, getUsExtendedBars(quoteKey)) : regular;
                 const bars = aggregate(raw, tf.minutes);
                 if (bars.length === 0) {
                     clearSeries();
@@ -1122,6 +1154,7 @@ export function CandleChart({
                     return;
                 }
                 rawRef.current = raw;
+                historyBoundaryRef.current = regular[0]?.time ?? Infinity;
                 // 1 分 K 標籤是結束時間：標籤 ≤ 歷史最後一根的成交都已在歷史裡
                 const tail = takePending(bars, raw[raw.length - 1]!.time);
                 priceFmtRef.current.sync(contract, tail?.close ?? null);
@@ -2299,36 +2332,18 @@ export function CandleChart({
                         {t.label}
                     </button>
                 ))}
-                {canDayOnly && (
-                    // 單一切換鈕（亮＝僅日盤）— 工具列寬度吃緊，不另開
-                    // 「全盤」鈕與分隔線，窄面板才不會提早折行
+                {(canDayOnly || isUs) && (
+                    // 單一切換鈕 — 工具列寬度吃緊，不另開「全盤」鈕與分隔線，
+                    // 窄面板才不會提早折行。台股期選：亮＝僅日盤；美股沿用同一
+                    // 顆：亮＝只看一般盤（預設），熄＝含盤前盤後
                     <button
-                        className={styles.tfBtn[dayOnly ? 'active' : 'normal']}
-                        title={
-                            dayOnly
-                                ? `僅日盤（${daySessionLabel(contract.security_type)}），指標也只用日盤計算 — 點擊切回全盤`
-                                : `全盤（日盤＋夜盤）— 點擊改為僅日盤 ${daySessionLabel(contract.security_type)}`
-                        }
-                        aria-pressed={dayOnly}
-                        onClick={() => pickSessionMode(dayOnly ? 'all' : 'day')}
+                        className={styles.tfBtn[sessionBtn.active ? 'active' : 'normal']}
+                        title={sessionBtn.title}
+                        aria-pressed={sessionBtn.active}
+                        data-testid={isUs ? 'us-session-toggle' : undefined}
+                        onClick={() => pickSessionMode(sessionBtn.next)}
                     >
-                        日盤
-                    </button>
-                )}
-                {isUs && (
-                    // 美股沿用同一顆時段鈕（亮＝只看一般盤，預設）
-                    <button
-                        className={styles.tfBtn[usExtended ? 'normal' : 'active']}
-                        title={
-                            usExtended
-                                ? '美東時間・含盤前盤後 04:00–20:00：盤前盤後沒有歷史資料，只畫 App 開著時收到的成交 — 點擊改回只看一般盤'
-                                : '美東時間・只看一般盤 09:30–16:00 — 點擊改為含盤前盤後（盤前盤後只有 App 開著時收到的成交）'
-                        }
-                        aria-pressed={!usExtended}
-                        data-testid='us-session-toggle'
-                        onClick={() => pickSessionMode(usExtended ? 'day' : 'all')}
-                    >
-                        一般盤
+                        {sessionBtn.label}
                     </button>
                 )}
                 {usExtended && (

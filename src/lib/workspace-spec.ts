@@ -66,13 +66,13 @@ export const WORKSPACE_SPEC_SETTINGS: Partial<
             field: 'chartInterval',
             fallback: DEFAULT_CHART_INTERVAL,
         },
-        session: { values: ['all', 'day'], field: 'chartSession', fallback: 'all' },
+        session: { values: ['all', 'day', 'ext'], field: 'chartSession', fallback: 'all' },
         ohlc: { values: [true, false], field: 'chartOhlc', fallback: true },
         high_low: { values: [true, false], field: 'chartHighLow', fallback: true },
     },
     intraday: {
         session: {
-            values: ['auto', 'day', 'night', 'all'],
+            values: ['auto', 'day', 'night', 'ext'],
             field: 'intradaySession',
             fallback: 'auto',
         },

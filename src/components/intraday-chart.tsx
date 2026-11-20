@@ -46,6 +46,7 @@ import {
     followsSession,
     isReviewingPastSession,
     parseIntradaySessionMode,
+    isDaySessionLabel,
     pastSessionReference,
     pickIntradayWindow,
     isUsSessionKind,
@@ -272,7 +273,7 @@ const SESSION_MODES: { key: IntradaySessionMode; label: string; title: string }[
 const US_SESSION_MODES: { key: IntradaySessionMode; label: string; title: string }[] = [
     { key: 'auto', label: '一般盤', title: '美東時間・一般盤 09:30–16:00' },
     {
-        key: 'all',
+        key: 'ext',
         label: '含盤前盤後',
         title: '美東時間・盤前 04:00 到盤後 20:00。盤前盤後沒有歷史資料，只畫 App 開著時收到的成交',
     },
@@ -354,10 +355,10 @@ export function IntradayChart({
             ? (propMode ?? 'auto')
             : localSessionMode
         : 'auto';
-    // 換商品後沿用的值只取這個商品認得的：美股只有 auto／all，台股沒有 all
+    // 換商品後沿用的值只取這個商品認得的：美股只有 auto／ext，台股沒有 ext
     const sessionMode: IntradaySessionMode = usContract
-        ? pickedMode === 'all' ? 'all' : 'auto'
-        : pickedMode === 'all' ? 'auto' : pickedMode;
+        ? pickedMode === 'ext' ? 'ext' : 'auto'
+        : pickedMode === 'ext' ? 'auto' : pickedMode;
     const sessionModeRef = useRef(sessionMode);
     sessionModeRef.current = sessionMode;
     const historyLoadRef = useRef({
@@ -479,7 +480,7 @@ export function IntradayChart({
     // 美股（region US）走同一張走勢圖：時段框架是紐約一般盤 09:30–16:00
     // （sessionKindOf → 'US'），行情 key 是 US:CODE，即時成交從逐筆通知進來
     // 美股含盤前盤後的時段框架是 04:00–20:00（'US_EXT'）
-    const sk = usContract && sessionMode === 'all' ? 'US_EXT' : sessionKindOf(contract);
+    const sk = usContract && sessionMode === 'ext' ? 'US_EXT' : sessionKindOf(contract);
     const isUs = isUsSessionKind(sk);
     const quoteKey = contractLinkKey(contract);
     const quote = useQuote(quoteKey);
@@ -1059,6 +1060,9 @@ export function IntradayChart({
             .then(async (k) => {
                 if (cancelled || !priceSeriesRef.current) return;
                 let all = kbarsToMinBars(k);
+                // 美股參考價一律取一般盤：在併入盤前盤後之前留一份一般盤歷史，
+                // 免得前一天盤後的最後一筆被當成昨收
+                const usRegular = all;
                 // 美股含盤前盤後：一般盤歷史接上記憶體裡的盤前盤後 1 分 K（分鐘標籤不重疊）
                 if (sk === 'US_EXT') all = withUsExtendedBars(all, getUsExtendedBars(quoteKey));
                 const lastRecent = all[all.length - 1];
@@ -1142,11 +1146,16 @@ export function IntradayChart({
                 // 歷史裡前一個交易日的最後收盤
                 const ref =
                     (isUs
-                        ? usSessionReference(win) || pastSessionReference(sk, all, win)
+                        ? usSessionReference(win) ||
+                          pastSessionReference(sessionKindOf(contract), usRegular, win)
                         : (past
                               ? pastSessionReference(sk, all, win)
                               : null) || Number(contract.reference)) ||
-                    bars[0]?.close ||
+                    // 完全沒有前一日資料（如新上市）：美股先找這段第一根一般盤 K
+                    (isUs
+                        ? (bars.find((b) => isDaySessionLabel(sessionKindOf(contract), b.time)) ?? bars[0])
+                        : bars[0]
+                    )?.close ||
                     last?.close ||
                     0;
                 if (!Number.isFinite(ref) || ref <= 0) {
@@ -1579,7 +1588,7 @@ export function IntradayChart({
     const chipLabel =
         sessionLabel ??
         (usContract
-            ? sessionMode === 'all' ? '含盤前盤後・僅即時' : '一般盤'
+            ? sessionMode === 'ext' ? '含盤前盤後・僅即時' : '一般盤'
             : sessionMode === 'day'
             ? '日盤'
             : sessionMode === 'night'
@@ -1630,7 +1639,7 @@ export function IntradayChart({
                             }
                             title={
                                 usContract
-                                    ? sessionMode === 'all'
+                                    ? sessionMode === 'ext'
                                         ? `時段：美東含盤前盤後 04:00–20:00（盤前盤後只畫 App 開著時收到的成交）— 點選切換`
                                         : '時段：美東一般盤 09:30–16:00 — 點選可改為含盤前盤後'
                                     : sessionMode === 'auto'

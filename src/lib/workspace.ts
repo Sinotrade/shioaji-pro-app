@@ -129,8 +129,8 @@ export interface Block {
     wallRows?: number;
     // 時段選擇（issue #73）— K 線全盤/僅日盤、當日走勢自動/日盤/夜盤，
     // 跟版面一起持久化；缺省 = 全盤 / 自動
-    chartSession?: 'all' | 'day';
-    intradaySession?: 'auto' | 'day' | 'night' | 'all';
+    chartSession?: 'all' | 'day' | 'ext';
+    intradaySession?: 'auto' | 'day' | 'night' | 'ext';
     // K 線週期（#331）— 跟版面一起持久化；缺省 = 5m
     chartInterval?: ChartInterval;
     // K 線圖下單設定（#204，每市場一組）— 跟版面一起持久化
@@ -279,9 +279,9 @@ export function popoutSessionParam(block: Block): Record<string, string> {
 export function popoutSessionFromQuery(q: URLSearchParams): SessionConfigPatch {
     const v = q.get('session');
     return {
-        chartSession: v === 'all' || v === 'day' ? v : undefined,
+        chartSession: v === 'all' || v === 'day' || v === 'ext' ? v : undefined,
         intradaySession:
-            v === 'auto' || v === 'day' || v === 'night' || v === 'all' ? v : undefined,
+            v === 'auto' || v === 'day' || v === 'night' || v === 'ext' ? v : undefined,
         chartInterval: isChartInterval(q.get('interval'))
             ? (q.get('interval') as ChartInterval)
             : undefined,

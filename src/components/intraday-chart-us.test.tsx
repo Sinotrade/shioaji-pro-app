@@ -255,7 +255,7 @@ describe('IntradayChart (US)', () => {
             pushUs('2026-11-19T13:00:30', '98', { session: 'PreMarket', volume: 50 }); // 08:01（App 開著時收到）
             fetchMock.mockResolvedValue(kbars([['2026-11-19T09:30:00', '2026-11-19T16:00:00', () => 100]]));
             snap.value = { tradeDate: '2026-11-19', reference: 99 };
-            const r = mount({ contract: aapl, sessionMode: 'all' });
+            const r = mount({ contract: aapl, sessionMode: 'ext' });
             await flush();
             expect(chip(r).children.join('')).toBe('含盤前盤後・僅即時');
             const f = filler().last as any[];
@@ -267,6 +267,18 @@ describe('IntradayChart (US)', () => {
             pushUs('2026-11-19T21:30:10', '101', { session: 'AfterHours', volume: 7 });
             expect(lastUpdate()).toEqual({ time: T('2026-11-19T16:31:00'), value: 101 });
             expect(vol().update.mock.calls.at(-1)![0]).toMatchObject({ time: T('2026-11-19T16:31:00'), value: 7 });
+        });
+
+        it('extended: the fallback baseline is the prior regular close, never the prior after-hours close', async () => {
+            vi.setSystemTime(new Date('2026-11-20T12:00:00Z')); // 紐約 11/20 07:00 盤前
+            pushUs('2026-11-19T23:00:30', '105', { session: 'AfterHours', volume: 10 }); // 11/19 盤後 18:01
+            pushUs('2026-11-20T11:00:30', '104', { session: 'PreMarket', volume: 10 }); // 11/20 盤前 06:01
+            // 沒有快照、合約也沒有參考價 → 只能從歷史推：要用 11/19 一般盤收盤 100
+            fetchMock.mockResolvedValue(kbars([['2026-11-19T09:30:00', '2026-11-19T16:00:00', () => 100]]));
+            mount({ contract: aapl, sessionMode: 'ext' });
+            await flush();
+            expect(price().options.baseValue).toMatchObject({ price: 100 });
+            expect((price().last as any[])[0]).toEqual({ time: T('2026-11-20T06:01:00'), value: 104 });
         });
     });
 });

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { getUsExtendedBars, isUsExtendedTrade, usMinuteLabel, getUsTickMeta, subscribeUsSessionTicks, normalizeUsBidAsk, normalizeUsTick, nyDateTime, recordUsTick, resetUsQuotesForTest, usSubscriptionBody, usTickChange, usChangeFrom, usReferenceFor, contractReferenceApplies, noteUsReference } from './us-quotes';
+import { US_EXTENDED_MAX_SYMBOLS, getUsExtendedBars, isUsExtendedTrade, usMinuteLabel, getUsTickMeta, subscribeUsSessionTicks, normalizeUsBidAsk, normalizeUsTick, nyDateTime, recordUsTick, resetUsQuotesForTest, usSubscriptionBody, usTickChange, usChangeFrom, usReferenceFor, contractReferenceApplies, noteUsReference } from './us-quotes';
 
 // 2026-11-17 14:30:05 America/New_York（EST, UTC-5）
 const T = Date.UTC(2026, 10, 17, 19, 30, 5) * 1000;
@@ -99,5 +99,27 @@ describe('US extended-hours bars (live only)', () => {
             { time: hm(8, 1), open: 100, high: 102, low: 100, close: 102, volume: 8 },
             { time: hm(16, 31), open: 105, high: 105, low: 105, close: 105, volume: 4 },
         ]);
+    });
+
+    it('keeps the last 5 NY dates that had trades, so a weekend does not eat into them', () => {
+        // 11/12（四）、11/13（五）、週末、11/16–11/19（一～四）：6 個有成交的日期
+        const days = ['2026-11-12', '2026-11-13', '2026-11-16', '2026-11-17', '2026-11-18', '2026-11-19'];
+        for (const d of days) tick(`${d}T13:00:30`, '100', 1, 'PreMarket'); // 盤前 08:01
+        const kept = getUsExtendedBars('US:AAPL').map((b) => new Date(b.time * 1000).toISOString().slice(0, 10));
+        expect(kept).toEqual(days.slice(1)); // 只丟最舊的 11/12，11/13（五）還在
+    });
+
+    it('caps the cache across symbols, evicting the one least recently updated', () => {
+        const rec = (code: string) => {
+            const ms = Date.parse('2026-11-19T13:00:30Z');
+            recordUsTick({ key: `US:${code}`, price: '10', session: 'PreMarket', freshness: null, ts: ms, tsUs: ms * 1000, volume: 1 });
+        };
+        for (let i = 0; i < US_EXTENDED_MAX_SYMBOLS; i++) rec(`S${i}`);
+        rec('S0'); // S0 又有成交 → 變成最新
+        rec('NEW'); // 超過上限 → 丟最久沒更新的 S1
+        expect(getUsExtendedBars('US:S1')).toEqual([]);
+        expect(getUsExtendedBars('US:S0')).toHaveLength(1);
+        expect(getUsExtendedBars('US:S2')).toHaveLength(1);
+        expect(getUsExtendedBars('US:NEW')).toHaveLength(1);
     });
 });

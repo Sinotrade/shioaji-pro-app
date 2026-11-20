@@ -251,7 +251,8 @@
         "session": {
           "enum": [
             "all",
-            "day"
+            "day",
+            "ext"
           ],
           "default": "all"
         },
@@ -273,7 +274,8 @@
           "enum": [
             "auto",
             "day",
-            "night"
+            "night",
+            "ext"
           ],
           "default": "auto"
         }

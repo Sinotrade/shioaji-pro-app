@@ -151,19 +151,21 @@ export function filterDaySession<T extends { time: number }>(
 
 // 當日走勢的時段選擇：auto = 依資料所在（原行為）；day/night =
 // 使用者手動鎖定，取「有資料的最近一段」該種時段（晚上複盤今天日盤）；
-// all = 美股含盤前盤後（美股其餘值都是一般盤）
-export type IntradaySessionMode = 'auto' | 'day' | 'night' | 'all';
-export type ChartSessionMode = 'all' | 'day';
+// ext = 美股含盤前盤後（美股其餘值都是一般盤；台股不認 ext）。
+// 用獨立的 ext 而不沿用 all：K 線的 all 是台股省略的預設值，
+// spec 匯出會剝掉，美股的盤前盤後選擇就會在套版時被洗回一般盤
+export type IntradaySessionMode = 'auto' | 'day' | 'night' | 'ext';
+export type ChartSessionMode = 'all' | 'day' | 'ext';
 
 // 存檔讀回的時段值只接受已知值，其餘（舊版/手改/壞檔）退回預設
 export function parseIntradaySessionMode(
     v: unknown,
 ): IntradaySessionMode | undefined {
-    return v === 'auto' || v === 'day' || v === 'night' || v === 'all' ? v : undefined;
+    return v === 'auto' || v === 'day' || v === 'night' || v === 'ext' ? v : undefined;
 }
 
 export function parseChartSessionMode(v: unknown): ChartSessionMode | undefined {
-    return v === 'all' || v === 'day' ? v : undefined;
+    return v === 'all' || v === 'day' || v === 'ext' ? v : undefined;
 }
 
 // 商品日盤時間字串（按鈕說明用，不寫死）

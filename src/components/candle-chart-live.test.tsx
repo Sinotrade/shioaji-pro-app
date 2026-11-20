@@ -2,7 +2,7 @@
 import { createElement } from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { created, kbars } from './chart-session.test-harness';
+import { created, kbars, rangeHandlers } from './chart-session.test-harness';
 
 vi.hoisted(() => {
     const store = new Map<string, string>();
@@ -278,7 +278,7 @@ describe('CandleChart US session (一般盤／含盤前盤後)', () => {
         extTick('2026-11-19T13:00:50', '341', 20, 'PreMarket');
         fetchMock.mockResolvedValue(kbars([['2026-11-19T15:50:00', '2026-11-19T16:00:00', () => 352]]));
         const onSessionModeChange = vi.fn();
-        const r = mount({ contract: aapl, interval: '1m', sessionMode: 'all', onSessionModeChange });
+        const r = mount({ contract: aapl, interval: '1m', sessionMode: 'ext', onSessionModeChange });
         await flush();
         expect(toggle(r).props['aria-pressed']).toBe(false);
         expect(r.root.findAll((n) => n.props['data-testid'] === 'us-extended-note').length).toBeGreaterThan(0);
@@ -294,6 +294,27 @@ describe('CandleChart US session (一般盤／含盤前盤後)', () => {
         await flush();
         expect(fetchMock.mock.calls.length).toBe(fetches);
         act(() => toggle(r).props.onClick());
-        expect(onSessionModeChange).toHaveBeenCalledWith('day');
+        expect(onSessionModeChange).toHaveBeenCalledWith('all'); // all 是預設，spec 省略後仍是一般盤
+    });
+
+    it('paging older history uses the regular-history boundary, not an older extended bar in the cache', async () => {
+        vi.setSystemTime(new Date('2026-11-19T21:40:00Z'));
+        // 記憶體裡有上週五（11/13）的盤前成交，比第一頁歷史還早
+        extTick('2026-11-13T13:00:30', '300', 50, 'PreMarket');
+        fetchMock
+            .mockResolvedValueOnce(kbars([['2026-11-19T15:50:00', '2026-11-19T16:00:00', () => 352]]))
+            .mockResolvedValueOnce(kbars([['2026-11-18T15:50:00', '2026-11-18T16:00:00', () => 350]]))
+            .mockResolvedValue(kbars([]));
+        rangeHandlers.length = 0;
+        mount({ contract: aapl, interval: '1m', sessionMode: 'ext' });
+        await flush();
+        expect(lastData()[0]).toMatchObject({ time: T('2026-11-13T08:01:00'), close: 300 });
+        act(() => rangeHandlers.at(-1)!({ from: 0, to: 50 })); // 捲到最左 → 往前翻一頁
+        await flush();
+        const data = lastData();
+        // 11/18 的一般盤歷史在盤前那根之後，但仍比第一頁早：要留著，不能被濾掉
+        expect(data.filter((b) => b.time > T('2026-11-18T15:50:00') && b.time <= T('2026-11-18T16:00:00'))).toHaveLength(10);
+        expect(data.map((b) => b.time)).toEqual([...data.map((b) => b.time)].sort((a, b) => a - b));
+        expect(data[0]).toMatchObject({ time: T('2026-11-13T08:01:00') });
     });
 });
