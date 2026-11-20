@@ -207,12 +207,14 @@ export function usSessionView(args: {
     // tick 已是較新的交易日（夜盤、盤前，快照還是前一天）：用 tick 帶的一般盤值（＝前一日收盤），
     // 不留前一天快照的漲跌
     const tickNewerDay = !!tickDate && !!snap?.tradeDate && tickDate > snap.tradeDate;
-    const fallback = live ? null : (tickNewerDay ? tickMain() ?? snapMain : snapMain ?? tickMain());
+    // 新交易日的參考價＝前一日一般盤收盤，比前一天的舊快照（可能停在盤中）準
+    const refMain: UsMainLine | null = tickNewerDay && pos(reference) ? { price: pos(reference)! } : null;
+    const fallback = live ? null : (tickNewerDay ? tickMain() ?? refMain ?? snapMain : snapMain ?? tickMain());
     // 退回的值是不是前一日收盤：快照當天還沒有一般盤開盤價（盤前快照 close＝前一日收盤），
     // 或用的是還沒開盤的 tick 帶的一般盤值
     const fromPrev = !!fallback && (fallback === snapMain ? !(snap!.open > 0) : !started);
     // tick 已進入新交易日（夜盤）而一般盤值只能取前一天的快照：那天的漲跌不屬於新交易日，一律標昨收
-    const main = live ?? (fallback && ((fromPrev && !fallback.chg) || (tickNewerDay && fallback === snapMain))
+    const main = live ?? (fallback && ((fromPrev && !fallback.chg) || (tickNewerDay && (fallback === snapMain || fallback === refMain)))
         ? { ...fallback, chg: undefined, pct: undefined, prevClose: true }
         : fallback);
 

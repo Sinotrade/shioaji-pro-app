@@ -272,6 +272,14 @@ describe('overnight (Nasdaq 23x5, session 4) and trading-day rollover', () => {
         expect(v.ext).toMatchObject({ session: 'Overnight', price: 112, chg: 2 });
     });
 
+    it('overnight tick with an empty regular close prefers the new-day reference over a stale intraday snapshot', () => {
+        const stale = snap({ tradeDate: '2026-11-20', close: 100, changePrice: -10, changeRate: -9.09, session: 'Regular', ts: et(20, 14) });
+        const sun = tick('2026-11-22', { session: 'Overnight', tradeDate: '2026-11-23', regular: '', extClose: '112', ts: et(22, 21) }, { open: '' });
+        const v = usSessionView({ tick: sun, snap: stale, reference: '110', now: at(22, 21) });
+        expect(v.main).toEqual({ price: 110, chg: undefined, pct: undefined, prevClose: true });
+        expect(v.ext).toMatchObject({ session: 'Overnight', price: 112, chg: 2 });
+    });
+
     it('a stale same-day tick does not override a newer snapshot (main and post-market base)', () => {
         // 斷線前最後一筆是 15:59 的一般盤；16:00 後重抓的快照有收盤競價後的收盤與盤後價
         const stale = tick('2026-11-19', { regular: '352.80', ts: et(19, 15, 59) }, { open: '350' });
