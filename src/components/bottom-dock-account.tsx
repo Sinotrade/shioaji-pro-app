@@ -39,6 +39,7 @@ import { canonicalBrokerCode, resolveRealizedName } from '../lib/realized-name';
 import { bizDateLabel, settleDateLabel } from '../lib/settle-date';
 import { classifyAccountQueryError, classifyBrokerQueryError, TRADING_LIMITS_NOT_SENT } from '../lib/trading-limits-error';
 import { useServerInfo } from '../lib/server-info-store';
+import { getApiBase } from '../lib/runtime';
 import { TRADING_LIMITS_WINDOW, twQueryWindowState, windowLabel, type TwQueryWindow } from '../lib/tw-query-window';
 import { useTwQueryWindow } from '../hooks/use-tw-query-window';
 import { fmtMoney, fmtSigned } from '../lib/utils/format';
@@ -743,24 +744,25 @@ function AccountPaneContent({ positions, balance, margin, funds, market, scopeAc
     // 以共用的 server-info store 為準（sidecar 換模式重啟時會被清掉，這裡跟著重問）；
     // store 沒資料時用自己問到的結果。undefined＝還沒問到；問不到（null）當正式環境處理
     const storeInfo = useServerInfo();
-    const [fetchedSimulation, setFetchedSimulation] = useState<boolean | null | undefined>(undefined);
+    const apiBase = getApiBase();
+    // 自己問到的結果綁定 API 位址：換伺服器後，前一台晚到的回應不能拿來當這台的模式
+    const [fetched, setFetched] = useState<{ base: string; simulation: boolean | null } | undefined>(undefined);
     const storeKnown = !!storeInfo;
     useEffect(() => {
         if (storeKnown) return;
         let alive = true;
-        setFetchedSimulation(undefined);
         fetchInfo()
             .then((i) => {
-                if (alive) setFetchedSimulation(i.simulation);
+                if (alive) setFetched({ base: apiBase, simulation: i.simulation });
             })
             .catch(() => {
-                if (alive) setFetchedSimulation(null);
+                if (alive) setFetched({ base: apiBase, simulation: null });
             });
         return () => {
             alive = false;
         };
-    }, [storeKnown]);
-    const simulation = storeInfo ? storeInfo.simulation : fetchedSimulation;
+    }, [storeKnown, apiBase]);
+    const simulation = storeInfo ? storeInfo.simulation : fetched?.base === apiBase ? fetched.simulation : undefined;
     const sim = simulation === true;
     const infoKnown = simulation !== undefined;
 
@@ -873,11 +875,15 @@ function AccountPaneContent({ positions, balance, margin, funds, market, scopeAc
     const { data: limits, refresh: refreshLimits, loading: loadingLimits, error: errorLimits } = useQuery<TradingLimits | null>(
         useCallback(
             () => {
-                // 送出當下再確認一次時段：React 狀態可能比牆鐘晚（計時器延後、睡眠喚醒）
-                if (!sim && !twQueryWindowState(Date.now(), TRADING_LIMITS_WINDOW).open) {
-                    return Promise.reject(new Error(TRADING_LIMITS_NOT_SENT));
-                }
-                return Promise.all(stockAccounts.map(a => fetchTradingLimits(a))).then(results => {
+                // 送出當下再確認一次時段：React 狀態可能比牆鐘晚（計時器延後、睡眠喚醒），
+                // 傳輸層準備（啟動讀取閘門、Tauri 載入）也可能把實際送出拖過 15:00
+                const guard = () => {
+                    if (!sim && !twQueryWindowState(Date.now(), TRADING_LIMITS_WINDOW).open) {
+                        throw new Error(TRADING_LIMITS_NOT_SENT);
+                    }
+                };
+                try { guard(); } catch (e) { return Promise.reject(e); }
+                return Promise.all(stockAccounts.map(a => fetchTradingLimits(a, guard))).then(results => {
                     if (!results.length) return null;
                     const total: TradingLimits = { ...results[0]! };
                     for (const key of Object.keys(total) as (keyof TradingLimits)[]) total[key] = results.reduce((sum, row) => sum + row[key], 0);

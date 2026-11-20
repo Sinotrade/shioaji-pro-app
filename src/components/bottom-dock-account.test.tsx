@@ -318,7 +318,11 @@ describe('正式環境台股帳務查詢時段與券商暫時性錯誤', () => {
         vi.setSystemTime(new Date('2026-11-20T14:59:58+08:00'));
         await mount();
         expect(fixture.limits).toHaveBeenCalledTimes(2);
+        // 傳給 API 的 beforeDispatch：時段內放行，過了 15:00 才真正送出就丟錯不送
+        const guard = fixture.limits.mock.calls[0]![1] as () => void;
+        expect(() => guard()).not.toThrow();
         vi.setSystemTime(new Date('2026-11-20T15:00:00.010+08:00'));
+        expect(() => guard()).toThrow('交易額度查詢未送出');
         await act(async () => { await controls!.refresh(); });
         expect(fixture.limits).toHaveBeenCalledTimes(2);
         // 假計時器的 tick 不跟 setSystemTime 跳：邊界計時器排在掛載後約 2 秒
