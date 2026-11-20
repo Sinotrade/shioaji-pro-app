@@ -9,15 +9,17 @@ const m = vi.hoisted(() => ({
     claim: null as null | (() => void), release: null as null | (() => void),
     wants: new Map<string, boolean>(),
     remote: null as null | ((keys: ReadonlySet<string>) => void),
+    published: [] as unknown[], wire: null as null | ((w: unknown) => void),
 }));
 vi.mock('./shared-stream', () => ({
-    createSharedStream: (options: { onOwn: () => void; onRelease: () => void; onRemoteWants?: (keys: ReadonlySet<string>) => void }) => {
+    createSharedStream: (options: { onOwn: () => void; onRelease: () => void; onRemoteWants?: (keys: ReadonlySet<string>) => void; onWire?: (w: unknown) => void }) => {
+        m.wire = (w) => options.onWire?.(w);
         let owner = false;
         m.remote = (keys) => options.onRemoteWants?.(keys);
         m.claim = () => { owner = true; options.onOwn(); };
         m.release = () => { owner = false; options.onRelease(); };
         if (m.autoOwn) m.claim();
-        return { isOwner: () => owner, publish: vi.fn(), want: (key: string, on: boolean) => { m.wants.set(key, on); } };
+        return { isOwner: () => owner, publish: (w: unknown) => { m.published.push(w); }, want: (key: string, on: boolean) => { m.wants.set(key, on); } };
     },
 }));
 vi.mock('./runtime', () => ({ getApiBase: () => 'http://fixture.invalid', getStreamBase: () => 'http://fixture.invalid' }));
@@ -51,6 +53,8 @@ beforeEach(() => {
     m.release = null;
     m.wants.clear();
     m.remote = null;
+    m.published = [];
+    m.wire = null;
     vi.stubGlobal('EventSource', FakeEventSource);
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false })));
 });
@@ -153,4 +157,24 @@ it('signals a US tick stream reset when the US tick SSE drops and again when it 
     vi.advanceTimersByTime(3000);
     tickSource().onopen?.();
     expect(resets).toHaveBeenCalledTimes(2);
+});
+
+it('relays the US tick stream reset to popouts over the shared wire, and a follower dispatches it locally', async () => {
+    const stream = await import('./stream');
+    stream.ensureStream();
+    stream.retainUsQuoteStreams();
+    openUs().find(s => /us_tick/.test(s.url))!.onerror?.();
+    const resetWire = m.published.find(w => (w as { kind: string; name?: string }).kind === 'event'
+        && !/us_(tick|bidask)$/.test((w as { name: string }).name) && (w as { raw: string }).raw === '');
+    expect(resetWire).toBeDefined();
+
+    // 彈出視窗（非擁有者）：收到同一則 wire 就通知自己的監聽者
+    vi.resetModules();
+    m.autoOwn = false;
+    const follower = await import('./stream');
+    follower.ensureStream();
+    const resets = vi.fn();
+    follower.onUsTickStreamReset(resets);
+    m.wire!(resetWire);
+    expect(resets).toHaveBeenCalledTimes(1);
 });
