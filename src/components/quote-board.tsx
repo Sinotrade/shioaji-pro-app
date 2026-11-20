@@ -8,7 +8,7 @@ import { contractLinkKey } from '../lib/contract-key';
 import { usPriceDecimals } from '../lib/us/decimal';
 import { usHaltLabel, useUsHalt } from '../lib/us/us-halts';
 import { getUsTickMeta } from '../lib/us/us-quotes';
-import { usExtTitle as usExtTitleOf } from '../lib/us/us-session-view';
+import { usExtTitle as usExtTitleOf, usTickTradeDate } from '../lib/us/us-session-view';
 import { UsSessionIcon } from './us-session-icon';
 import { useBoardTier } from '../hooks/use-board-tier';
 import { useSnapshotBaseline } from '../hooks/use-display-book';
@@ -248,7 +248,8 @@ export function QuoteBoard({
     const tickOhl = (v: string) => (tick?.simtrade && Number(v) === 0 ? undefined : Number(v));
     // 美股：一般盤還沒開（盤前）時 SDK 送空值 — 用同一個美東交易日的快照一般盤值，
     // 都沒有就空著（隔天盤前不可顯示前一天的開高低）
-    const usSameDaySnap = isUs && usSnap && tick && usSnap.tradeDate && usSnap.tradeDate === tick.date ? usSnap : null;
+    // 比交易日（夜盤 20:00 後的 tick 屬下一個交易日，不可拿前一天快照的開高低補）
+    const usSameDaySnap = isUs && usSnap && tick && usSnap.tradeDate && usSnap.tradeDate === usTickTradeDate(tick) ? usSnap : null;
     const usOhl = (live: string | undefined, snap: number | undefined) =>
         Number(live) > 0 ? Number(live) : snap !== undefined && snap > 0 ? snap : undefined;
     const dayOhl = isUs

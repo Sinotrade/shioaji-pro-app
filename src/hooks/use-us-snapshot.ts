@@ -59,17 +59,17 @@ export function useUsSnapshot(contract: Pick<ContractInfo, 'code' | 'exchange'>,
 
 /**
  * 美股參考價（報價板、自選清單、下單面板、閃電下單共用同一個來源）：
- * 交易日＝即時成交的日期，沒有成交時用快照的交易日；參考價取那天的快照
+ * 交易日＝即時成交的交易日（夜盤 20:00 後屬下一個交易日），沒有成交時用快照的交易日；參考價取那天的快照
  * reference，其次是確定適用那天的合約檔參考價。不從成交價或 price_chg 回推。
  * 沒有成交也沒有快照時才顯示合約檔參考價（附收盤日）。
  */
 export function pickUsReference(
-    tick: Pick<SseTick, 'date'> | undefined,
+    tick: Pick<SseTick, 'date' | 'us'> | undefined,
     snap: Pick<UsSnapshot, 'reference' | 'tradeDate'> | null,
     contract: Pick<ContractInfo, 'us_reference' | 'reference_date'>,
     today = nyDateStr(),
 ): { price: string | null; date: string | null; tradeDate: string } {
-    const tradeDate = tick?.date || snap?.tradeDate || today;
+    const tradeDate = usTickTradeDate(tick) || snap?.tradeDate || today;
     const picked = usReferenceFor(tradeDate, snap, contract);
     // 還沒有成交也沒有快照：只是顯示用（置中、帶價），照合約檔參考價並標它的收盤日；
     // 有成交時漲跌一定要用適用當天的參考價，不走這條

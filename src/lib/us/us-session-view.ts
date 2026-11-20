@@ -204,7 +204,10 @@ export function usSessionView(args: {
     const tickNewer = !snap?.tradeDate || !tickDate || tickDate > snap.tradeDate
         || (tickDate === snap.tradeDate && (!snapMain || !(snap.open > 0) || !snap.ts || !us?.ts || us.ts >= snap.ts));
     const live = started && tickNewer ? tickMain() : null;
-    const fallback = live ? null : snapMain ?? tickMain();
+    // tick 已是較新的交易日（夜盤、盤前，快照還是前一天）：用 tick 帶的一般盤值（＝前一日收盤），
+    // 不留前一天快照的漲跌
+    const tickNewerDay = !!tickDate && !!snap?.tradeDate && tickDate > snap.tradeDate;
+    const fallback = live ? null : (tickNewerDay ? tickMain() ?? snapMain : snapMain ?? tickMain());
     // 退回的值是不是前一日收盤：快照當天還沒有一般盤開盤價（盤前快照 close＝前一日收盤），
     // 或用的是還沒開盤的 tick 帶的一般盤值
     const fromPrev = !!fallback && (fallback === snapMain ? !(snap!.open > 0) : !started);
@@ -212,8 +215,17 @@ export function usSessionView(args: {
         ? { ...fallback, chg: undefined, pct: undefined, prevClose: true }
         : fallback);
 
+    // 同一個交易日裡較新的資料已換到別的時段（例如夜盤 → 盤前、ext_* 已歸零），舊時段的值不再顯示；
+    // session 不明（20:00 後的快照）不算換時段
+    const markers: { date: string; session: string; ts: number }[] = [];
+    if (us && tickDate) markers.push({ date: tickDate, session: us.session, ts: us.ts ?? 0 });
+    if (snap?.tradeDate && snap.session) markers.push({ date: snap.tradeDate, session: snap.session, ts: snap.ts ?? 0 });
+    // 兩邊都有時間才比（沒有時間的舊形狀資料不判定）
+    const superseded = (c: ExtCandidate) => c.ts > 0 && markers.some(m => m.date === c.date && m.ts > c.ts
+        && m.session !== 'Unknown' && m.session !== c.session);
     const shown = [tickExt(tick), snapExt(snap)]
-        .map(c => (c ? { c, state: extState(c, now) } : null))
+        .filter((c): c is ExtCandidate => !!c && !superseded(c))
+        .map(c => ({ c, state: extState(c, now) }))
         .filter((x): x is { c: ExtCandidate; state: 'live' | 'closed' } => !!x && x.state !== null);
     // 交易日較新的優先，同一天先比時段先後，再比時間
     shown.sort((a, b) => (a.c.date !== b.c.date ? (a.c.date < b.c.date ? 1 : -1)

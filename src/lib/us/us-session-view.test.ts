@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import type { SseTick, UsTickSessionFields } from '../types/market';
 import { parseUsSnapshotRow, type UsSnapshot } from './us-history';
-import { nextUsWeekday, normalizeUsTick, usSessionOf, usTradeDateOf, type RawUsTick } from './us-quotes';
+import { nextUsWeekday, normalizeUsTick, noteUsReference, resetUsQuotesForTest, usSessionOf, usTradeDateOf, type RawUsTick } from './us-quotes';
 import { msToNextUsBoundary, usMarketPhase, usSessionView } from './us-session-view';
 
 // 2026-11-19（四）美東是 EST（UTC−5）
@@ -198,6 +198,12 @@ describe('overnight (Nasdaq 23x5, session 4) and trading-day rollover', () => {
         expect(t.close).toBe('230.5'); // 圖表照樣拿到這筆
         expect(t.date).toBe('2026-12-06'); // 圖表時間軸仍是美東日期
         expect(t.us).toMatchObject({ session: 'Overnight', tradeDate: '2026-12-07', extClose: '230.5' });
+        // 漲跌用新交易日（12-07）的參考價，不是 12-06 的
+        resetUsQuotesForTest();
+        noteUsReference('US:AAPL', '2026-12-06', '200');
+        noteUsReference('US:AAPL', '2026-12-07', '229');
+        expect(normalizeUsTick(raw)!.tick.price_chg).toBe('1.5');
+        resetUsQuotesForTest();
     });
 
     it('an overnight print at 21:00 shows live (not greyed) vs the new day reference, replacing the greyed post-market', () => {
@@ -207,8 +213,8 @@ describe('overnight (Nasdaq 23x5, session 4) and trading-day rollover', () => {
         const v = usSessionView({ tick: night, snap: post, reference: '353.1', now: at(19, 21) });
         expect(v.ext).toMatchObject({ session: 'Overnight', label: '夜盤', price: 354.5, base: 353.1, closed: false, date: '2026-11-20', time: '21:00:05' });
         expect(v.ext!.chg).toBeCloseTo(1.4, 6);
-        // 主行仍是週四一般盤收盤（快照當天已開盤，漲跌照給）
-        expect(v.main).toMatchObject({ price: 353.1, chg: 3 });
+        // 主行：tick 已是週五（新交易日），快照還是週四 → 用 tick 的一般盤值（週四收盤），標昨收
+        expect(v.main).toMatchObject({ price: 353.1, prevClose: true });
     });
 
     it('before overnight data exists the post-market stays greyed through the night and clears at 04:00', () => {
@@ -238,6 +244,24 @@ describe('overnight (Nasdaq 23x5, session 4) and trading-day rollover', () => {
         expect(atFour.main).toMatchObject({ price: 353.1, prevClose: true });
         const pre = tick('2026-11-20', { session: 'PreMarket', regular: '353.10', extClose: '355.2', ts: et(20, 4, 2) }, { open: '' });
         expect(usSessionView({ tick: pre, snap: night, reference: '353.1', now: at(20, 4, 2) }).ext).toMatchObject({ session: 'PreMarket', price: 355.2 });
+    });
+
+    it('a newer same-day session change clears an older value (overnight → pre-market reset with ext_close 0)', () => {
+        const night = tick('2026-11-20', { session: 'Overnight', tradeDate: '2026-11-20', regular: '353.10', extClose: '354.5', ts: et(20, 3, 50) }, { open: '' });
+        const preReset = snap({ tradeDate: '2026-11-20', session: 'PreMarket', open: 0, close: 353.1, reference: 353.1, changePrice: 0, changeRate: 0, extClose: null, ts: et(20, 4, 0, ) + 30_000 });
+        expect(usSessionView({ tick: night, snap: preReset, reference: '353.1', now: at(20, 4, 1) }).ext).toBeNull();
+        // 20:00 後 session 不明的快照不算換時段：盤後照樣轉灰保留
+        const post = tick('2026-11-19', { session: 'AfterHours', regular: '353.10', extClose: '354', ts: et(19, 19, 50) });
+        const unknown = snap({ session: 'Unknown', extClose: null, ts: et(19, 20, 30) });
+        expect(usSessionView({ tick: post, snap: unknown, reference: '349', now: at(19, 20, 31) }).ext).toMatchObject({ closed: true });
+    });
+
+    it('a newer-day overnight tick beats yesterday\'s snapshot for the main line (no stale change)', () => {
+        const old = snap({ tradeDate: '2026-11-19', close: 100, changePrice: 5, changeRate: 5.26, session: 'AfterHours', ts: et(19, 19) });
+        const night = tick('2026-11-19', { session: 'Overnight', tradeDate: '2026-11-20', regular: '110', extClose: '112', ts: et(19, 21) }, { open: '' });
+        const v = usSessionView({ tick: night, snap: old, reference: '110', now: at(19, 21) });
+        expect(v.main).toMatchObject({ price: 110, prevClose: true });
+        expect(v.ext).toMatchObject({ session: 'Overnight', price: 112, base: 110, chg: 2 });
     });
 
     it('a stale same-day tick does not override a newer snapshot (main and post-market base)', () => {

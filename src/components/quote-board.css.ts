@@ -593,8 +593,10 @@ export const usExtBlock = style({
     fontVariantNumeric: 'tabular-nums',
     whiteSpace: 'nowrap',
     opacity: 0.85,
-    // 固定最小寬度（圖示＋價格、漲跌＋幅度都放得下）：有值、沒值、換時段時寬度不變，看板不跳
-    minWidth: '15ch',
+    // 固定寬度（圖示＋價格、漲跌＋幅度都放得下，例如 +1,000.00 +10.00%）：有值、沒值、
+    // 換時段時寬度都一樣，看板不跳；極端長的數字截掉，完整值在提示
+    width: '18ch',
+    overflow: 'hidden',
 });
 export const usExtEmpty = style({ visibility: 'hidden' });
 // 大字是前一日收盤：漲跌格改標「昨收」

@@ -264,7 +264,8 @@ export function normalizeUsTick(raw: RawUsTick): { tick: SseTick; meta: UsTickMe
     const tradeDate = typeof raw.trade_date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(raw.trade_date)
         ? raw.trade_date
         : usTradeDateOf(raw.datetime, session);
-    const change = usTickChange(raw, price, knownUsReference(key, date));
+    // 參考價跟著交易日（夜盤 20:00 後已是下一個交易日的參考價）
+    const change = usTickChange(raw, price, knownUsReference(key, tradeDate));
     const tick: SseTick = {
         code: key,
         date,
