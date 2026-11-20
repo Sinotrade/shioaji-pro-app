@@ -20,7 +20,8 @@ vi.mock('../lib/us/us-trading-state', async () => {
     return { ...real, getUsTradingState: () => m.us, subscribeUsTradingState: () => () => undefined, refreshUsPositions: m.refreshUsPositions, refreshUsTrades: m.refreshUsTrades };
 });
 vi.mock('../lib/risk', () => ({ checkUsOrderAllowed: () => null }));
-vi.mock('../lib/stream', () => ({ ensureStream: vi.fn(), getStreamStatus: () => 'down', onOrderEvent: () => () => undefined, subscribeStatusStore: () => () => undefined }));
+vi.mock('../lib/stream', () => ({ ensureStream: vi.fn(), getStreamStatus: () => 'down', onOrderEvent: () => () => undefined, onAnyTick: () => () => undefined, subscribeStatusStore: () => () => undefined }));
+vi.mock('../lib/quote-ownership', () => ({ retainQuote: () => () => undefined }));
 vi.mock('./bottom-dock-positions', () => ({ PositionsPane: (p: Record<string, unknown>) => { m.panes.positions = p; return null; } }));
 vi.mock('./bottom-dock-orders', () => ({ OrdersPane: (p: Record<string, unknown>) => { m.panes.orders = p; return null; } }));
 vi.mock('./bottom-dock-account', () => ({ AccountPane: () => null, UsAccountSection: () => '美股帳務' }));

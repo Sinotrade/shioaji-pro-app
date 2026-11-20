@@ -129,6 +129,25 @@ export function decRound(v: UsAmount, digits: number): string | null {
 }
 
 /**
+ * a ÷ b，四捨五入（half away from zero，與 rust_decimal MidpointAwayFromZero
+ * 相同）到 digits 位小數並去尾 0。除數為 0 或不合法回 null。
+ */
+export function decDivRound(a: UsAmount, b: UsAmount, digits: number): string | null {
+    const pa = parse(a);
+    const pb = parse(b);
+    if (!pa || !pb || pb.value === 0n || digits < 0) return null;
+    // a/b × 10^digits ＝ (a.v × 10^(b.s + digits)) ÷ (b.v × 10^a.s)
+    let num = pa.value * 10n ** BigInt(pb.scale + digits);
+    let den = pb.value * 10n ** BigInt(pa.scale);
+    if (den < 0n) { num = -num; den = -den; }
+    const neg = num < 0n;
+    const abs = neg ? -num : num;
+    let q = abs / den;
+    if ((abs % den) * 2n >= den) q += 1n;
+    return render({ value: neg ? -q : q, scale: digits });
+}
+
+/**
  * 顯示用：千分位、保留原有小數（去尾 0），可指定最少小數位（美元金額 2 位）。
  * 不合法或缺值顯示「—」。
  */

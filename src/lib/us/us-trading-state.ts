@@ -20,11 +20,14 @@ import { reportBody } from '../portfolio-projection';
 import { usReportLedger } from '../report-ledger';
 import { getApiBase } from '../runtime';
 import { getServerModeVersion, subscribeServerInfo } from '../server-info-store';
-import { ensureStream, getStreamStatus, onOrderEvent, subscribeStatusStore } from '../stream';
+import { ensureStream, getStreamStatus, onAnyTick, onOrderEvent, subscribeStatusStore } from '../stream';
+import { retainQuote } from '../quote-ownership';
+import { usLinkKey } from '../contract-key';
 import type { Account } from '../types/portfolio';
 import type { OrderStatusName } from '../types/order';
-import type { AccountedUsTrade, IntlPosition, UsAmount, UsTrade } from '../types/us';
-import { decAdd, decCompare, decIsPositive, decNormalize, decSub, decToInt } from './decimal';
+import type { AccountedUsTrade, IntlPosition, UsAmount, UsDeal, UsTrade } from '../types/us';
+import { decAdd, decCompare, decDivRound, decIsPositive, decMul, decNormalize, decSub, decToInt } from './decimal';
+import { getUsContractRecord, resolveUsContract } from './us-contracts';
 import { fetchUsPositions, fetchUsTradeCacheHealth, fetchUsTrades } from './us-api';
 import { apiGet } from '../api';
 
@@ -336,7 +339,9 @@ export function projectUsReport(rows: AccountedUsTrade[], report: OrderEventRepo
     if (report.market !== 'us') return null;
     if (report.kind === 'order') {
         const old = rows.find(t => t.order.id === report.id && keyOf(t.account) === keyOf(account));
-        if (!old) return null;
+        // 與台股 projectOrderReport 相同：New 回報比下單回應（或 update_status）早到時，
+        // 由回報直接建立委託列；其他操作對不上就重新查詢
+        if (!old) return report.opType === 'New' ? newRowFromReport(rows, report, account) : null;
         if (report.failed) {
             // 拒單：New 被拒標 Failed；刪改被拒保留原狀態，只記 op_msg 原文
             const status = report.opType === 'New' ? { ...old.status, status: 'Failed' as const, msg: report.opMsg, status_code: report.opCode }
@@ -388,9 +393,82 @@ export function projectUsReport(rows: AccountedUsTrade[], report: OrderEventRepo
     if (old.status.deals.some(d => d.seq === '1' && !d.ts)) return null;
     const deals = decAdd(old.status.deal_quantity ?? '0', report.quantityText!);
     if (deals === null || decCompare(decAdd(deals, old.status.cancel_quantity ?? '0') ?? '0', old.order.quantity) > 0) return null;
+    const price = report.priceText || decNormalize(report.price);
+    if (!price) return null;
+    const dealRows: UsDeal[] = [...old.status.deals, { seq, ts: report.ts ?? 0, quantity: report.quantityText!, price }];
+    const avg = usAveragePrice(dealRows);
     return rows.map(t => t !== old ? t : { ...t, status: { ...t.status, deal_quantity: deals,
         status: statusOf(t, t.order.quantity, deals, t.status.cancel_quantity ?? '0'),
-        deals: [...t.status.deals, { seq, ts: report.ts ?? 0, quantity: report.quantityText!, price: report.priceText || String(report.price) }] } });
+        ...(avg !== null ? { avg_price: avg } : {}),
+        deals: dealRows } });
+}
+
+/** SDK intl::US_AVG_PRICE_DECIMALS：成交均價最多 6 位小數 */
+export const US_AVG_PRICE_DECIMALS = 6;
+
+/**
+ * 成交均價＝Σ(價×量)／Σ量，decimal 精算，超過 6 位小數四捨五入（遠離 0）並去尾 0；
+ * 與 SDK intl::average_price 同一個算法，回報更新的委託列和 update_status 的 avg_price 一致。
+ * 沒有成交或任一筆不合法回 null。
+ */
+export function usAveragePrice(deals: readonly UsDeal[]): string | null {
+    let quantity = '0';
+    let amount = '0';
+    for (const d of deals) {
+        const q = decAdd(quantity, d.quantity);
+        const a = decMul(d.price, d.quantity);
+        const sum = a === null ? null : decAdd(amount, a);
+        if (q === null || sum === null) return null;
+        quantity = q; amount = sum;
+    }
+    return decIsPositive(quantity) ? decDivRound(amount, quantity, US_AVG_PRICE_DECIMALS) : null;
+}
+
+/**
+ * IntlOrder New 回報 → 委託列（對不上已知委託時）。回報缺必要欄位（價格、數量、
+ * 買賣別、代碼）回 null，交給重新查詢。拒單（New 失敗）也建一列 Failed，
+ * 與台股一致；沒有數量的拒單（SDK 拒單回報可能不帶 quantity）同樣交給重新查詢。
+ */
+function newRowFromReport(rows: AccountedUsTrade[], report: OrderEventReport, account: Account): AccountedUsTrade[] | null {
+    if (report.kind !== 'order' || report.opType !== 'New' || !report.id) return null;
+    const body = reportBody(report);
+    const order = body?.order as Record<string, unknown> | undefined;
+    const contract = body?.contract as Record<string, unknown> | undefined;
+    const quantity = decNormalize(report.quantityText);
+    const price = decNormalize(report.priceText);
+    const code = typeof contract?.code === 'string' ? contract.code.trim().toUpperCase() : '';
+    if (!order || !code || !quantity || !decIsPositive(quantity) || price === null
+        || (report.action !== 'Buy' && report.action !== 'Sell')) return null;
+    const cancelled = '0';
+    const status: OrderStatusName = report.failed ? 'Failed' : 'Submitted';
+    const session = typeof order.session === 'string' && order.session ? order.session : undefined;
+    const row: AccountedUsTrade = {
+        account,
+        contract: { security_type: typeof contract?.security_type === 'string' ? contract.security_type : 'STK',
+            exchange: getUsContractRecord(code)?.exchange ?? null, code, region: 'US',
+            currency: typeof contract?.currency === 'string' && contract.currency ? contract.currency : 'USD' },
+        order: {
+            id: report.id, seqno: report.seqno, ordno: report.ordno, action: report.action, price, quantity,
+            ...(report.priceType ? { price_type: report.priceType } : {}),
+            ...(report.timeInForce ? { time_in_force: report.timeInForce } : {}),
+            ...(typeof order.aon === 'boolean' ? { all_or_none: order.aon } : {}),
+            ...(session ? { session } : {}),
+            account: { broker_id: account.broker_id, account_id: account.account_id, account_type: 'H' },
+        },
+        status: {
+            id: report.id, status, status_code: report.opCode, msg: report.opMsg,
+            ...(report.ts ? { order_ts: report.ts } : {}),
+            order_quantity: quantity, deal_quantity: '0', cancel_quantity: cancelled, deals: [],
+        },
+    };
+    return [...rows, row];
+}
+
+/** 以 current 為準，只用 base 補 current 缺（undefined／null）的欄位 */
+function fillMissing<T extends object>(base: T, current: T): T {
+    const out = { ...base } as Record<string, unknown>;
+    for (const [k, v] of Object.entries(current)) if (v !== undefined && v !== null) out[k] = v;
+    return out as T;
 }
 
 /** 下單／刪單回應：把 HTTP Trade 放進列表（較新的回報不被覆蓋） */
@@ -400,8 +478,8 @@ export function observeUsTrade(trade: UsTrade, account: Account) {
     if (old) {
         // 回應可能比回報晚：只補缺的欄位
         publish({ trades: state.trades.map(t => t !== old ? t : { ...t,
-            contract: { ...trade.contract, ...t.contract },
-            order: { ...trade.order, ...t.order } }) });
+            contract: fillMissing(trade.contract, t.contract),
+            order: fillMissing(trade.order, t.order) }) });
     } else publish({ trades: dropExpiredDayOrders([...state.trades, { ...trade, account }]) });
 }
 
@@ -502,7 +580,7 @@ let positionsSeq = 0;
 export async function refreshUsPositions(): Promise<void> {
     const seq = ++positionsSeq;
     const accounts = usAccounts();
-    if (!accounts.length) { publish({ positions: [], positionsStatus: 'idle', positionsError: null }); return; }
+    if (!accounts.length) { publish({ positions: [], positionsStatus: 'idle', positionsError: null }); syncPositionQuotes(); return; }
     const base = getApiBase();
     const mode = getServerModeVersion();
     const superseded = () => seq !== positionsSeq;
@@ -513,6 +591,7 @@ export async function refreshUsPositions(): Promise<void> {
     if (stale()) { retryPositionsSoon(); return; }
     if (capability === 'no') {
         publish({ positions: [], positionsStatus: 'unsupported', positionsError: null });
+        syncPositionQuotes();
         return;
     }
     if (capability === 'unknown') {
@@ -535,7 +614,91 @@ export async function refreshUsPositions(): Promise<void> {
         }
         rows.push(...parsed.map(p => ({ ...p, account: accounts[i]! })));
     }
-    publish({ positions: rows, positionsStatus: 'ready', positionsError: null, positionsVersion: state.positionsVersion + 1 });
+    // 查詢回來的 market_price 是後端參考價（不一定是最後成交）：有夠新的即時成交就用它重算
+    publish({ positions: rows.map(markWithFreshTick), positionsStatus: 'ready', positionsError: null, positionsVersion: state.positionsVersion + 1 });
+    syncPositionQuotes();
+}
+
+// ---- 庫存即時損益 ----
+//
+// 與台股 trading-state 同一套機制：持倉代碼以 retainQuote(contract, 'Tick') 訂閱，
+// onAnyTick 收到成交就重算該代碼的市值與未實現損益（台股 markPosition）。
+// 美股差異（刻意）：價格／數量／成本都是 decimal 字串，以 decimal 精算，不轉浮點；
+// 損益以 SDK 相同公式：market_value＝價×股數、pnl＝market_value − cost_basis、
+// pnl_pct＝pnl ÷ cost_basis × 100（兩位小數）。盤前／盤中／盤後的成交都會更新
+// （與報價面板的最新成交價一致）。
+
+/** 與台股 TICK_MARK_MAX_AGE_MS 相同：庫存重查後只沿用 60 秒內的即時成交 */
+export const US_TICK_MARK_MAX_AGE_MS = 60_000;
+/** 最新即時成交（key：美股代碼大寫） */
+const lastUsTicks = new Map<string, { price: string; at: number }>();
+
+/**
+ * 以即時價重算一列美股庫存（純函式）。價格、股數不合法或沒有成本時原樣回傳。
+ * 只有多方（H 帳戶不能放空）；保險起見空方以 成本 − 市值 計。
+ */
+export function markUsPosition<T extends IntlPosition>(p: T, price: UsAmount): T {
+    const px = decNormalize(price);
+    const qty = decNormalize(p.quantity);
+    if (!px || !decIsPositive(px) || !qty || !decIsPositive(qty)) return p;
+    const cost = p.cost_basis !== undefined && p.cost_basis !== null && decNormalize(p.cost_basis) !== null
+        ? decNormalize(p.cost_basis)! : decMul(p.price, qty);
+    const value = decMul(px, qty);
+    if (cost === null || value === null) return p;
+    const pnl = p.direction === 'Sell' ? decSub(cost, value) : decSub(value, cost);
+    if (pnl === null) return p;
+    const pct = decIsPositive(cost) ? decDivRound(decMul(pnl, '100')!, cost, 2) : null;
+    if (p.market_price !== undefined && p.market_price !== null && decCompare(p.market_price, px) === 0
+        && p.pnl !== undefined && p.pnl !== null && decCompare(p.pnl, pnl) === 0) return p;
+    return { ...p, market_price: px, market_value: value, pnl, pnl_pct: pct };
+}
+
+function markWithFreshTick<T extends IntlPosition>(p: T): T {
+    const t = lastUsTicks.get(p.code.trim().toUpperCase());
+    return t && Date.now() - t.at <= US_TICK_MARK_MAX_AGE_MS ? markUsPosition(p, t.price) : p;
+}
+
+/** 即時成交（onAnyTick）：更新持有該代碼的庫存列 */
+export function onUsPositionTick(tick: { code: string; close: string; simtrade?: boolean }) {
+    if (tick.simtrade || !tick.code.startsWith('US:')) return;
+    const code = tick.code.slice(3).toUpperCase();
+    const price = decNormalize(tick.close);
+    if (!price || !decIsPositive(price)) return;
+    if (lastUsTicks.size >= 2000 && !lastUsTicks.has(code)) lastUsTicks.clear();
+    lastUsTicks.set(code, { price, at: Date.now() });
+    let changed = false;
+    const positions = state.positions.map(p => {
+        if (p.code.trim().toUpperCase() !== code) return p;
+        const next = markUsPosition(p, price);
+        changed ||= next !== p;
+        return next;
+    });
+    if (changed) publish({ positions });
+}
+
+/** 持倉代碼的 Tick 訂閱（引用計數由 quote-ownership 管；不再持有就釋放） */
+const positionQuotes = new Map<string, { release?: () => void }>();
+function syncPositionQuotes() {
+    const codes = new Set(state.positions.filter(p => decIsPositive(p.quantity)).map(p => p.code.trim().toUpperCase()));
+    for (const [code, entry] of positionQuotes) {
+        if (codes.has(code)) continue;
+        entry.release?.();
+        positionQuotes.delete(code);
+        lastUsTicks.delete(code);
+    }
+    for (const code of codes) {
+        if (positionQuotes.has(code)) continue;
+        const entry: { release?: () => void } = {};
+        positionQuotes.set(code, entry);
+        void resolveUsContract(code).then(contract => {
+            if (positionQuotes.get(code) === entry) entry.release = retainQuote(contract, 'Tick');
+        }).catch(() => { if (positionQuotes.get(code) === entry) positionQuotes.delete(code); });
+    }
+}
+function releasePositionQuotes() {
+    positionQuotes.forEach(e => e.release?.());
+    positionQuotes.clear();
+    lastUsTicks.clear();
 }
 
 // ---- 啟動與重連 ----
@@ -548,6 +711,7 @@ export function startUsTradingState() {
     if (started) return;
     started = true;
     const stopEvents = onOrderEvent(onUsReport);
+    const stopTicks = onAnyTick(onUsPositionTick);
     const gapTimers = new Set<ReturnType<typeof setTimeout>>();
     const stopGaps = usReportLedger.onGap((base, opened) => {
         // 晚到的序號仍可能補上：等一下再確認
@@ -569,6 +733,7 @@ export function startUsTradingState() {
         } else if (!live && wasLive) {
             wasLive = false;
             hadDown = true;
+            lastUsTicks.clear(); // 與台股相同：斷線期間的成交可能漏收
         }
     };
     const stopStatus = subscribeStatusStore(statusChanged);
@@ -608,7 +773,8 @@ export function startUsTradingState() {
     }, 60_000);
     import.meta.hot?.dispose(() => {
         stopServerInfo(); clearInterval(dayTimer); if (modeTimer) clearTimeout(modeTimer);
-        stopEvents(); stopGaps(); stopStatus(); stopAccounts(); gapTimers.forEach(clearTimeout);
+        stopEvents(); stopTicks(); stopGaps(); stopStatus(); stopAccounts(); gapTimers.forEach(clearTimeout);
+        releasePositionQuotes();
         refetchTimers.forEach(clearTimeout); refetchTimers.clear();
         clearDealPositionsTimers();
         if (positionsRetry) { clearTimeout(positionsRetry); positionsRetry = null; }
@@ -654,6 +820,7 @@ export function resetUsTradingStateForTest(next: Partial<UsTradingState> = {}) {
     recomputeOwed = false;
     positionsCapability = null;
     capabilityBase = '';
+    releasePositionQuotes();
     listeners.forEach(l => l());
 }
 
