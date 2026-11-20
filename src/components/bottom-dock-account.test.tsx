@@ -39,6 +39,7 @@ it('adds matching settlement dates and rejects mismatched dates; incomplete fund
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     vi.stubGlobal('localStorage', { getItem: () => null, setItem: vi.fn() });
     vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-11-20T10:00:00+08:00'));
     fixture.accounts.forEach(a => { a.account_type = 'S'; });
     fixture.pnl.mockResolvedValue([]); fixture.summary.mockResolvedValue({ total: { pnl: 0 }, profitloss_sum: [] });
     fixture.limits.mockResolvedValue({ trading_limit: 0 }); fixture.reserve.mockResolvedValue({ stocks: [] });
@@ -158,6 +159,8 @@ describe('#381 交易額度查詢失敗', () => {
         vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
         vi.stubGlobal('localStorage', { getItem: () => null, setItem: vi.fn() });
         vi.useFakeTimers();
+        // 交易日盤中（台北 2026-11-20 週五 10:00）：額度查詢在服務時段內
+        vi.setSystemTime(new Date('2026-11-20T10:00:00+08:00'));
         run += 1; controls = null; fixture.simulation = false;
         // Fresh account keys: the pane keeps the previous test's snapshot per account set.
         fixture.accounts.forEach((a, i) => { a.account_type = 'S'; a.account_id = `${'AB'[i]}-381-${run}`; });
@@ -214,5 +217,109 @@ describe('#381 交易額度查詢失敗', () => {
         await act(async () => { vi.advanceTimersByTime(1600); await controls!.refresh(); });
         expect(text()).toContain('現股 可用/上限');
         expect(controls!.error).toContain('QCredit');
+    });
+});
+
+describe('正式環境台股帳務查詢時段與券商暫時性錯誤', () => {
+    const LIMITS = { trading_limit: 500, trading_used: 0, trading_available: 400, margin_limit: 0, margin_used: 0, margin_available: 0, short_limit: 0, short_used: 0, short_available: 0 };
+    const AS400 = '500 Query error: QCredit:Query fail{no AS400Query Connection (RouteID=M|N, WebID=094, MachineID=H05)}';
+    let run = 0;
+    let controls: AccountRefreshControls | null;
+    const text = () => JSON.stringify(view!.toJSON());
+    const retry = () => view!.root.findAll(node => node.type === 'button' && node.children.some(child => typeof child === 'string' && child.includes('重試')));
+    const mount = async () => {
+        await act(async () => { view = create(createElement(AccountPane, { positions: [], market: 'S', scopeAccount: null, onRefreshControls: value => { controls = value; } })); });
+    };
+    beforeEach(() => {
+        vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+        vi.stubGlobal('localStorage', { getItem: () => null, setItem: vi.fn() });
+        vi.useFakeTimers();
+        run += 1; controls = null; fixture.simulation = false;
+        fixture.accounts.forEach((a, i) => { a.account_type = 'S'; a.account_id = `${'AB'[i]}-win-${run}`; });
+        fixture.pnl.mockReset().mockResolvedValue([]); fixture.summary.mockReset().mockResolvedValue({ total: { pnl: 0 }, profitloss_sum: [] });
+        fixture.settlements.mockReset().mockResolvedValue([]); fixture.reserve.mockReset().mockResolvedValue({ stocks: [] });
+        fixture.limits.mockReset().mockResolvedValue(LIMITS);
+    });
+
+    it('深夜（01:54）不送額度查詢、顯示時段提示；08:30 計時器到點自動查詢', async () => {
+        vi.setSystemTime(new Date('2026-11-20T01:54:00+08:00'));
+        await mount();
+        expect(fixture.limits).not.toHaveBeenCalled();
+        expect(text()).toContain('非交易時段無額度資料（交易日 08:30–15:00 提供）');
+        expect(text()).not.toContain('載入交易額度');
+        expect(retry()).toHaveLength(0);
+        expect(controls!.error).toBeNull();
+        // 交割、預收沒有時段閘門，夜間照查
+        expect(fixture.settlements).toHaveBeenCalled();
+        expect(fixture.reserve).toHaveBeenCalled();
+        // 手動重新整理也不會在時段外送額度查詢
+        await act(async () => { await controls!.refresh(); });
+        expect(fixture.limits).not.toHaveBeenCalled();
+        await act(async () => { vi.advanceTimersByTime(6 * 3600_000 + 36 * 60_000 - 1000); });
+        expect(fixture.limits).not.toHaveBeenCalled();
+        await act(async () => { vi.advanceTimersByTime(1100); });
+        for (let i = 0; i < 5; i += 1) await act(async () => { await Promise.resolve(); });
+        expect(fixture.limits).toHaveBeenCalledTimes(2);
+        expect(text()).toContain('現股 可用/上限');
+        // 15:00 收盤：回到時段提示，不再送
+        await act(async () => { vi.advanceTimersByTime(6.5 * 3600_000); });
+        expect(text()).toContain('非交易時段無額度資料');
+        expect(text()).not.toContain('現股 可用/上限');
+        expect(fixture.limits).toHaveBeenCalledTimes(2);
+    });
+
+    it('週末整天不送額度查詢', async () => {
+        vi.setSystemTime(new Date('2026-11-21T10:00:00+08:00'));
+        await mount();
+        expect(fixture.limits).not.toHaveBeenCalled();
+        expect(text()).toContain('非交易時段無額度資料');
+    });
+
+    it('模擬環境不受時段限制，深夜照查', async () => {
+        fixture.simulation = true;
+        vi.setSystemTime(new Date('2026-11-21T01:54:00+08:00'));
+        await mount();
+        expect(fixture.limits).toHaveBeenCalled();
+        expect(text()).toContain('現股 可用/上限');
+    });
+
+    it('時段內券商回 AS400 未連線：灰字提示、原文只在 title、不算報表錯誤', async () => {
+        vi.setSystemTime(new Date('2026-11-20T10:00:00+08:00'));
+        fixture.limits.mockReset().mockRejectedValue(new Error(AS400));
+        await mount();
+        expect(text()).toContain('券商額度服務目前未開放');
+        expect(text()).not.toContain('交易額度查詢失敗');
+        expect(view!.root.findAll(node => node.type === 'span' && node.props.title === AS400)).toHaveLength(1);
+        expect(view!.root.findAll(node => typeof node.type === 'string' && node.children.some(c => typeof c === 'string' && c.includes('AS400')))).toHaveLength(0);
+        expect(controls!.error).toBeNull();
+    });
+
+    it.each(['500 Internal Server Error', '503 Service Unavailable', '503 6044 無法取得交易狀態'])(
+        '交割、預收遇到 %s：灰字「稍後再試」＋重試，不算報表錯誤', async (message) => {
+            vi.setSystemTime(new Date('2026-11-20T01:54:00+08:00'));
+            fixture.settlements.mockReset().mockRejectedValue(new Error(message));
+            fixture.reserve.mockReset().mockRejectedValue(new Error(message));
+            await mount();
+            expect(text()).not.toContain('載入交割資訊');
+            expect(text()).not.toContain('載入預收資訊');
+            expect(text().match(/券商暫時查不到資料，稍後再試/g)).toHaveLength(2);
+            expect(text()).not.toContain('查詢失敗');
+            expect(view!.root.findAll(node => node.type === 'span' && node.props.title === message)).toHaveLength(2);
+            expect(controls!.error).toBeNull();
+            expect(retry()).toHaveLength(2);
+            fixture.settlements.mockReset().mockResolvedValue([{ T: 0, date: '2026-11-20', amount: 4321 }]);
+            await act(async () => { vi.advanceTimersByTime(1600); retry().forEach(b => b.props.onClick()); });
+            for (let i = 0; i < 5; i += 1) await act(async () => { await Promise.resolve(); });
+            expect(fixture.settlements).toHaveBeenCalledTimes(2);
+            expect(text()).toContain('8,642');
+        });
+
+    it('交割的其他錯誤仍是紅字錯誤＋重試，並留在狀態列', async () => {
+        vi.setSystemTime(new Date('2026-11-20T10:00:00+08:00'));
+        fixture.settlements.mockReset().mockRejectedValue(new Error('500 Query error: session disconnected'));
+        await mount();
+        expect(text()).toContain('交割資訊查詢失敗：');
+        expect(text()).not.toContain('稍後再試');
+        expect(controls!.error).toContain('session disconnected');
     });
 });

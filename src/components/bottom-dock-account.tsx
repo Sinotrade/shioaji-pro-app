@@ -37,7 +37,9 @@ import type {
 } from '../lib/types/portfolio';
 import { canonicalBrokerCode, resolveRealizedName } from '../lib/realized-name';
 import { bizDateLabel, settleDateLabel } from '../lib/settle-date';
-import { isTradingLimitsWindowError } from '../lib/trading-limits-error';
+import { classifyAccountQueryError, classifyBrokerQueryError } from '../lib/trading-limits-error';
+import { TRADING_LIMITS_WINDOW, windowLabel, type TwQueryWindow } from '../lib/tw-query-window';
+import { useTwQueryWindow } from '../hooks/use-tw-query-window';
 import { fmtMoney, fmtSigned } from '../lib/utils/format';
 import { vars } from '../theme.css';
 import {
@@ -58,6 +60,48 @@ function dirOfAmount(n: number): 'up' | 'down' | 'flat' {
 
 function Loading({ text }: { text: string }) {
     return <AsyncStatus phase='loading' text={text} className={styles.loadingRow} />;
+}
+
+// 券商查詢「不在服務中」的灰字提示：時段外（不送查詢）或券商回時段／AS400 未連線。
+// 原始錯誤只放 title 給客服回報用，畫面不顯示，避免看起來像查詢壞掉
+function ClosedHint({ what, window: w }: { what: string; window: TwQueryWindow }) {
+    return <span className={styles.acctHint}>{`非交易時段無${what}資料（${windowLabel(w)} 提供）`}</span>;
+}
+
+function UnavailableHint({ what, raw }: { what: string; raw: string | null }) {
+    return <span className={styles.acctHint} title={raw ?? undefined}>{`券商${what}服務目前未開放`}</span>;
+}
+
+function RetryButton({ onRetry }: { onRetry: () => void }) {
+    return (
+        <button type='button' className={styles.acctRetry} onClick={onRetry}>
+            <RotateCw size={11} aria-hidden /> 重試
+        </button>
+    );
+}
+
+// 交割、預收（不設時段閘門）查詢失敗且沒有舊資料時：暫時性失敗（503、TKAP01 6044、
+// 裸 500 Internal Server Error）與 AS400 未連線用灰字＋小重試，其他才是紅字錯誤
+function AccountQueryFailure({ what, error, onRetry }: { what: string; error: string; onRetry: () => void }) {
+    const kind = classifyAccountQueryError(error);
+    if (!kind) return <QueryError text={`${what}資訊查詢失敗：${error}`} onRetry={onRetry} />;
+    return (
+        <span className={styles.acctHint} title={error}>
+            {kind === 'unavailable' ? `券商${what}服務目前未開放` : '券商暫時查不到資料，稍後再試'}
+            {' '}<RetryButton onRetry={onRetry} />
+        </span>
+    );
+}
+
+function QueryError({ text, onRetry }: { text: string; onRetry: () => void }) {
+    return (
+        <AsyncStatus
+            phase='error'
+            text={text}
+            className={styles.acctError}
+            action={<RetryButton onRetry={onRetry} />}
+        />
+    );
 }
 
 function Row({
@@ -250,11 +294,17 @@ function FundsSection({
 
 function SettleSection({
     settlements,
+    error,
     privMoney,
+    onRetry,
 }: {
     settlements: Settlement[] | undefined;
+    error: string | null;
     privMoney: boolean;
+    onRetry: () => void;
 }) {
+    // 失敗時 data 維持 undefined，不能當成載入中（同 #381）；已有資料的刷新失敗保留上一份
+    const failed = settlements === undefined && !!error;
     const byT = new Map((settlements ?? []).map((s) => [s.T, s]));
     // 全 0 也顯示三列（手機版預收頁日曆概念）
     const rows = [0, 1, 2].map((t) => {
@@ -271,7 +321,9 @@ function SettleSection({
                 交割行事曆 Settlements
                 <span className={styles.acctTitleNote}>正=應收 負=應付</span>
             </div>
-            {settlements === undefined ? (
+            {failed ? (
+                <AccountQueryFailure what='交割' error={error!} onRetry={onRetry} />
+            ) : settlements === undefined ? (
                 <Loading text='載入交割資訊' />
             ) : (
                 rows.map((r) => (
@@ -412,12 +464,15 @@ function PnlSection({
 function LimitsSection({
     limits,
     error,
+    closed,
     sim,
     privMoney,
     onRetry,
 }: {
     limits: TradingLimits | null | undefined;
     error: string | null;
+    /** 正式環境 QCredit 時段外：沒有送查詢 */
+    closed: boolean;
     sim: boolean;
     privMoney: boolean;
     onRetry: () => void;
@@ -429,35 +484,28 @@ function LimitsSection({
     // 失敗時 data 維持 undefined：不能再當成「載入中」，否則永遠卡在 Spinner（#381）。
     // 已有資料時的刷新失敗沿用 useQuery 的約定，保留上一份。
     const failed = limits === undefined && !!error;
-    const closed = failed && isTradingLimitsWindowError(error);
-    const empty = closed || !limits || allZero;
+    // 券商回時段錯誤或 AS400 未連線（夜間）都不是真的失敗
+    const kind = failed ? classifyBrokerQueryError(error) : null;
+    const offHours = closed || kind === 'window';
+    const empty = offHours || kind === 'unavailable' || !limits || allZero;
     return (
         <section className={styles.acctSection}>
             <div className={styles.acctTitle}>
                 交易額度 Trading Limits
                 <span className={styles.acctTitleNote}>
-                    交易日 08:30–15:00
+                    {windowLabel(TRADING_LIMITS_WINDOW)}
                 </span>
             </div>
-            {failed && !closed ? (
-                <AsyncStatus
-                    phase='error'
-                    text={`交易額度查詢失敗：${error}`}
-                    className={styles.acctError}
-                    action={
-                        <button type='button' className={styles.acctRetry} onClick={onRetry}>
-                            <RotateCw size={11} aria-hidden /> 重試
-                        </button>
-                    }
-                />
-            ) : limits === undefined && !closed ? (
+            {failed && !kind ? (
+                <QueryError text={`交易額度查詢失敗：${error}`} onRetry={onRetry} />
+            ) : limits === undefined && !kind && !offHours ? (
                 <Loading text='載入交易額度' />
             ) : sim && empty ? (
                 <span className={styles.acctHint}>模擬模式無法查詢</span>
-            ) : empty ? (
-                <span className={styles.acctHint}>
-                    非交易時段無額度資料（交易日 08:30–15:00 提供）
-                </span>
+            ) : kind === 'unavailable' ? (
+                <UnavailableHint what='額度' raw={error} />
+            ) : empty || !limits ? (
+                <ClosedHint what='額度' window={TRADING_LIMITS_WINDOW} />
             ) : (
                 <>
                     <Row
@@ -488,17 +536,24 @@ interface ReserveData {
 
 function ReserveSection({
     reserve,
+    error,
     sim,
     privMoney,
+    onRetry,
 }: {
     reserve: ReserveData | undefined;
+    error: string | null;
     sim: boolean;
     privMoney: boolean;
+    onRetry: () => void;
 }) {
     let body;
-    if (reserve === undefined) {
+    // 失敗時 data 維持 undefined，不能當成載入中（同 #381）；已有資料的刷新失敗保留上一份
+    if (reserve === undefined && error && !sim) {
+        body = <AccountQueryFailure what='預收' error={error} onRetry={onRetry} />;
+    } else if (reserve === undefined && !(error && sim)) {
         body = <Loading text='載入預收資訊' />;
-    } else if (sim) {
+    } else if (sim || !reserve) {
         // 模擬環境不支援預收（API 回空或錯誤都歸到這個提示）
         body = (
             <span className={styles.acctHint}>模擬模式不支援預收券款</span>
@@ -671,8 +726,9 @@ function AccountPaneContent({ positions, balance, margin, funds, market, scopeAc
     const { ref, width } = useMeasuredWidth();
     const wide = sizeClassOf(width) === 'wide';
 
-    // 模擬環境判斷：空狀態文案（無法查詢 vs 非交易時段）靠這個分流
-    const [simulation, setSimulation] = useState<boolean | null>(null);
+    // 模擬環境判斷：空狀態文案（無法查詢 vs 非交易時段）與額度時段閘門靠這個分流。
+    // undefined＝還沒問到；問不到（null）當正式環境處理
+    const [simulation, setSimulation] = useState<boolean | null | undefined>(undefined);
     useEffect(() => {
         let alive = true;
         fetchInfo()
@@ -687,6 +743,15 @@ function AccountPaneContent({ positions, balance, margin, funds, market, scopeAc
         };
     }, []);
     const sim = simulation === true;
+    const infoKnown = simulation !== undefined;
+
+    // 交易額度（QCredit）只在交易日 08:30–15:00 有服務：正式環境時段外不送查詢，
+    // 計時器到邊界時自動開查（不輪詢）。模擬環境隨時可查。cache key 帶交易日，
+    // 每個交易日時段開始時重查一次，不沿用前一天的快照
+    const limitsWindow = useTwQueryWindow(TRADING_LIMITS_WINDOW);
+    const limitsEnabled = infoKnown && (sim || limitsWindow.open);
+    const limitsClosed = infoKnown && !sim && !limitsWindow.open;
+    const limitsSession = sim ? 'sim' : limitsWindow.sessionDate ?? 'closed';
 
     // 全域帳戶範圍：scope 選 [期] 只顯示期貨區塊、[證] 只顯示證券區塊；
     // 市場篩選 chips 同樣生效
@@ -798,8 +863,8 @@ function AccountPaneContent({ positions, balance, margin, funds, market, scopeAc
             // eslint-disable-next-line react-hooks/exhaustive-deps
             [showStock, selKey],
         ),
-        `trading-limits:${selKey}:${showStock}`,
-        true, stockAccounts,
+        `trading-limits:${selKey}:${showStock}:${limitsSession}`,
+        limitsEnabled, stockAccounts,
     );
 
     // 預收券款/圈存（證券、查詢類）— 個別 catch，任一失敗不拖垮整區
@@ -833,8 +898,18 @@ function AccountPaneContent({ positions, balance, margin, funds, market, scopeAc
     const reportsLoading = loadingSettle || loadingPnl || loadingLimits || loadingReserve;
     // 額度時段外是預期狀態，區塊內已有提示，不算報表錯誤（#381）。保留上一份額度時
     // 畫面沒有提示，刷新失敗仍要留在狀態列，否則舊資料看起來像剛更新
-    const limitsClosed = limits === undefined && isTradingLimitsWindowError(errorLimits);
-    const reportsError = [errorSettle, errorPnl, limitsClosed ? null : errorLimits, errorReserve].filter(Boolean).join('；') || null;
+    // 額度時段外／AS400 未連線，交割、預收的暫時性失敗都是預期狀態，區塊內已有灰字提示，
+    // 不算報表錯誤（#381）。保留上一份資料時畫面沒有提示，刷新失敗仍要留在狀態列，
+    // 否則舊資料看起來像剛更新
+    const limitsExpected = limits === undefined && !!classifyBrokerQueryError(errorLimits);
+    const settleExpected = settlements === undefined && !!classifyAccountQueryError(errorSettle);
+    const reserveExpected = reserve === undefined && !sim && !!classifyAccountQueryError(errorReserve);
+    const reportsError = [
+        settleExpected ? null : errorSettle,
+        errorPnl,
+        limitsExpected ? null : errorLimits,
+        reserveExpected ? null : errorReserve,
+    ].filter(Boolean).join('；') || null;
     useEffect(() => {
         onRefreshControls?.({ refresh: refreshReports, loading: reportsLoading, error: reportsError });
         return () => onRefreshControls?.(null);
@@ -857,13 +932,16 @@ function AccountPaneContent({ positions, balance, margin, funds, market, scopeAc
             {showStock && (
                 <SettleSection
                     settlements={settlements}
+                    error={errorSettle}
                     privMoney={privMoney}
+                    onRetry={() => void refreshSettle()}
                 />
             )}
             {showStock && (
                 <LimitsSection
                     limits={limits}
                     error={errorLimits}
+                    closed={limitsClosed}
                     sim={sim}
                     privMoney={privMoney}
                     onRetry={() => void refreshLimits()}
@@ -877,8 +955,10 @@ function AccountPaneContent({ positions, balance, margin, funds, market, scopeAc
             {showStock && (
                 <ReserveSection
                     reserve={reserve}
+                    error={errorReserve}
                     sim={sim}
                     privMoney={privMoney}
+                    onRetry={() => void refreshReserve()}
                 />
             )}
         </div>
