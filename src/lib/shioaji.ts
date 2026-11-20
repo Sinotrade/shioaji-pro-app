@@ -1206,14 +1206,15 @@ export interface AccountSelector {
     account_id: string;
 }
 
-function accountQueryPost<T>(path: string, type: AccountTypeName, selector?: AccountSelector, extra: Record<string, unknown> = {}): Promise<T> {
+function accountQueryPost<T>(path: string, type: AccountTypeName, selector?: AccountSelector, extra: Record<string, unknown> = {},
+    guard?: () => void): Promise<T> {
     const query = createAccountQuery();
     return query.read(type, selector, account => apiPost<T>(path, {
         ...extra,
         account_type: type,
         broker_id: account.broker_id,
         account_id: account.account_id,
-    }, { beforeDispatch: query.assertCurrent }));
+    }, { beforeDispatch: () => { query.assertCurrent(); guard?.(); } }));
 }
 
 export interface FetchTradesOptions {
@@ -1393,8 +1394,9 @@ export interface TradingLimits {
     short_available: number;
 }
 
-export function fetchTradingLimits(account?: AccountSelector) {
-    return accountQueryPost<TradingLimits>('/api/v1/portfolio/trading_limits', 'S', account);
+/** `beforeDispatch` 在請求真正送出前執行，丟錯即不送（交易額度的服務時段閘門用） */
+export function fetchTradingLimits(account?: AccountSelector, beforeDispatch?: () => void) {
+    return accountQueryPost<TradingLimits>('/api/v1/portfolio/trading_limits', 'S', account, {}, beforeDispatch);
 }
 
 // ---- 預收券款/圈存（查詢類 only）----
