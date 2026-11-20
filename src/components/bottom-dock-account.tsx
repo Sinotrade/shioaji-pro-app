@@ -8,7 +8,7 @@ import { canTrade } from '../lib/account-tradable';
 import { accountMatches } from '../lib/flash-account';
 import { maskAccountId, usePrivacyMode } from '../lib/privacy';
 import { useAccounts } from '../lib/account-store';
-import { ChevronDown, ChevronRight, RotateCw } from 'lucide-react';
+import { ChevronDown, ChevronRight } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useQuery } from '../hooks/use-query';
 import { maskMoney, usePrivacyMoney } from '../lib/privacy';
@@ -37,7 +37,7 @@ import type {
 } from '../lib/types/portfolio';
 import { canonicalBrokerCode, resolveRealizedName } from '../lib/realized-name';
 import { bizDateLabel, settleDateLabel } from '../lib/settle-date';
-import { classifyAccountQueryError, classifyBrokerQueryError, TRADING_LIMITS_NOT_SENT } from '../lib/trading-limits-error';
+import { classifyAccountQueryError, classifyBrokerQueryError, settleAccountQueries, TRADING_LIMITS_NOT_SENT } from '../lib/trading-limits-error';
 import { knownServerInfo, useServerInfo } from '../lib/server-info-store';
 import { getApiBase } from '../lib/runtime';
 import { TRADING_LIMITS_WINDOW, twQueryWindowState, windowLabel, type TwQueryWindow } from '../lib/tw-query-window';
@@ -52,6 +52,8 @@ import {
 } from './bottom-dock-shared';
 import * as styles from './bottom-dock.css';
 import { AsyncStatus } from './async-status';
+import { AccountQueryFailure, QueryError } from './account-query-failure';
+import type { QueryFailure } from '../lib/trading-state';
 import * as panel from './panel.css';
 
 // ---- helpers ----
@@ -72,38 +74,6 @@ function ClosedHint({ what, window: w }: { what: string; window: TwQueryWindow }
 
 function UnavailableHint({ what, raw }: { what: string; raw: string | null }) {
     return <span className={styles.acctHint} title={raw ?? undefined}>{`券商${what}服務目前未開放`}</span>;
-}
-
-function RetryButton({ onRetry }: { onRetry: () => void }) {
-    return (
-        <button type='button' className={styles.acctRetry} onClick={onRetry}>
-            <RotateCw size={11} aria-hidden /> 重試
-        </button>
-    );
-}
-
-// 交割、預收（不設時段閘門）查詢失敗且沒有舊資料時：暫時性失敗（503、TKAP01 6044、
-// 裸 500 Internal Server Error）與 AS400 未連線用灰字＋小重試，其他才是紅字錯誤
-function AccountQueryFailure({ what, error, onRetry }: { what: string; error: string; onRetry: () => void }) {
-    const kind = classifyAccountQueryError(error);
-    if (!kind) return <QueryError text={`${what}資訊查詢失敗：${error}`} onRetry={onRetry} />;
-    return (
-        <span className={styles.acctHint} title={error}>
-            {kind === 'unavailable' ? `券商${what}服務目前未開放` : '券商暫時查不到資料，稍後再試'}
-            {' '}<RetryButton onRetry={onRetry} />
-        </span>
-    );
-}
-
-function QueryError({ text, onRetry }: { text: string; onRetry: () => void }) {
-    return (
-        <AsyncStatus
-            phase='error'
-            text={text}
-            className={styles.acctError}
-            action={<RetryButton onRetry={onRetry} />}
-        />
-    );
 }
 
 function Row({
@@ -138,7 +108,11 @@ function FundsSection({
     showFut,
     sim,
     privMoney,
+    futuresFailure = null,
+    onRetryFutures,
 }: {
+    futuresFailure?: { kind: QueryFailure['kind'] | null; raw: string } | null;
+    onRetryFutures?: () => void;
     balance?: AccountBalance;
     margin?: Margin;
     positions: AccountedPosition[];
@@ -224,7 +198,11 @@ function FundsSection({
             {showStock && showFut && !!margin && (
                 <div className={styles.fundRule} />
             )}
-            {showFut && !margin && <Loading text='載入期貨帳務' />}
+            {showFut && !margin && (futuresFailure
+                // 保證金查詢失敗且沒有上一份：不能一直顯示載入中
+                ? <AccountQueryFailure what='期貨帳務' error={futuresFailure.raw} kind={futuresFailure.kind}
+                    onRetry={() => onRetryFutures?.()} />
+                : <Loading text='載入期貨帳務' />)}
             {showFut &&
                 !!margin &&
                 (simMarginBlank ? (
@@ -280,6 +258,11 @@ function FundsSection({
                             value={signed(margin.future_settle_profitloss)}
                             dir={dirOfAmount(margin.future_settle_profitloss)}
                         />
+                        {/* 保留上一份保證金時的暫時性刷新失敗：灰字標示這份不是剛更新的 */}
+                        {futuresFailure?.kind && (
+                            <AccountQueryFailure what='期貨帳務' error={futuresFailure.raw} kind={futuresFailure.kind}
+                                onRetry={() => onRetryFutures?.()} />
+                        )}
                     </>
                 ))}
             {showTotal && (
@@ -361,11 +344,20 @@ interface PnlData {
 
 function PnlSection({
     pnl,
+    error,
+    errorKind,
     privMoney,
+    onRetry,
 }: {
     pnl: PnlData | undefined;
+    error: string | null;
+    /** 已分類的錯誤種類（模擬環境不分類，一律 null） */
+    errorKind: ReturnType<typeof classifyAccountQueryError>;
     privMoney: boolean;
+    onRetry: () => void;
 }) {
+    // 失敗時 data 維持 undefined，不能當成載入中；已有資料的刷新失敗保留上一份
+    const failed = pnl === undefined && !!error;
     const [open, setOpen] = useState(false);
     // 股名 lazy 解析：展開時才查、component 內快取，不訂閱行情。
     // 以「市場:列上代號」為 key（#240 #286）：正式環境券商損益的期貨代號不保證
@@ -408,7 +400,9 @@ function PnlSection({
     return (
         <section className={styles.acctSection}>
             <div className={styles.acctTitle}>今日已實現損益 Realized P&L</div>
-            {pnl === undefined ? (
+            {failed ? (
+                <AccountQueryFailure what='損益' error={error!} kind={errorKind} onRetry={onRetry} />
+            ) : pnl === undefined ? (
                 <Loading text='載入已實現損益' />
             ) : pnl.rows.length === 0 ? (
                 <span className={styles.acctHint}>今日無已實現損益</span>
@@ -460,6 +454,10 @@ function PnlSection({
                             </div>
                         ))}
                 </>
+            )}
+            {/* 保留上一份損益時的暫時性刷新失敗：灰字標示這份不是剛更新的 */}
+            {!failed && error && errorKind && (
+                <AccountQueryFailure what='損益' error={error} kind={errorKind} onRetry={onRetry} />
             )}
         </section>
     );
@@ -697,6 +695,8 @@ interface AccountPaneProps {
     scopeAccount: Account | null;
     mode?: 'merged' | 'grouped';
     onRefreshControls?: (controls: AccountRefreshControls | null) => void;
+    /** 重查資金（餘額／保證金）；期貨保證金查詢失敗的重試按鈕用 */
+    onRetryFunds?: () => void;
 }
 export function AccountPane(props: AccountPaneProps) {
     const { accounts } = useAccounts();
@@ -735,7 +735,7 @@ export function AccountPane(props: AccountPaneProps) {
     })}{!visible.length && <div role="status">無符合範圍的帳戶</div>}</>;
 }
 
-function AccountPaneContent({ positions, balance, margin, funds, market, scopeAccount, onRefreshControls }: AccountPaneProps) {
+function AccountPaneContent({ positions, balance, margin, funds, market, scopeAccount, onRefreshControls, onRetryFunds }: AccountPaneProps) {
     const privMoney = usePrivacyMoney();
     const { ref, width } = useMeasuredWidth();
     const wide = sizeClassOf(width) === 'wide';
@@ -804,7 +804,8 @@ function AccountPaneContent({ positions, balance, margin, funds, market, scopeAc
         balance = stockFunds.length === stockAccounts.length && stockFunds.length > 0 && stockFunds.every(row => row.balance && !row.balance.errmsg?.trim() && !row.error)
             ? { acc_balance: stockFunds.reduce((sum, row) => sum + row.balance!.acc_balance, 0), date: stockFunds[0]!.balance!.date, errmsg: '' } : undefined;
         const expectedFutures = queryAccounts.filter(a => a.account_type === 'F').length;
-        if (futureFunds.length === expectedFutures && expectedFutures > 0 && futureFunds.every(row => row.margin && !row.error)) {
+        // 保證金暫時性失敗（errorKind）保留該帳戶上一份，區塊內有灰字；真錯誤仍不合計
+        if (futureFunds.length === expectedFutures && expectedFutures > 0 && futureFunds.every(row => row.margin && (!row.error || row.errorKind))) {
             margin = { ...futureFunds[0]!.margin! };
             for (const field of Object.keys(margin) as (keyof Margin)[]) {
                 margin[field] = futureFunds.reduce((sum, row) => sum + row.margin![field], 0);
@@ -812,6 +813,15 @@ function AccountPaneContent({ positions, balance, margin, funds, market, scopeAc
             if (futureFunds.length > 1) { margin.risk_indicator = 0; margin.plus_margin_indicator = 0; }
         } else margin = undefined;
     }
+
+    // 期貨保證金查詢失敗：全是暫時性／未開放才給分類，夾一筆真錯誤就是紅字
+    const failedFutures = (selectedFunds ?? []).filter(row => row.account.account_type === 'F' && row.error);
+    const futuresFailure = failedFutures.length === 0 ? null : {
+        kind: failedFutures.every(row => row.errorKind)
+            ? (failedFutures.every(row => row.errorKind === 'unavailable') ? 'unavailable' as const : 'temporary' as const)
+            : null,
+        raw: [...new Set(failedFutures.map(row => row.rawError ?? row.error!))].join('；'),
+    };
 
     // 只篩掉不在範圍內市場的持倉（股票市值估算用）
     const scopedPositions = useMemo(
@@ -828,7 +838,7 @@ function AccountPaneContent({ positions, balance, margin, funds, market, scopeAc
     >(
         useCallback(
             () =>
-                Promise.all(stockAccounts.map(a => fetchSettlements(a))).then(results => {
+                settleAccountQueries(stockAccounts.map(a => fetchSettlements(a))).then(results => {
                     const sums = new Map<string, Settlement>();
                     for (const row of results.flat()) {
                         const key = `${row.T}`;
@@ -851,11 +861,12 @@ function AccountPaneContent({ positions, balance, margin, funds, market, scopeAc
     const pnlFetcher = useCallback(async (): Promise<PnlData> => {
         const rows: AccountedPnl[] = [];
         let total = 0;
-        await Promise.all(
+        // 全部帳戶、列表與總額都等完：先到的暫時性錯誤不能蓋掉同批裡的真錯誤
+        await settleAccountQueries(
             queryAccounts.map(async (account) => {
                 const m = account.account_type as 'S' | 'F';
                 const sel = account;
-                const [list, sum] = await Promise.all([
+                const [list, sum] = await settleAccountQueries([
                     fetchProfitLoss(m, sel),
                     fetchProfitLossSummary(m, sel),
                 ]);
@@ -912,8 +923,8 @@ function AccountPaneContent({ positions, balance, margin, funds, market, scopeAc
             if (!showStock) {
                 return { summary: null, detail: null, earmark: null };
             }
-            const batches = await Promise.all(stockAccounts.map(async account => {
-                const [summary, detail, earmark] = await Promise.all([
+            const batches = await settleAccountQueries(stockAccounts.map(async account => {
+                const [summary, detail, earmark] = await settleAccountQueries([
                     fetchStockReserveSummary(account), fetchStockReserveDetail(account), fetchEarmarkingDetail(account),
                 ]);
                 return { summary, detail, earmark };
@@ -943,12 +954,16 @@ function AccountPaneContent({ positions, balance, margin, funds, market, scopeAc
     // 額度保留舊資料時只有 AS400 斷線在區塊內有灰字；時段錯誤仍留狀態列（#381）
     const limitsKind = classifyBrokerQueryError(errorLimits);
     const limitsExpected = limits === undefined ? !!limitsKind : limitsKind === 'unavailable';
-    // 交割、預收的暫時性失敗不論有無舊資料，區塊內都有灰字提示
+    // 交割、預收、損益的暫時性失敗不論有無舊資料，區塊內都有灰字提示
     const settleExpected = !!classifyAccountQueryError(errorSettle);
     const reserveExpected = !!classifyAccountQueryError(errorReserve);
+    // 今日已實現損益（TKAP01 損益後台／r6）同交割：暫時性失敗區塊內有灰字。
+    // 模擬環境不走券商後台，錯誤照舊（不分類）
+    const pnlKind = sim ? null : classifyAccountQueryError(errorPnl);
+    const pnlExpected = !!pnlKind;
     const reportsError = [
         settleExpected ? null : errorSettle,
-        errorPnl,
+        pnlExpected ? null : errorPnl,
         limitsExpected ? null : errorLimits,
         reserveExpected ? null : errorReserve,
     ].filter(Boolean).join('；') || null;
@@ -970,6 +985,8 @@ function AccountPaneContent({ positions, balance, margin, funds, market, scopeAc
                 showFut={showFut}
                 sim={sim}
                 privMoney={privMoney}
+                futuresFailure={futuresFailure}
+                onRetryFutures={onRetryFunds}
             />
             {showStock && (
                 <SettleSection
@@ -993,7 +1010,7 @@ function AccountPaneContent({ positions, balance, margin, funds, market, scopeAc
     );
     const right = (
         <div className={styles.acctCol}>
-            <PnlSection pnl={pnl} privMoney={privMoney} />
+            <PnlSection pnl={pnl} error={errorPnl} errorKind={pnlKind} privMoney={privMoney} onRetry={() => void refreshPnl()} />
             {showStock && (
                 <ReserveSection
                     reserve={reserve}

@@ -25,6 +25,8 @@ import {
 import { vars } from '../theme.css';
 import { Orb } from './orb';
 import { AsyncStatus } from './async-status';
+import { AccountQueryFailure } from './account-query-failure';
+import type { QueryFailure } from '../lib/trading-state';
 import { UsPositionDetail } from './us-account-panels';
 import * as panel from './panel.css';
 import * as styles from './bottom-dock.css';
@@ -111,8 +113,13 @@ export function PositionsPane({
     onChanged,
     onSelectCode,
     us = null,
+    failure = null,
+    onRetry,
 }: {
     positions: AccountedPosition[];
+    /** 台股持倉查詢只因券商暫時性／未開放失敗（TKAP01 6044、503、AS400）：灰字＋重試 */
+    failure?: QueryFailure | null;
+    onRetry?: () => void;
     /** 美股庫存；併入同一張表，金額 USD、不和台幣相加。null = 不顯示 */
     us?: UsPositionsInput | null;
     initialStatus: 'loading' | 'failed' | 'ready';
@@ -759,7 +766,9 @@ export function PositionsPane({
                     </div>
                 ) : rows.length === 0 && usRows.length === 0 && initialStatus === 'failed' ? (
                     <div className={styles.emptyState}>
-                        <AsyncStatus phase='error' text='持倉尚未確認，請更新' />
+                        {failure
+                            ? <AccountQueryFailure what='持倉' error={failure.raw} kind={failure.kind} onRetry={() => onRetry?.()} />
+                            : <AsyncStatus phase='error' text='持倉尚未確認，請更新' />}
                     </div>
                 ) : rows.length === 0 && usRows.length === 0 ? (
                     <div className={styles.emptyState}>

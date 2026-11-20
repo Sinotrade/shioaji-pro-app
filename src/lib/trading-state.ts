@@ -24,6 +24,7 @@ import type { OrderEventReport } from './order-report';
 import type { Account, AccountBalance, AccountedPosition, AccountFunds, Margin } from './types/portfolio';
 import type { AccountedTrade, Trade, TradeCacheHealth } from './types/order';
 import { markStage } from './startup-timing';
+import { classifyAccountQueryError } from './trading-limits-error';
 
 // Startup timing (#142): each accounting read of the initial refresh is
 // marked with its own duration, so a slow `positions-loaded` shows whether
@@ -88,6 +89,33 @@ export interface TradingQueryStatus {
     error: string | null;
     /** Distinct open reasons, oldest first. */
     reasons: ReconcileReason[];
+    /** The last read's failures were all the broker's transient/unavailable
+     *  answers (TKAP01 6044, 503, AS400 down): UI shows a grey hint with the
+     *  raw text as tooltip instead of a red error. null/absent otherwise. */
+    failure?: QueryFailure | null;
+}
+export interface QueryFailure {
+    kind: 'temporary' | 'unavailable';
+    /** Raw broker messages, joined for the tooltip. */
+    raw: string;
+}
+// 一次查詢中某 scope 的失敗全是暫時性／未開放才回分類結果；夾一筆真錯誤就是 null
+type FailureKind = QueryFailure['kind'] | null;
+function summarizeFailures(raws: { raw: string; kind: FailureKind }[]): QueryFailure | null {
+    if (!raws.length || raws.some(r => !r.kind)) return null;
+    return { kind: raws.every(r => r.kind === 'unavailable') ? 'unavailable' : 'temporary',
+        raw: [...new Set(raws.map(r => r.raw))].join('；') };
+}
+const errorText = (e: unknown) => e instanceof Error ? e.message : String(e);
+// 持倉、期貨保證金經券商 TKAP01 損益後台／r6：夜間偶發 503、6044（裸 500）、AS400 未連線
+function classifiedQueryProblem(what: string, raw: string): { kind: FailureKind; text: string | null } {
+    // 模擬環境不走券商後台：錯誤照舊，不分類
+    if (knownServerInfo()?.simulation === true) return { kind: null, text: null };
+    const classified = classifyAccountQueryError(raw);
+    if (!classified) return { kind: null, text: null };
+    // 'window'（明寫服務時段）對持倉／保證金也只是暫時查不到
+    const kind = classified === 'unavailable' ? 'unavailable' : 'temporary';
+    return { kind, text: kind === 'unavailable' ? `券商${what}服務目前未開放` : `券商${what}暫時查不到資料，稍後再試` };
 }
 const queryScopes: TradingQueryScope[] = ['positions', 'orders', 'account'];
 const emptyQuery = (): TradingQueryStatus => ({ updatedAt: null, needsReconcile: false, error: null, reasons: [] });
@@ -381,6 +409,7 @@ export function refreshTradingState(scope: TradingQueryScope | 'all' = 'all'): P
         publish();
         const problems: Record<TradingQueryScope, Problem[]> = { positions: [], orders: [], account: [] };
         const failed = new Set<TradingQueryScope>();
+        const failures: Record<TradingQueryScope, { raw: string; kind: FailureKind }[]> = { positions: [], orders: [], account: [] };
         queryEvents = readOrders ? [] : null;
         queryOverflow = false;
         try {
@@ -421,9 +450,14 @@ export function refreshTradingState(scope: TradingQueryScope | 'all' = 'all'): P
                         // Without a server watermark, do not add a fill on top of
                         // a snapshot that might already include it (Shioaji#232).
                         if (positionStart !== eventSequence) problems.positions.push(['snapshot-boundary', '持倉查詢期間收到回報，保留即時估算；快照邊界待確認']);
-                    } catch {
+                    } catch (e) {
                         failed.add('positions');
-                        problems.positions.push(['query-failed', `${account.account_type} 持倉查詢失敗，保留上次資料`]);
+                        const raw = errorText(e);
+                        const { kind, text } = classifiedQueryProblem('持倉', raw);
+                        failures.positions.push({ raw, kind });
+                        problems.positions.push(['query-failed', text
+                            ? `${account.account_type} ${text}，保留上次資料`
+                            : `${account.account_type} 持倉查詢失敗，保留上次資料`]);
                     }
                     if (readOrders) try {
                         // Initial/manual reconciliation stays authoritative:
@@ -450,11 +484,19 @@ export function refreshTradingState(scope: TradingQueryScope | 'all' = 'all'): P
                             queryAccount(account);
                             if (value.balance?.errmsg?.trim()) throw new Error('券商餘額查詢回報錯誤');
                             return { account, ...value, updatedAt: Date.now() };
-                        } catch {
-                            const error = `${account.account_type === 'S' ? '餘額' : '保證金'}查詢失敗，保留此帳戶上次資料`;
+                        } catch (e) {
+                            const raw = errorText(e);
+                            // 只有期貨保證金（r6）分類；證券餘額不經這些後台，失敗照舊
+                            const { kind, text } = account.account_type === 'F'
+                                ? classifiedQueryProblem('保證金', raw) : { kind: null as FailureKind, text: null };
+                            const error = text
+                                ? `${text}，保留此帳戶上次資料`
+                                : `${account.account_type === 'S' ? '餘額' : '保證金'}查詢失敗，保留此帳戶上次資料`;
                             failed.add('account');
+                            failures.account.push({ raw, kind });
                             problems.account.push(['query-failed', error]);
-                            return { ...previous, account, error };
+                            // errorKind 不能沿用上一次失敗的分類
+                            return { ...previous, account, error, rawError: raw, errorKind: kind ?? undefined };
                         }
                     });
                     // Another account can still be waiting after this one's
@@ -471,7 +513,12 @@ export function refreshTradingState(scope: TradingQueryScope | 'all' = 'all'): P
                 if (readPositions) prepareQuotes();
             }
         } catch (e) {
-            for (const key of targets) { failed.add(key); problems[key].push(['query-failed', e instanceof Error ? e.message : String(e)]); }
+            for (const key of targets) {
+                failed.add(key);
+                problems[key].push(['query-failed', errorText(e)]);
+                // 帳戶清單、訂閱等外層失敗不是券商帳務後台的暫時性錯誤
+                failures[key].push({ raw: errorText(e), kind: null });
+            }
         }
         // #287: reads dropped by the first mode discovery are reread right
         // after this run (finally below); none of them is a failure, so no
@@ -490,7 +537,8 @@ export function refreshTradingState(scope: TradingQueryScope | 'all' = 'all'): P
             // started; a failed read keeps every earlier reason.
             if (!failed.has(key)) resolve(key, AUTHORITATIVE_RESOLVES[key], clockBefore);
             for (const [reason, message] of problems[key]) raise(key, reason, message);
-            syncQuery(key, problems[key].length === 0 ? { updatedAt: Date.now() } : {});
+            const failure = failed.has(key) ? summarizeFailures(failures[key]) : null;
+            syncQuery(key, problems[key].length === 0 ? { updatedAt: Date.now(), failure } : { failure });
         }
         // The authoritative read covers event_id gaps detected before it began.
         if (ordersRead) {

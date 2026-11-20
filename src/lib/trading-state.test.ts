@@ -1383,3 +1383,81 @@ it('an account refresh does not discard a fresh tick for another account', async
     // a was re-marked by its own snapshot (100), newer than the tick.
     expect(store.getTradingState().positions.find(p => p.account?.account_id === 'a')).toMatchObject({ last_price: 100 });
 });
+
+describe('持倉／期貨保證金的券商暫時性失敗（TKAP01 6044、503、AS400）', () => {
+    const read = async (scope: 'positions' | 'account') => {
+        vi.advanceTimersByTime(1500);
+        await act(async () => { await store.refreshTradingState(scope); });
+        return store.getTradingState();
+    };
+    it.each(['500 Internal Server Error', '503 9906 系統忙碌', '500 TKAP01 6044 無法取得交易狀態'])(
+        '持倉遇到 %s：保留上次資料、標暫時性、原文在 raw', async (message) => {
+            await read('positions');
+            expect(store.getTradingState().positions).toHaveLength(1);
+            mocks.positions.mockRejectedValueOnce(new Error(message));
+            const state = await read('positions');
+            expect(state.positions).toHaveLength(1);
+            expect(state.queries.positions.reasons).toContain('query-failed');
+            expect(state.queries.positions.failure).toEqual({ kind: 'temporary', raw: message });
+            expect(state.queries.positions.error).toContain('券商持倉暫時查不到資料');
+            expect(state.queries.positions.error).not.toContain('持倉查詢失敗');
+            const ok = await read('positions');
+            expect(ok.queries.positions.failure).toBeNull();
+            expect(ok.queries.positions.error).toBeNull();
+        });
+    it('持倉的其他錯誤（帶訊息的 500）仍是真錯誤', async () => {
+        mocks.positions.mockRejectedValueOnce(new Error('500 Query error: session disconnected'));
+        const state = await read('positions');
+        expect(state.queries.positions.failure).toBeNull();
+        expect(state.queries.positions.error).toContain('持倉查詢失敗');
+    });
+    it('AS400 未連線：未開放', async () => {
+        const raw = '500 Query error: QCredit:Query fail{no AS400Query Connection (RouteID=M|N)}';
+        mocks.positions.mockRejectedValueOnce(new Error(raw));
+        const state = await read('positions');
+        expect(state.queries.positions.failure).toEqual({ kind: 'unavailable', raw });
+        expect(state.queries.positions.error).toContain('券商持倉服務目前未開放');
+    });
+    it('多帳戶夾一筆真錯誤：整體不當暫時性', async () => {
+        mocks.extraAccounts = [{ ...mocks.account, account_id: 'b' }];
+        mocks.positions.mockImplementation(async (_type: string, account: Account) => {
+            throw new Error(account.account_id === 'b' ? '500 broken' : '503 Service Unavailable');
+        });
+        const state = await read('positions');
+        expect(state.queries.positions.failure).toBeNull();
+        expect(state.queries.positions.error).toContain('券商持倉暫時查不到資料');
+        expect(state.queries.positions.error).toContain('持倉查詢失敗');
+    });
+    it('期貨保證金 503：保留上次保證金並標 errorKind；真錯誤不標', async () => {
+        mocks.account.account_type = 'F';
+        mocks.margin.mockReset().mockResolvedValue({ equity: 100 });
+        await read('account');
+        mocks.margin.mockRejectedValueOnce(new Error('503 Service Unavailable'));
+        let state = await read('account');
+        expect(state.funds![0]).toMatchObject({ margin: { equity: 100 }, errorKind: 'temporary', rawError: '503 Service Unavailable' });
+        expect(state.queries.account.failure).toEqual({ kind: 'temporary', raw: '503 Service Unavailable' });
+        expect(state.queries.account.error).toContain('券商保證金暫時查不到資料');
+        mocks.margin.mockRejectedValueOnce(new Error('500 margin parse failed'));
+        state = await read('account');
+        expect(state.funds![0]!.errorKind).toBeUndefined();
+        expect(state.funds![0]!.rawError).toBe('500 margin parse failed');
+        expect(state.queries.account.failure).toBeNull();
+        expect(state.queries.account.error).toContain('保證金查詢失敗');
+    });
+    it('模擬環境不分類：503 照舊是查詢失敗', async () => {
+        const info = await import('./server-info-store');
+        info.observeServerInfo(info.beginServerInfoRequest(), { simulation: true } as import('./shioaji').ServerInfo);
+        mocks.positions.mockRejectedValueOnce(new Error('503 Service Unavailable'));
+        const state = await read('positions');
+        expect(state.queries.positions.failure).toBeNull();
+        expect(state.queries.positions.error).toContain('持倉查詢失敗');
+        info.forgetServerInfo('http://fixture.invalid');
+    });
+    it('證券餘額不走這些後台：503 仍照舊是查詢失敗', async () => {
+        mocks.balance.mockRejectedValueOnce(new Error('503 Service Unavailable'));
+        const state = await read('account');
+        expect(state.funds![0]!.errorKind).toBeUndefined();
+        expect(state.queries.account.failure).toBeNull();
+        expect(state.queries.account.error).toContain('餘額查詢失敗');
+    });
+});

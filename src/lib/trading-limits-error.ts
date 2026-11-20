@@ -45,12 +45,14 @@ export function classifyBrokerQueryError(message: string | null | undefined): Br
     return null;
 }
 
-// 交割行事曆、預收券款／圈存（不設時段閘門）的暫時性失敗：
+// 經券商 TKAP01 損益後台／r6 的台股帳務查詢（交割、預收券款／圈存、已實現損益、
+// 持倉、期貨保證金；不設時段閘門）的暫時性失敗：
 // - HTTP 503（sw 之後可能把 TKAP01 暫時錯誤改成 503 並帶原訊息）
 // - TKAP01 6044「無法取得交易狀態」（帶原訊息時）
 // - 目前 6044 只以 HTTP 500、內容只有 "Internal Server Error" 送回 — 只認這個
 //   「整段就是 500 Internal Server Error」的情形；帶其他訊息的 500 仍是真錯誤。
-// 只給這幾個帳務查詢用：其他地方的裸 500 不能當成暫時性。
+// 只給上列帳務查詢用（呈現在 components/account-query-failure.tsx）：其他地方的裸 500
+// 不能當成暫時性。
 const HTTP_503 = /^503\b/;
 // 裸 "500"：HTTP/2 或 Tauri 的回應可能沒有 statusText，throwApiError 只剩狀態碼
 const BARE_500 = /^500(\s+Internal\s+Server\s+Error)?$/i;
@@ -58,6 +60,23 @@ const BARE_500 = /^500(\s+Internal\s+Server\s+Error)?$/i;
 const TKAP01_NO_TRADE_STATUS = /無法取得交易狀態|\bTKAP01\D{0,8}6044\b|\berror_?code\W{0,4}6044\b/i;
 
 export type AccountQueryErrorKind = BrokerQueryErrorKind | 'temporary';
+
+/**
+ * 多帳戶／多支查詢並行時，挑出要拋出的那個錯誤：只要有一個不是暫時性的真錯誤就拋它，
+ * 全部都是暫時性才拋第一個。避免先到的 503 蓋掉同一批裡真正的錯誤。
+ */
+export function pickAccountQueryError(reasons: readonly unknown[]): unknown {
+    const text = (e: unknown) => (e instanceof Error ? e.message : String(e));
+    return reasons.find(e => !classifyAccountQueryError(text(e))) ?? reasons[0];
+}
+
+/** 等所有查詢結束；有失敗就依 pickAccountQueryError 拋出，否則回傳全部結果 */
+export async function settleAccountQueries<T extends unknown[]>(queries: [...{ [K in keyof T]: Promise<T[K]> }]): Promise<T> {
+    const results = await Promise.allSettled(queries);
+    const failed = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected').map(r => r.reason as unknown);
+    if (failed.length) throw pickAccountQueryError(failed);
+    return results.map(r => (r as PromiseFulfilledResult<unknown>).value) as T;
+}
 
 export function classifyAccountQueryError(message: string | null | undefined): AccountQueryErrorKind {
     const broker = classifyBrokerQueryError(message);
