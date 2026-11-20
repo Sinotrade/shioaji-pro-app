@@ -30,6 +30,7 @@ vi.mock('../hooks/use-product-search', () => ({
 
 import { Watchlist } from './watchlist';
 import { toUsContractInfo } from '../lib/us/us-contracts';
+import { resetUsMarketClockForTest } from '../hooks/use-us-market-clock';
 
 const twT = {
     exchange: 'TSE', code: 'T', security_type: 'STK', target_code: null, name: '台測', currency: 'TWD',
@@ -111,4 +112,78 @@ it('selects the US row only when the selected key is US:T', () => {
     render({ selectedCode: 'US:T' });
     const sel = (key: string) => String(rowByKey(key).props.className);
     expect(sel('US:T')).not.toEqual(sel('T'));
+});
+
+it('main line is the regular price; odd-lot / extended prints do not move it', () => {
+    quotes['US:T'] = { tick: {
+        code: 'US:T', date: '2026-11-19', close: '25.37', open: '24.2', price_chg: '1.2', pct_chg: '4.98',
+        us: { session: 'Regular', regular: '25.30', regularChg: '1.2', regularPct: '4.98', extClose: '', extHigh: '', extLow: '', updatesLast: false },
+    }, lastDir: 1, flashSeq: 0 };
+    render();
+    const us = text(rowByKey('US:T'));
+    expect(us).toContain('25.30');
+    expect(us).not.toContain('25.37');
+});
+
+it('US rows always reserve the extended-hours line (no row-height jump); TW rows have none', () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+        // 美東 2026-11-19 07:00（盤前）
+        vi.setSystemTime(Date.UTC(2026, 10, 19, 12, 0));
+        resetUsMarketClockForTest(Date.now());
+        quotes['US:T'] = { tick: {
+            code: 'US:T', date: '2026-11-19', close: '24.60', open: '', price_chg: '0', pct_chg: '0',
+            us: { session: 'PreMarket', regular: '', regularChg: '', regularPct: '', extClose: '24.60', extHigh: '24.7', extLow: '24.5' },
+        }, lastDir: 1, flashSeq: 0 };
+        render({ items: [{ contract: twT }, { contract: usT, usSnapshot: {
+            code: 'T', exchange: 'NYSE', ts: null, tradeDate: '2026-11-19', open: 0, high: 0, low: 0, close: 24.1, reference: 24.1,
+            changePrice: 0, changeRate: 0, totalVolume: 0, buyPrice: null, sellPrice: null, buyVolume: null, sellVolume: null, session: 'PreMarket', lastPrice: 24.6,
+        } }] });
+        const ext = (key: string) => rowByKey(key).findAll((n) => n.props['data-us-ext'] !== undefined);
+        expect(ext('T')).toHaveLength(0);
+        expect(ext('US:T')).toHaveLength(1);
+        expect(ext('US:T')[0]!.props['data-us-ext']).toBe('PreMarket');
+        const us = text(rowByKey('US:T'));
+        expect(us).toContain('24.10'); // 主行：前一日收盤
+        expect(us).toContain('盤前');
+        expect(us).toContain('24.60');
+        expect(us).toContain('+0.50');
+        act(() => r?.unmount());
+        // 一般盤：副行仍在（空白、aria-hidden），列高不變
+        vi.setSystemTime(Date.UTC(2026, 10, 19, 17, 0));
+        resetUsMarketClockForTest(Date.now());
+        render();
+        const blank = ext('US:T');
+        expect(blank).toHaveLength(1);
+        expect(blank[0]!.props['data-us-ext']).toBe('none');
+        expect(blank[0]!.props['aria-hidden']).toBe('true');
+    } finally {
+        vi.useRealTimers();
+        resetUsMarketClockForTest();
+    }
+});
+
+it('sorting by change% uses the regular-session change, not the extended-hours price', () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+        // 美東 2026-11-19 17:00（盤後）：A 一般盤 +1%、盤後大漲；B 一般盤 +3%、盤後不動
+        vi.setSystemTime(Date.UTC(2026, 10, 19, 22, 0));
+        resetUsMarketClockForTest(Date.now());
+        const usA = toUsContractInfo('A', { code: 'A', exchange: 'NYSE', shortName: 'A', reference: '100', referenceDate: '2026-11-18', fetchedOn: '2026-11-19' });
+        const usB = toUsContractInfo('B', { code: 'B', exchange: 'NYSE', shortName: 'B', reference: '100', referenceDate: '2026-11-18', fetchedOn: '2026-11-19' });
+        const t = (code: string, regular: string, ext: string) => ({ tick: {
+            code: `US:${code}`, date: '2026-11-19', close: ext || regular, open: '100',
+            us: { session: 'AfterHours', regular, regularChg: '', regularPct: '', extClose: ext, extHigh: '', extLow: '' },
+        }, lastDir: 1, flashSeq: 0 });
+        quotes['US:A'] = t('A', '101', '120');
+        quotes['US:B'] = t('B', '103', '');
+        render({ items: [{ contract: usA }, { contract: usB }] });
+        const sortBtn = r!.root.find((n) => n.type === 'button' && n.props.title === '依漲跌幅排序');
+        act(() => sortBtn.props.onClick());
+        const keys = r!.root.findAll((n) => n.type === 'div' && typeof n.props['data-key'] === 'string').map((n) => n.props['data-key']);
+        expect(keys).toEqual(['US:B', 'US:A']);
+    } finally {
+        vi.useRealTimers();
+        resetUsMarketClockForTest();
+    }
 });

@@ -580,3 +580,31 @@ export const limitWide = style({});
 globalStyle(sTiers(STOCK_NARROW, statusKeep), { display: 'inline' });
 globalStyle(sTiers(STOCK_NARROW, limitWide), { display: 'none' });
 globalStyle(tiers(['inline', 'lean', 'compact', 'strip'], statusBadge), { display: 'none' });
+
+// 美股盤前／盤後副區塊：漲跌旁兩行小字（時段＋延長時段價／漲跌與幅度），同一套漲跌顏色。
+// 美股一律保留（沒有延長時段價時佔位不顯示），出現或清掉時看板不跳；單行的窄階梯收起
+export const usExtBlock = style({
+    display: 'flex',
+    flexDirection: 'column',
+    flexShrink: 0,
+    fontFamily: vars.font.mono,
+    fontSize: '0.7rem',
+    lineHeight: 1.25,
+    fontVariantNumeric: 'tabular-nums',
+    whiteSpace: 'nowrap',
+    opacity: 0.85,
+});
+export const usExtEmpty = style({ visibility: 'hidden' });
+// 盤後已結束（20:00–04:00 ET、週末）：保留最後的盤後價，轉灰
+export const usExtClosed = style({ color: vars.color.mutedForeground, opacity: 0.7 });
+export const usExtBadge = style({
+    fontFamily: vars.font.body,
+    fontSize: '0.56rem',
+    fontWeight: 600,
+    padding: '0 3px',
+    marginRight: 4,
+    color: vars.color.mutedForeground,
+    border: `1px solid ${vars.color.border}`,
+    borderRadius: vars.radius.sm,
+});
+globalStyle(sTiers(STOCK_NARROW, usExtBlock), { display: 'none' });

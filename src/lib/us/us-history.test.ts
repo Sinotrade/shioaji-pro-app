@@ -19,7 +19,6 @@ import {
     sdkHasUsHistory,
     splitDateRange,
     usHistoryAvailable,
-    usSnapshotQuote,
     usTimeToMs,
 } from './us-history';
 
@@ -108,8 +107,7 @@ describe('parseUsSnapshots', () => {
         const rows = parseUsSnapshots([tw, row], 2)!;
         expect(rows[0]).toBeNull();
         expect(rows[1]).toMatchObject({ open: 0, close: 352.45, session: 'PreMarket', lastPrice: 354.06, tradeDate: '2026-11-19', buyPrice: 354.06, buyVolume: 120, sellPrice: 354.26, sellVolume: 100 });
-        expect(usSnapshotQuote(rows[1]!)).toEqual({ last: '352.45', close: 352.45, chg: 0, pct: 0 });
-        expect(usSnapshotQuote({ ...rows[1]!, close: 0 })).toBeNull();
+        expect(rows[1]).toMatchObject({ extClose: 353.98, extHigh: 356, extLow: 353.58 });
     });
     it('treats an all-Taiwan-shaped reply (old SDK) and a count mismatch as unsupported', () => {
         expect(parseUsSnapshots([{ code: 'AAPL', close: 1 }], 1)).toBeNull();

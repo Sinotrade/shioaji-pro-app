@@ -60,6 +60,12 @@ export interface RawUsTick {
     bid_side_total_vol?: number;
     ask_side_total_vol?: number;
     odd_lot?: boolean;
+    /** 這筆有沒有更新一般盤的 close／開高低／漲跌（零股、盤前盤後成交是 false） */
+    updates_last?: boolean;
+    /** 目前盤前或盤後時段的最新／最高／最低（只算整股）；一般盤時是 null */
+    ext_close?: string | null;
+    ext_high?: string | null;
+    ext_low?: string | null;
     session?: UsTradingSession;
     freshness?: { status?: UsFreshnessStatus; stale?: boolean; age_us?: number };
 }
@@ -123,6 +129,8 @@ export function nyWallClockSec(ms: number): number {
 }
 
 const str = (v: string | null | undefined) => (v === null || v === undefined ? '' : String(v));
+/** 正的 decimal 字串照原值；null、空字串、0 都當沒有值 */
+const positiveDec = (v: string | null | undefined) => (decIsPositive(str(v)) ? str(v) : '');
 
 // ---- 參考價（漲跌基準）----
 //
@@ -229,6 +237,17 @@ export function normalizeUsTick(raw: RawUsTick): { tick: SseTick; meta: UsTickMe
         // 美股零股成交也是同一個市場：不分 store
         intraday_odd: false,
         simtrade: false,
+        // 報價顯示用的一般盤與延長時段值（close 上面是這筆成交價，圖表用，不改）
+        us: {
+            session: raw.session ?? 'Unknown',
+            regular: positiveDec(raw.close),
+            regularChg: str(raw.price_chg),
+            regularPct: str(raw.pct_chg),
+            extClose: positiveDec(raw.ext_close),
+            extHigh: positiveDec(raw.ext_high),
+            extLow: positiveDec(raw.ext_low),
+            ...(raw.updates_last !== undefined ? { updatesLast: raw.updates_last } : {}),
+        },
     };
     return {
         tick,

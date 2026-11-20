@@ -7,8 +7,10 @@ import { useEffect, useState } from 'react';
 import type { ContractInfo } from '../lib/types/contract';
 import { fetchUsSnapshotShared, nyDateStr, type UsSnapshot } from '../lib/us/us-history';
 import { usLinkKey } from '../lib/contract-key';
-import { noteUsReference, usChangeFrom, usReferenceFor } from '../lib/us/us-quotes';
+import { noteUsReference, usReferenceFor } from '../lib/us/us-quotes';
 import type { SseTick } from '../lib/types/market';
+import { useUsMarketClock } from './use-us-market-clock';
+import { usSessionView, type UsClockPhase, type UsSessionView } from '../lib/us/us-session-view';
 
 /**
  * 快照有沒有可顯示的東西：有成交價，或有最佳一檔。剛上市還沒成交的 IPO
@@ -20,21 +22,26 @@ export function usSnapshotHasData(row: Pick<UsSnapshot, 'close' | 'buyPrice' | '
 }
 
 export function useUsSnapshot(contract: Pick<ContractInfo, 'code' | 'exchange'>, enabled: boolean): UsSnapshot | null {
-    const [snap, setSnap] = useState<{ key: string; row: UsSnapshot } | null>(null);
+    const [snap, setSnap] = useState<{ key: string; phase: string; row: UsSnapshot } | null>(null);
     const key = `${contract.exchange}:${contract.code}`;
+    // 美東時段界線（04:00、09:30、16:00、20:00 ET）一過再抓一次，沒有即時成交時也會換到
+    // 正確的盤前／盤後狀態；重抓期間照用舊的那筆，看板不會先清空再補回
+    const clock = useUsMarketClock();
+    const phase = `${clock.date}:${clock.phase}`;
     const have = snap?.key === key;
+    const fresh = have && snap!.phase === phase;
     useEffect(() => {
-        if (!enabled || have) return;
+        if (!enabled || fresh) return;
         let cancelled = false;
         fetchUsSnapshotShared(contract)
             .then(row => {
                 if (row?.tradeDate) noteUsReference(usLinkKey(contract.code), row.tradeDate, row.reference);
-                if (!cancelled && row && usSnapshotHasData(row)) setSnap({ key, row });
+                if (!cancelled && row && usSnapshotHasData(row)) setSnap({ key, phase, row });
             })
             .catch(() => { /* 沒有快照：呼叫端維持原本的顯示 */ });
         return () => { cancelled = true; };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [key, enabled, have]);
+    }, [key, enabled, fresh, phase]);
     return have ? snap!.row : null;
 }
 
@@ -58,9 +65,19 @@ export function pickUsReference(
     return { ...picked, tradeDate };
 }
 
-/** 報價板／自選清單的即時漲跌：知道參考價就用成交價 − 參考價，否則用 tick 帶的（一般盤 SDK 值） */
-export function usLiveChange(tick: Pick<SseTick, 'close' | 'price_chg' | 'pct_chg'>, reference: string | null): { priceChg?: string; pctChg?: string } {
-    const own = usChangeFrom(String(tick.close), reference);
-    if (own.priceChg !== undefined) return own;
-    return { priceChg: tick.price_chg || undefined, pctChg: tick.pct_chg || undefined };
+
+/**
+ * 美股報價的一般盤主行與盤前／盤後副行（自選清單、報價板共用，見 us-session-view）。
+ * 參考價取 tick 與快照中較新的那個交易日（盤前快照已換日、tick 還是前一天的盤後時，
+ * 盤前漲跌要對今天的參考價）。
+ */
+export function usSessionViewFor(
+    contract: Pick<ContractInfo, 'us_reference' | 'reference_date'>,
+    tick: SseTick | undefined,
+    snap: UsSnapshot | null,
+    now: { phase: UsClockPhase; date: string },
+): UsSessionView {
+    const refTick = tick && (!snap?.tradeDate || !tick.date || tick.date >= snap.tradeDate) ? tick : undefined;
+    const reference = refTick || snap ? pickUsReference(refTick ?? { date: snap!.tradeDate }, snap, contract).price : null;
+    return usSessionView({ tick, snap, reference, now });
 }

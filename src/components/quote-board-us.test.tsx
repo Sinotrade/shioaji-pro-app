@@ -1,6 +1,6 @@
 // 美股走台股同一個 QuoteBoard：價格位數固定（1 美元以上 2 位）、漲跌基準是
-// 美股參考價、盤前開高低不拿前一天的值、IPO 沒成交時不顯示 0.00、延長時段與
-// 停牌放在狀態徽章（同一套階梯版面，欄位不會換行跳動）
+// 美股參考價、盤前開高低不拿前一天的值、IPO 沒成交時不顯示 0.00、大字是一般盤價、
+// 盤前／盤後價在副區塊（一律保留位置），停牌放在狀態徽章（同一套階梯版面，欄位不會換行跳動）
 import { createElement } from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -25,6 +25,7 @@ const fetchSnapshots = vi.hoisted(() => vi.fn(async () => []));
 vi.mock('../lib/shioaji', () => ({ fetchKbars: vi.fn(), fetchSnapshots }));
 
 import { QuoteBoard } from './quote-board';
+import { resetUsMarketClockForTest } from '../hooks/use-us-market-clock';
 import { usSnapshotToTw } from '../lib/us/us-adapter';
 import type { UsSnapshot } from '../lib/us/us-history';
 
@@ -48,7 +49,15 @@ beforeEach(() => {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     m.quote = undefined; m.snapshot = undefined; m.usSnap = null; m.halt = null; m.meta = undefined; m.keys = [];
 });
-afterEach(() => { act(() => view?.unmount()); view = undefined; vi.unstubAllGlobals(); });
+afterEach(() => { act(() => view?.unmount()); view = undefined; vi.unstubAllGlobals(); vi.useRealTimers(); resetUsMarketClockForTest(); });
+/** 把時鐘定在美東 2026-11-19（四）的某個時間（EST，UTC−5） */
+const atEt = (h: number, m = 0, day = 19) => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(Date.UTC(2026, 10, day, h + 5, m));
+    resetUsMarketClockForTest(Date.now());
+};
+const extBlock = () => view!.root.find(n => n.props['data-testid'] === 'us-board-ext');
+const extText = () => extBlock().findAll(() => true).flatMap(n => n.children.filter((c): c is string => typeof c === 'string')).join(' ');
 
 describe('QuoteBoard (US through the TW board)', () => {
     it('reads quotes and snapshot by the US:CODE link key and never calls the TW snapshot API', () => {
@@ -82,18 +91,60 @@ describe('QuoteBoard (US through the TW board)', () => {
         expect(t).toContain('+0.0123');
     });
 
-    it('pre-market: change vs the snapshot reference, empty open/high/low, 盤前 badge', () => {
-        // 盤前 tick 的 price_chg 是 SDK 的一般盤值（0）；漲跌改用成交價 − 當天快照 reference
-        m.usSnap = usSnap({ tradeDate: '2026-11-19', reference: 352.45, open: 0, high: 0, low: 0, close: 352.46, session: 'PreMarket' });
-        m.quote = { tick: { code: 'US:AAPL', date: '2026-11-19', time: '07:00:00', close: '354.1244', price_chg: '0', open: '', high: '', low: '', total_volume: 255203, volume: 5 } };
+    it('pre-market: big price is the previous close, 盤前 ext price vs the reference, empty open/high/low', () => {
+        atEt(7);
+        m.usSnap = usSnap({ tradeDate: '2026-11-19', reference: 352.45, open: 0, high: 0, low: 0, close: 352.45, changePrice: 0, changeRate: 0, session: 'PreMarket' });
+        m.quote = { tick: {
+            code: 'US:AAPL', date: '2026-11-19', time: '07:00:00', close: '354.1244', price_chg: '0', open: '', high: '', low: '', total_volume: 255203, volume: 5,
+            us: { session: 'PreMarket', regular: '', regularChg: '', regularPct: '', extClose: '354.12', extHigh: '355', extLow: '353' },
+        } };
         m.meta = { session: 'PreMarket' };
         mount();
-        const t = text();
-        expect(t).toContain('354.12');
-        expect(t).toContain('+1.67');
-        expect(t).toContain('盤前');
-        expect(t).not.toContain('352.46'); // 不拿最後一筆成交當基準
-        expect((t.match(/—/g) ?? []).length).toBeGreaterThanOrEqual(3); // 開、高、低
+        const big = view!.root.find(n => typeof n.props.className === 'string' && n.props.className.includes('bigPrice'));
+        expect(big.children).toEqual(['352.45']);
+        expect(extBlock().props['data-us-ext']).toBe('PreMarket');
+        expect(extText()).toContain('盤前');
+        expect(extText()).toContain('354.12');
+        expect(extText()).toContain('+1.67');
+        expect(extBlock().props.title).toContain('盤前高 355.00');
+        expect(text()).not.toContain('us-board-status'); // 時段不再佔狀態徽章
+        expect((text().match(/—/g) ?? []).length).toBeGreaterThanOrEqual(3); // 開、高、低
+    });
+
+    it('regular session: big price ignores odd-lot prints, the ext block keeps its place but is hidden', () => {
+        atEt(12);
+        m.usSnap = usSnap({ reference: 145.98 });
+        m.quote = { tick: {
+            code: 'US:AAPL', date: '2026-11-19', time: '12:00:00', close: '135.63', open: '143.57', high: '143.725', low: '135.06', total_volume: 10, volume: 2,
+            us: { session: 'Regular', regular: '135.62', regularChg: '-10.36', regularPct: '-7.1', extClose: '', extHigh: '', extLow: '', updatesLast: false },
+        } };
+        mount();
+        const big = view!.root.find(n => typeof n.props.className === 'string' && n.props.className.includes('bigPrice'));
+        expect(big.children).toEqual(['135.62']);
+        expect(text()).toContain('-10.36');
+        expect(extBlock().props['data-us-ext']).toBe('none');
+        expect(extBlock().props['aria-hidden']).toBe(true);
+        expect(String(extBlock().props.className)).toContain('usExtEmpty');
+    });
+
+    it('post-market: ext vs today\'s close; after 20:00 it stays greyed', () => {
+        const us = { session: 'AfterHours', regular: '353.10', regularChg: '', regularPct: '', extClose: '354.00', extHigh: '', extLow: '' };
+        m.usSnap = usSnap({ reference: 349 });
+        m.quote = { tick: { code: 'US:AAPL', date: '2026-11-19', time: '17:00:00', close: '354.00', open: '350', high: '355', low: '345', total_volume: 10, volume: 1, us } };
+        atEt(17);
+        mount();
+        expect(extBlock().props['data-us-ext']).toBe('AfterHours');
+        expect(extText()).toContain('+0.90');
+        expect(String(extBlock().props.className)).not.toContain('usExtClosed');
+        act(() => view!.unmount());
+        atEt(21);
+        mount();
+        expect(extBlock().props['data-us-ext']).toBe('closed');
+        expect(String(extBlock().props.className)).toContain('usExtClosed');
+        act(() => view!.unmount());
+        atEt(4, 1, 20); // 隔天 04:00 換日：清掉
+        mount();
+        expect(extBlock().props['data-us-ext']).toBe('none');
     });
 
     it('next-day pre-market does not show the previous day\'s open/high/low', () => {
@@ -127,7 +178,7 @@ describe('QuoteBoard (US through the TW board)', () => {
         mount();
         const t = text();
         expect(t).toContain('停牌');
-        expect(t).not.toContain('盤後');
+        expect(extBlock().props['data-us-ext']).toBe('none');
     });
 
     it('shows the delayed / stale feed badge on live US quotes', () => {
@@ -147,29 +198,29 @@ describe('QuoteBoard (US through the TW board)', () => {
         expect(text()).not.toContain('us-board-freshness');
     });
 
-    it('without a live tick, an extended-session snapshot shows its last price with the session badge', () => {
+    it('without a live tick, an extended-session snapshot shows the regular close big and its ext price in the ext block', () => {
+        atEt(8);
         const s = usSnap({ reference: 98, close: 100, changePrice: 2, changeRate: 2.04, session: 'PreMarket', lastPrice: 105 });
         m.usSnap = s;
         m.snapshot = usSnapshotToTw(s);
         mount();
-        const t = text();
-        expect(t).toContain('105.00');
-        expect(t).toContain('盤前');
-        expect(t).toContain('+7.00'); // 105 − 參考 98
-        expect(t).toContain('一般盤收盤 100.00');
+        const big = view!.root.find(n => typeof n.props.className === 'string' && n.props.className.includes('bigPrice'));
+        expect(big.children).toEqual(['100.00']);
+        expect(extText()).toContain('105.00');
+        expect(extText()).toContain('盤前');
+        expect(extText()).toContain('+7.00'); // 105 − 參考 98
     });
 
-    it('without a reference, the extended-session percentage uses the same inferred base as the change', () => {
-        const s = usSnap({ reference: 0, close: 100, changePrice: 5, changeRate: 5.26, session: 'PreMarket', lastPrice: 110 });
+    it('without a reference, the pre-market ext change is measured from the previous close', () => {
+        atEt(8);
+        const s = usSnap({ reference: 0, close: 100, changePrice: 0, changeRate: 0, session: 'PreMarket', lastPrice: 110 });
         m.usSnap = s;
         m.snapshot = usSnapshotToTw(s);
         const noRef = { ...aapl, reference: 0, us_reference: null, reference_date: null } as unknown as ContractInfo;
         act(() => { view = create(createElement(QuoteBoard, { contract: noRef })); });
-        const t = text();
-        expect(t).toContain('110.00');
-        expect(t).toContain('+15.00'); // 110 − (100 − 5)
-        expect(t).toContain('+15.79%');
-        expect(t).not.toContain('+5.26%');
+        expect(extText()).toContain('110.00');
+        expect(extText()).toContain('+10.00'); // 110 − 前一日收盤 100
+        expect(extText()).toContain('+10.00%');
     });
 
     it('a snapshot with no extended-session price keeps the regular close and no session badge', () => {

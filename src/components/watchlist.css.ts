@@ -87,6 +87,45 @@ export const usReference = style({
     fontSize: '0.74rem',
 });
 
+// 美股盤前／盤後副行：第三列跨全寬、靠右。美股列一律保留這一列（沒有延長時段
+// 價時是空白），盤前盤後出現、清掉時列高不變；台股列沒有這一列
+export const usExt = style({
+    gridColumn: '1 / -1',
+    gridRow: 3,
+    display: 'flex',
+    justifyContent: 'flex-end',
+    alignItems: 'baseline',
+    gap: 5,
+    height: 14,
+    lineHeight: '14px',
+    overflow: 'hidden',
+    whiteSpace: 'nowrap',
+    fontFamily: vars.font.mono,
+    fontSize: '0.62rem',
+    fontVariantNumeric: 'tabular-nums',
+    opacity: 0.85,
+});
+
+// 盤後已結束（20:00–04:00 ET、週末）：保留最後的盤後價、整行轉灰
+export const usExtClosed = style({
+    color: vars.color.mutedForeground,
+    opacity: 0.7,
+});
+
+export const usExtBadge = style({
+    fontFamily: vars.font.body,
+    fontSize: '0.54rem',
+    fontWeight: 600,
+    padding: '0 3px',
+    lineHeight: '12px',
+    alignSelf: 'center',
+    borderRadius: vars.radius.sm,
+    color: vars.color.mutedForeground,
+    border: `1px solid ${vars.color.border}`,
+});
+
+export const usExtPrice = style({ fontWeight: 600 });
+
 // 右側數字區（價格＋漲跌兩行）— 最後一欄、跨兩列；代碼／名稱固定第一欄
 export const numCell = style({
     gridColumn: '-2 / -1',

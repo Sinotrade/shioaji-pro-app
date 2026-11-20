@@ -324,11 +324,17 @@ export interface UsSnapshot {
     session: UsTradingSession | null;
     /** 最新成交（含盤前／盤後）；close 是一般盤價 */
     lastPrice: number | null;
+    /** 目前（或最後一段）盤前／盤後的最新、最高、最低；一般盤時 0／null → null */
+    extClose?: number | null;
+    extHigh?: number | null;
+    extLow?: number | null;
     /** 前一交易日成交量（量比用；舊 sidecar 沒帶時 undefined） */
     yesterdayVolume?: number;
 }
 
 const optNum = (v: unknown) => (v === null || v === undefined ? null : Number.isFinite(num(v)) ? num(v) : null);
+/** 正數才算有值（快照一般盤時 ext_* 送 0.0） */
+const optPos = (v: unknown) => { const n = optNum(v); return n !== null && n > 0 ? n : null; };
 
 /** 一列 snapshot → UsSnapshot；不是美股列（region 缺＝台股）回 null */
 export function parseUsSnapshotRow(row: unknown): UsSnapshot | null {
@@ -357,14 +363,11 @@ export function parseUsSnapshotRow(row: unknown): UsSnapshot | null {
         sellVolume: optNum(r.sell_volume),
         session: sessionOf(r.session),
         lastPrice: optNum(r.last_price),
+        extClose: optPos(r.ext_close),
+        extHigh: optPos(r.ext_high),
+        extLow: optPos(r.ext_low),
         ...(optNum(r.yesterday_volume) !== null ? { yesterdayVolume: optNum(r.yesterday_volume)! } : {}),
     };
-}
-
-/** 快照 → 自選列的價格／漲跌（與 usLive 同形狀；只在沒有即時成交時用） */
-export function usSnapshotQuote(s: UsSnapshot): { last: string; close: number; chg: number; pct: number } | null {
-    if (!(s.close > 0)) return null;
-    return { last: String(s.close), close: s.close, chg: s.changePrice, pct: s.changeRate };
 }
 
 /** 美股 snapshots（依輸入順序；某列不是美股形狀則該位置為 null） */

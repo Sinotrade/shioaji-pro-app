@@ -31,6 +31,7 @@ import { onWatchlistChanged, type WatchlistChangedDetail } from '../lib/watchlis
 import type { ContractInfo, SecurityType } from '../lib/types/contract';
 import type { Snapshot } from '../lib/types/market';
 import { fetchUsSnapshots, type UsSnapshot } from '../lib/us/us-history';
+import { useUsMarketClock } from './use-us-market-clock';
 
 export interface WatchItem {
     contract: ContractInfo;
@@ -207,9 +208,9 @@ export function useWatchlist() {
         primeContract(contract);
     }, []);
 
-    const attachSnapshots = useCallback((all: ContractInfo[]) => {
-        // 美股快照另外批次抓（只在載入／加入時一次，不輪詢）；舊 SDK 或非
-        // 正式環境拿不到就維持「參考價」顯示
+    const attachUsSnapshots = useCallback((all: ContractInfo[]) => {
+        // 美股快照另外批次抓（載入／加入時一次，之後只在美東時段界線再抓，不輪詢）；
+        // 舊 SDK 或非正式環境拿不到就維持「參考價」顯示
         const us = all.filter(isUsMember);
         for (let i = 0; i < us.length; i += US_SNAPSHOT_BATCH) {
             const batch = us.slice(i, i + US_SNAPSHOT_BATCH);
@@ -226,6 +227,10 @@ export function useWatchlist() {
                 })
                 .catch(() => undefined);
         }
+    }, []);
+
+    const attachSnapshots = useCallback((all: ContractInfo[]) => {
+        attachUsSnapshots(all);
         const contracts = all.filter((contract) => !isUsMember(contract));
         if (contracts.length === 0) return;
         fetchSnapshots(contracts)
@@ -244,7 +249,19 @@ export function useWatchlist() {
                 );
             })
             .catch(() => undefined);
-    }, []);
+    }, [attachUsSnapshots]);
+
+    // 美東時段界線（04:00、09:30、16:00、20:00 ET）一過就重抓美股快照：沒有即時成交的
+    // 商品也會換到正確的狀態（盤前價、盤後價、收盤後轉灰、04:00 換日清掉）
+    const usClock = useUsMarketClock();
+    const itemsRef = useRef(items);
+    itemsRef.current = items;
+    const lastUsClock = useRef(usClock);
+    useEffect(() => {
+        if (lastUsClock.current === usClock) return;
+        lastUsClock.current = usClock;
+        attachUsSnapshots(itemsRef.current.map((i) => i.contract));
+    }, [usClock, attachUsSnapshots]);
 
     const keepCommittedOrder = useCallback((id: string, list: ServerWatchlist) => {
         const anchor = committedOrder.current.get(id);

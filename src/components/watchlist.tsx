@@ -39,9 +39,11 @@ import type { SecurityType } from '../lib/types/contract';
 import type { ProductSuggestion } from '../lib/product-search';
 import { fmtPct, fmtPrice, fmtSigned } from '../lib/utils/format';
 import { contractLinkKey } from '../lib/contract-key';
-import { fmtUsPrice } from '../lib/us/decimal';
-import { usSnapshotQuote, type UsSnapshot } from '../lib/us/us-history';
-import { pickUsReference, usLiveChange } from '../hooks/use-us-snapshot';
+import { fmtUsPrice, usPriceDecimals } from '../lib/us/decimal';
+import type { UsSnapshot } from '../lib/us/us-history';
+import { usSessionViewFor } from '../hooks/use-us-snapshot';
+import { useUsMarketClock } from '../hooks/use-us-market-clock';
+import { usMarketPhase, type UsClockPhase, type UsExtLine } from '../lib/us/us-session-view';
 import type { SseTick } from '../lib/types/market';
 import { Sparkline } from './sparkline';
 import { RefreshButton } from './refresh-button';
@@ -60,26 +62,24 @@ type SortMode = 'custom' | 'desc' | 'asc';
 const isUs = (contract: ContractInfo) => contract.region === 'US';
 
 /**
- * 美股即時價（SDK 1.8 us_tick，store key `US:CODE`）：close 為成交價字串，
- * 漲跌與幅度用 tick 的 price_chg／pct_chg；沒有 pct_chg 時以前一日參考價推算。
- * 沒有即時價回 null（畫面顯示「參考 {us_reference}」）。
+ * 美股自選列（SDK 1.8 us_tick，store key `US:CODE`）：主行是一般盤價與對參考價的
+ * 漲跌（盤前是前一日收盤與它的漲跌），副行是盤前／盤後價（見 us-session-view）。
+ * 和報價板同一個 usSessionViewFor。沒有任何價格時 main 為 null（畫面顯示「參考」）。
  */
-export function usLive(contract: ContractInfo, tick: SseTick | undefined, snap?: UsSnapshot | null) {
-    const close = tick ? Number(tick.close) : NaN;
-    if (!tick || !Number.isFinite(close) || close <= 0) return null;
-    // 與報價板同一個參考價來源（當天快照 reference → 適用的合約檔參考價）
-    const ref = pickUsReference(tick, snap ?? null, contract).price;
-    const change = usLiveChange(tick, ref);
-    const chgRaw = change.priceChg !== undefined ? Number(change.priceChg) : NaN;
-    const pctRaw = change.pctChg !== undefined ? Number(change.pctChg) : NaN;
-    return { last: tick.close, close, chg: Number.isFinite(chgRaw) ? chgRaw : undefined, pct: Number.isFinite(pctRaw) ? pctRaw : undefined };
+export function usRowView(
+    contract: ContractInfo,
+    tick: SseTick | undefined,
+    snap: UsSnapshot | null | undefined,
+    now: { phase: UsClockPhase; date: string },
+) {
+    return usSessionViewFor(contract, tick, snap ?? null, now);
 }
 
 // live percent change for sorting — quote first, snapshot fallback
-// 美股：有即時價才有漲跌幅，沒有就是 0
+// 美股：用主行（一般盤）的漲跌幅，盤前盤後價不影響排序；沒有價格就是 0
 function pctOf(item: WatchItem): number {
     if (isUs(item.contract)) {
-        return usLive(item.contract, getQuote(contractLinkKey(item.contract))?.tick, item.usSnapshot)?.pct ?? item.usSnapshot?.changeRate ?? 0;
+        return usRowView(item.contract, getQuote(contractLinkKey(item.contract))?.tick, item.usSnapshot, usMarketPhase(Date.now())).main?.pct ?? 0;
     }
     const q = getQuote(item.contract.code);
     const ref = q?.index
@@ -135,8 +135,10 @@ const WatchRow = memo(function WatchRow({
     const quote = useQuote(rowKey);
     const tick = quote?.tick;
     const index = quote?.index;
-    // 美股：即時成交優先；還沒有即時成交時用快照（最近一般盤價與漲跌）
-    const usQuote = us ? usLive(item.contract, tick, item.usSnapshot) ?? (item.usSnapshot ? usSnapshotQuote(item.usSnapshot) : null) : null;
+    // 美股：主行一般盤價（即時優先，盤前或沒有即時成交時用快照），副行盤前／盤後
+    const usClock = useUsMarketClock();
+    const usView = us ? usRowView(item.contract, tick, item.usSnapshot, usClock) : null;
+    const usQuote = usView?.main ?? null;
 
     const close = tick
         ? Number(tick.close)
@@ -279,10 +281,10 @@ const WatchRow = memo(function WatchRow({
                     usQuote ? (
                         <>
                             <span className={`${styles.price} ${panel.dirText[priceDir]}`}>
-                                {fmtUsPrice(usQuote.last)}
+                                {fmtUsPrice(usQuote.price)}
                             </span>
                             <span className={`${styles.change} ${panel.dirText[priceDir]}`}>
-                                {fmtSigned(usQuote.chg)} {fmtPct(usQuote.pct)}
+                                {fmtSigned(usQuote.chg, usPriceDecimals(usQuote.price))} {fmtPct(usQuote.pct)}
                             </span>
                         </>
                     ) : (
@@ -320,6 +322,8 @@ const WatchRow = memo(function WatchRow({
             <span className={`${styles.name} ${styles.firstCol}`}>
                 {item.contract.name}
             </span>
+            {/* 美股一律保留副行高度：盤前／盤後出現或清掉時列高不變，清單不會跳 */}
+            {us && <UsExtRow ext={usView?.ext ?? null} />}
             {arrange ? (
                 <span className={styles.moveCol}>
                     <button
@@ -361,6 +365,28 @@ const WatchRow = memo(function WatchRow({
         </div>
     );
 });
+
+/** 自選列的盤前／盤後副行（小字、同一套漲跌顏色；盤後結束轉灰） */
+function UsExtRow({ ext }: { ext: UsExtLine | null }) {
+    if (!ext) return <span className={styles.usExt} aria-hidden='true' data-us-ext='none'>{'\u00a0'}</span>;
+    const dir = ext.chg === undefined || ext.chg === 0 ? 'flat' : ext.chg > 0 ? 'up' : 'down';
+    const title = [
+        `${ext.label}${ext.closed ? '（已收盤）' : ''} ${fmtUsPrice(ext.price)}`,
+        ext.high !== undefined && ext.low !== undefined ? `${ext.label}高 ${fmtUsPrice(ext.high)}　低 ${fmtUsPrice(ext.low)}` : undefined,
+        ext.base !== null ? `${ext.session === 'PreMarket' ? '對參考價' : '對一般盤收盤'} ${fmtUsPrice(ext.base)}` : undefined,
+    ].filter(Boolean).join('\n');
+    return (
+        <span
+            className={`${styles.usExt} ${ext.closed ? styles.usExtClosed : panel.dirText[dir]}`}
+            data-us-ext={ext.closed ? 'closed' : ext.session}
+            title={title}
+        >
+            <span className={styles.usExtBadge}>{ext.label}</span>
+            <span className={styles.usExtPrice}>{fmtUsPrice(ext.price)}</span>
+            <span>{fmtSigned(ext.chg, usPriceDecimals(ext.price))} {fmtPct(ext.pct)}</span>
+        </span>
+    );
+}
 
 export function Watchlist({
     items,
