@@ -135,3 +135,22 @@ it('a hold taken before the shared stream exists is announced once it is created
     stream.ensureStream();
     expect(m.wants.get('us-quotes')).toBe(true);
 });
+
+it('signals a US tick stream reset when the US tick SSE drops and again when it reconnects', async () => {
+    const stream = await import('./stream');
+    stream.ensureStream();
+    stream.retainUsQuoteStreams();
+    const resets = vi.fn();
+    stream.onUsTickStreamReset(resets);
+    const tickSource = () => openUs().find(s => /us_tick/.test(s.url))!;
+    tickSource().onopen?.();
+    expect(resets).not.toHaveBeenCalled();
+    // 只有美股 bidask 斷線：成交沒有漏收，不作廢
+    openUs().find(s => /us_bidask/.test(s.url))!.onerror?.();
+    expect(resets).not.toHaveBeenCalled();
+    tickSource().onerror?.();
+    expect(resets).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(3000);
+    tickSource().onopen?.();
+    expect(resets).toHaveBeenCalledTimes(2);
+});

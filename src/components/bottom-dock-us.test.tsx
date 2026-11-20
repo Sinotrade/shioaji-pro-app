@@ -22,7 +22,7 @@ vi.mock('../lib/us/us-trading-state', async () => {
     return { ...real, useUsTradingState: () => m.state, refreshUsTrades: vi.fn(), refreshUsPositions: vi.fn() };
 });
 vi.mock('../lib/risk', () => ({ checkUsOrderAllowed: () => null }));
-vi.mock('../lib/stream', () => ({ ensureStream: vi.fn(), getStreamStatus: () => 'down', onOrderEvent: () => () => undefined, onAnyTick: () => () => undefined, subscribeStatusStore: () => () => undefined }));
+vi.mock('../lib/stream', () => ({ ensureStream: vi.fn(), getStreamStatus: () => 'down', onOrderEvent: () => () => undefined, onAnyTick: () => () => undefined, onUsTickStreamReset: () => () => undefined, subscribeStatusStore: () => () => undefined }));
 vi.mock('../lib/quote-ownership', () => ({ retainQuote: () => () => undefined }));
 import { Fragment } from 'react';
 import { fmtUsPnl, getUsRepriceTarget, openUsReprice, resetUsRepriceForTest, UsOrderActions, usOrderRowKey, usPositionRowKey, UsRepriceHost } from './bottom-dock-us';

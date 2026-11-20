@@ -12,7 +12,7 @@ vi.mock('../account-store', () => ({
 vi.mock('../account-tradable', () => ({ canTrade: () => true }));
 vi.mock('../stream', () => ({
     ensureStream: m.ensureStream, getStreamStatus: () => 'down',
-    onOrderEvent: () => () => undefined, onAnyTick: () => () => undefined, subscribeStatusStore: () => () => undefined,
+    onOrderEvent: () => () => undefined, onAnyTick: () => () => undefined, onUsTickStreamReset: () => () => undefined, subscribeStatusStore: () => () => undefined,
 }));
 vi.mock('../quote-ownership', () => ({ retainQuote: () => () => undefined }));
 vi.mock('./us-api', () => ({ fetchUsTrades: vi.fn(), fetchUsTradeCacheHealth: vi.fn(), fetchUsPositions: vi.fn() }));

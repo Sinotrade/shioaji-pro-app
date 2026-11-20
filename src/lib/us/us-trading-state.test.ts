@@ -17,6 +17,7 @@ vi.mock('../stream', () => ({
     ensureStream: vi.fn(), getStreamStatus: () => m.streamStatus,
     onOrderEvent: (fn: (r: unknown) => void) => { m.onEvent = fn; return () => undefined; },
     onAnyTick: (fn: typeof m.onTick) => { m.onTick = fn; return () => undefined; },
+    onUsTickStreamReset: () => () => undefined,
     subscribeStatusStore: (fn: () => void) => { m.statusListener = fn; return () => undefined; },
 }));
 vi.mock('./us-api', () => ({ fetchUsTrades: m.trades, fetchUsTradeCacheHealth: m.health, fetchUsPositions: m.positions }));

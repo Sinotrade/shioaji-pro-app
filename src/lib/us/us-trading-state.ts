@@ -20,7 +20,7 @@ import { reportBody } from '../portfolio-projection';
 import { usReportLedger } from '../report-ledger';
 import { getApiBase } from '../runtime';
 import { getServerModeVersion, subscribeServerInfo } from '../server-info-store';
-import { ensureStream, getStreamStatus, onAnyTick, onOrderEvent, subscribeStatusStore } from '../stream';
+import { ensureStream, getStreamStatus, onAnyTick, onOrderEvent, onUsTickStreamReset, subscribeStatusStore } from '../stream';
 import { retainQuote } from '../quote-ownership';
 import { usLinkKey } from '../contract-key';
 import type { Account } from '../types/portfolio';
@@ -686,9 +686,13 @@ export const US_TICK_MARK_MAX_AGE_MS = 60_000;
 /** 最新即時成交（任何時段；key：美股代碼大寫）；at＝收到時間 */
 const lastUsTicks = new Map<string, { price: string; at: number }>();
 /** 最後一筆一般盤成交；nyDate 取自成交本身的時間，不是收到時間 */
-const lastRegularTicks = new Map<string, { price: string; at: number; nyDate: string }>();
-/** 快照的一般盤收盤（只用一般盤時的後備）；key：伺服器|代碼；每次庫存重查都重抓 */
-const regularSnapshotClose = new Map<string, { close: string; at: number }>();
+const lastRegularTicks = new Map<string, { price: string; at: number; tradeAt: number; nyDate: string }>();
+/**
+ * 快照的一般盤收盤（只用一般盤時的後備）；key：伺服器|代碼；每次庫存重查都重抓。
+ * at＝取得時間（只用來比對庫存查詢的 60 秒規則）；dataAt＝快照本身的資料時間（ts），
+ * 與一般盤成交比新舊只看資料時間：共用快取或慢回應的快照不能蓋過較新的成交。
+ */
+const regularSnapshotClose = new Map<string, { close: string; at: number; dataAt: number | null }>();
 const snapshotLookups = new Set<string>();
 /** 最後一次庫存查詢的原始列（未經即時價重算）與查詢發出時間：切換計價時段時從這裡重算 */
 let serverPositions: (IntlPosition & { account: Account })[] = [];
@@ -727,7 +731,8 @@ function latestMark(code: string): string | null {
         const t = tick && tick.nyDate === nyDate() && freshAgainstQuery(tick.at) ? tick : undefined;
         const snap = regularSnapshotClose.get(`${getApiBase()}|${code}`);
         const s = snap && freshAgainstQuery(snap.at) ? snap : undefined;
-        if (t && s) return t.at >= s.at ? t.price : s.close;
+        // 快照只有資料時間確定比成交新時才取代成交（沒有 ts 視為不比成交新）
+        if (t && s) return s.dataAt !== null && s.dataAt > t.tradeAt ? s.close : t.price;
         return t?.price ?? s?.close ?? null;
     }
     const t = lastUsTicks.get(code);
@@ -764,7 +769,7 @@ function loadRegularSnapshots() {
                 if (base !== getApiBase() || !snap || !(snap.close > 0)) return;
                 const close = decNormalize(String(snap.close));
                 if (!close) return;
-                regularSnapshotClose.set(key, { close, at: Date.now() });
+                regularSnapshotClose.set(key, { close, at: Date.now(), dataAt: typeof snap.ts === 'number' && snap.ts > 0 ? snap.ts : null });
                 remarkPositions();
             })
             .catch(() => undefined)
@@ -797,7 +802,7 @@ export function onUsPositionTick(tick: { code: string; close: string; simtrade?:
     lastUsTicks.set(code, { price, at: now });
     const today = nyDate();
     const regularToday = session === 'Regular' && nyDate(tsMs ?? now) === today;
-    if (regularToday) lastRegularTicks.set(code, { price, at: now, nyDate: today });
+    if (regularToday) lastRegularTicks.set(code, { price, at: now, tradeAt: tsMs ?? now, nyDate: today });
     // 只用一般盤：延長時段（或不是今天）的成交只記錄、不重算
     if (getUsPnlSession() === 'regular' && !regularToday) return;
     let changed = false;
@@ -892,6 +897,8 @@ export function startUsTradingState() {
         }
     };
     const stopStatus = subscribeStatusStore(statusChanged);
+    // 美股行情走獨立 SSE：它單獨斷線／重連時也作廢即時價（主串流狀態看不到）
+    const stopUsTickReset = onUsTickStreamReset(clearUsTickMarks);
     // 帳戶清單晚到（或模式切換後）也要查一次
     let knownKeys = usAccounts().map(keyOf).join('|');
     const stopAccounts = subscribeAccounts(() => {
@@ -930,7 +937,7 @@ export function startUsTradingState() {
     }, 60_000);
     import.meta.hot?.dispose(() => {
         stopServerInfo(); clearInterval(dayTimer); if (modeTimer) clearTimeout(modeTimer);
-        stopEvents(); stopTicks(); stopPnlSession(); stopGaps(); stopStatus(); stopAccounts(); gapTimers.forEach(clearTimeout);
+        stopEvents(); stopTicks(); stopPnlSession(); stopGaps(); stopStatus(); stopUsTickReset(); stopAccounts(); gapTimers.forEach(clearTimeout);
         releasePositionQuotes();
         refetchTimers.forEach(clearTimeout); refetchTimers.clear();
         clearDealPositionsTimers();

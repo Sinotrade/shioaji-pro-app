@@ -207,6 +207,18 @@ const US_WANT_KEY = 'us-quotes';
 const usWanted = () => usStreamRefs > 0 || remoteUsWanted;
 const usSources = new Map<string, EventSource>();
 let usReopenTimer: ReturnType<typeof setTimeout> | null = null;
+/** 美股成交 SSE 斷線或斷線後重連（期間可能漏收成交；庫存即時價要作廢） */
+const usTickStreamResetListeners = new Set<() => void>();
+let usTickStreamDropped = false;
+function emitUsTickStreamReset() {
+    usTickStreamResetListeners.forEach(l => l());
+}
+export function onUsTickStreamReset(listener: () => void) {
+    usTickStreamResetListeners.add(listener);
+    return () => {
+        usTickStreamResetListeners.delete(listener);
+    };
+}
 
 function openUsStreams() {
     if (!usWanted() || typeof EventSource === 'undefined') return;
@@ -223,8 +235,16 @@ function openUsStreams() {
         source.onerror = () => {
             source.close();
             usSources.delete(name);
+            if (name === US_TICK_EVENT) { usTickStreamDropped = true; emitUsTickStreamReset(); }
             scheduleUsReopen();
         };
+        if (name === US_TICK_EVENT) {
+            source.onopen = () => {
+                if (!usTickStreamDropped) return;
+                usTickStreamDropped = false;
+                emitUsTickStreamReset();
+            };
+        }
         usSources.set(name, source);
     }
 }

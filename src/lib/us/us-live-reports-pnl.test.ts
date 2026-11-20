@@ -11,7 +11,7 @@ const m = vi.hoisted(() => ({
     accountsListener: null as null | (() => void), place: vi.fn(),
     base: 'http://a', resolve: null as null | ((code: string) => Promise<unknown>),
     snapshot: vi.fn(),
-    status: 'down', statusFn: null as null | (() => void),
+    status: 'down', statusFn: null as null | (() => void), usReset: null as null | (() => void),
 }));
 vi.mock('./us-history', () => ({ fetchUsSnapshotShared: m.snapshot }));
 vi.mock('../runtime', async original => ({ ...await original<object>(), getApiBase: () => m.base }));
@@ -25,6 +25,7 @@ vi.mock('../stream', () => ({
     ensureStream: vi.fn(), getStreamStatus: () => m.status,
     onOrderEvent: (fn: (r: unknown) => void) => { m.onEvent = fn; return () => undefined; },
     onAnyTick: (fn: typeof m.onTick) => { m.onTick = fn; return () => undefined; },
+    onUsTickStreamReset: (fn: () => void) => { m.usReset = fn; return () => undefined; },
     subscribeStatusStore: (fn: () => void) => { m.statusFn = fn; return () => undefined; },
 }));
 vi.mock('./us-api', () => ({ fetchUsTrades: m.trades, fetchUsTradeCacheHealth: m.health, fetchUsPositions: m.positions,
@@ -475,6 +476,41 @@ describe('US P&L price session setting (含盤前盤後／只用一般盤)', () 
         m.snapshot.mockResolvedValue({ code: 'AAPL', close: 200, lastPrice: 200, session: 'Regular', tradeDate: '2026-11-18' });
         await load();
         expect(aapl()).toMatchObject({ market_price: '200', pnl: '208.7043' });
+    });
+
+    it('regular only: a cached or slow snapshot never rolls a newer regular trade back; a snapshot with newer data does win', async () => {
+        const quoted = Date.now() - 30_000;
+        m.snapshot.mockResolvedValue({ code: 'AAPL', close: 190, lastPrice: 190, session: 'Regular', tradeDate: '2026-11-18', ts: quoted });
+        setUsPnlSession('regular');
+        await load();
+        expect(aapl().market_price).toBe('190');
+        tick('195', 'Regular');
+        expect(aapl().market_price).toBe('195');
+        // 重查：快照（共用快取／慢回應）晚到但資料時間比成交舊 → 仍是 195
+        await vi.advanceTimersByTimeAsync(1_000);
+        await load();
+        expect(aapl().market_price).toBe('195');
+        // 沒有 ts 的快照也不能蓋過成交
+        m.snapshot.mockResolvedValue({ code: 'AAPL', close: 190, lastPrice: 190, session: 'Regular', tradeDate: '2026-11-18', ts: null });
+        await load();
+        expect(aapl().market_price).toBe('195');
+        // 快照資料時間比成交新（期間漏收成交）→ 用快照收盤
+        await vi.advanceTimersByTimeAsync(5_000);
+        m.snapshot.mockResolvedValue({ code: 'AAPL', close: 196, lastPrice: 196, session: 'Regular', tradeDate: '2026-11-18', ts: Date.now() - 1_000 });
+        await load();
+        expect(aapl().market_price).toBe('196');
+    });
+
+    it('regular only: a US-only quote stream drop retires the old trade, so a re-query is not overridden', async () => {
+        setUsPnlSession('regular');
+        await load();
+        tick('195', 'Regular');
+        expect(aapl().market_price).toBe('195');
+        // 主串流仍是同一狀態，只有美股成交 SSE 斷線重連
+        m.usReset!();
+        m.positions.mockResolvedValue([{ ...pos(), market_price: '199' }]);
+        await us.refreshUsPositions(); await flush();
+        expect(aapl().market_price).toBe('199');
     });
 
     it('toggling recomputes from the latest known marks, even more than 60s after the last query', async () => {
