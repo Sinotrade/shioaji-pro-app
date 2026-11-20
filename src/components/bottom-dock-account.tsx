@@ -37,7 +37,7 @@ import type {
 } from '../lib/types/portfolio';
 import { canonicalBrokerCode, resolveRealizedName } from '../lib/realized-name';
 import { bizDateLabel, settleDateLabel } from '../lib/settle-date';
-import { classifyAccountQueryError, classifyBrokerQueryError, TRADING_LIMITS_NOT_SENT } from '../lib/trading-limits-error';
+import { classifyAccountQueryError, classifyBrokerQueryError, settleAccountQueries, TRADING_LIMITS_NOT_SENT } from '../lib/trading-limits-error';
 import { knownServerInfo, useServerInfo } from '../lib/server-info-store';
 import { getApiBase } from '../lib/runtime';
 import { TRADING_LIMITS_WINDOW, twQueryWindowState, windowLabel, type TwQueryWindow } from '../lib/tw-query-window';
@@ -345,11 +345,14 @@ interface PnlData {
 function PnlSection({
     pnl,
     error,
+    errorKind,
     privMoney,
     onRetry,
 }: {
     pnl: PnlData | undefined;
     error: string | null;
+    /** 已分類的錯誤種類（模擬環境不分類，一律 null） */
+    errorKind: ReturnType<typeof classifyAccountQueryError>;
     privMoney: boolean;
     onRetry: () => void;
 }) {
@@ -398,7 +401,7 @@ function PnlSection({
         <section className={styles.acctSection}>
             <div className={styles.acctTitle}>今日已實現損益 Realized P&L</div>
             {failed ? (
-                <AccountQueryFailure what='損益' error={error!} onRetry={onRetry} />
+                <AccountQueryFailure what='損益' error={error!} kind={errorKind} onRetry={onRetry} />
             ) : pnl === undefined ? (
                 <Loading text='載入已實現損益' />
             ) : pnl.rows.length === 0 ? (
@@ -453,8 +456,8 @@ function PnlSection({
                 </>
             )}
             {/* 保留上一份損益時的暫時性刷新失敗：灰字標示這份不是剛更新的 */}
-            {!failed && error && classifyAccountQueryError(error) && (
-                <AccountQueryFailure what='損益' error={error} onRetry={onRetry} />
+            {!failed && error && errorKind && (
+                <AccountQueryFailure what='損益' error={error} kind={errorKind} onRetry={onRetry} />
             )}
         </section>
     );
@@ -835,7 +838,7 @@ function AccountPaneContent({ positions, balance, margin, funds, market, scopeAc
     >(
         useCallback(
             () =>
-                Promise.all(stockAccounts.map(a => fetchSettlements(a))).then(results => {
+                settleAccountQueries(stockAccounts.map(a => fetchSettlements(a))).then(results => {
                     const sums = new Map<string, Settlement>();
                     for (const row of results.flat()) {
                         const key = `${row.T}`;
@@ -858,11 +861,12 @@ function AccountPaneContent({ positions, balance, margin, funds, market, scopeAc
     const pnlFetcher = useCallback(async (): Promise<PnlData> => {
         const rows: AccountedPnl[] = [];
         let total = 0;
-        await Promise.all(
+        // 全部帳戶、列表與總額都等完：先到的暫時性錯誤不能蓋掉同批裡的真錯誤
+        await settleAccountQueries(
             queryAccounts.map(async (account) => {
                 const m = account.account_type as 'S' | 'F';
                 const sel = account;
-                const [list, sum] = await Promise.all([
+                const [list, sum] = await settleAccountQueries([
                     fetchProfitLoss(m, sel),
                     fetchProfitLossSummary(m, sel),
                 ]);
@@ -919,8 +923,8 @@ function AccountPaneContent({ positions, balance, margin, funds, market, scopeAc
             if (!showStock) {
                 return { summary: null, detail: null, earmark: null };
             }
-            const batches = await Promise.all(stockAccounts.map(async account => {
-                const [summary, detail, earmark] = await Promise.all([
+            const batches = await settleAccountQueries(stockAccounts.map(async account => {
+                const [summary, detail, earmark] = await settleAccountQueries([
                     fetchStockReserveSummary(account), fetchStockReserveDetail(account), fetchEarmarkingDetail(account),
                 ]);
                 return { summary, detail, earmark };
@@ -953,8 +957,10 @@ function AccountPaneContent({ positions, balance, margin, funds, market, scopeAc
     // 交割、預收、損益的暫時性失敗不論有無舊資料，區塊內都有灰字提示
     const settleExpected = !!classifyAccountQueryError(errorSettle);
     const reserveExpected = !!classifyAccountQueryError(errorReserve);
-    // 今日已實現損益（TKAP01 損益後台／r6）同交割：暫時性失敗區塊內有灰字
-    const pnlExpected = !!classifyAccountQueryError(errorPnl);
+    // 今日已實現損益（TKAP01 損益後台／r6）同交割：暫時性失敗區塊內有灰字。
+    // 模擬環境不走券商後台，錯誤照舊（不分類）
+    const pnlKind = sim ? null : classifyAccountQueryError(errorPnl);
+    const pnlExpected = !!pnlKind;
     const reportsError = [
         settleExpected ? null : errorSettle,
         pnlExpected ? null : errorPnl,
@@ -1004,7 +1010,7 @@ function AccountPaneContent({ positions, balance, margin, funds, market, scopeAc
     );
     const right = (
         <div className={styles.acctCol}>
-            <PnlSection pnl={pnl} error={errorPnl} privMoney={privMoney} onRetry={() => void refreshPnl()} />
+            <PnlSection pnl={pnl} error={errorPnl} errorKind={pnlKind} privMoney={privMoney} onRetry={() => void refreshPnl()} />
             {showStock && (
                 <ReserveSection
                     reserve={reserve}

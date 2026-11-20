@@ -109,6 +109,8 @@ function summarizeFailures(raws: { raw: string; kind: FailureKind }[]): QueryFai
 const errorText = (e: unknown) => e instanceof Error ? e.message : String(e);
 // 持倉、期貨保證金經券商 TKAP01 損益後台／r6：夜間偶發 503、6044（裸 500）、AS400 未連線
 function classifiedQueryProblem(what: string, raw: string): { kind: FailureKind; text: string | null } {
+    // 模擬環境不走券商後台：錯誤照舊，不分類
+    if (knownServerInfo()?.simulation === true) return { kind: null, text: null };
     const classified = classifyAccountQueryError(raw);
     if (!classified) return { kind: null, text: null };
     // 'window'（明寫服務時段）對持倉／保證金也只是暫時查不到

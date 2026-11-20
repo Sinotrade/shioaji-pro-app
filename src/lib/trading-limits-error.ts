@@ -61,6 +61,23 @@ const TKAP01_NO_TRADE_STATUS = /無法取得交易狀態|\bTKAP01\D{0,8}6044\b|\
 
 export type AccountQueryErrorKind = BrokerQueryErrorKind | 'temporary';
 
+/**
+ * 多帳戶／多支查詢並行時，挑出要拋出的那個錯誤：只要有一個不是暫時性的真錯誤就拋它，
+ * 全部都是暫時性才拋第一個。避免先到的 503 蓋掉同一批裡真正的錯誤。
+ */
+export function pickAccountQueryError(reasons: readonly unknown[]): unknown {
+    const text = (e: unknown) => (e instanceof Error ? e.message : String(e));
+    return reasons.find(e => !classifyAccountQueryError(text(e))) ?? reasons[0];
+}
+
+/** 等所有查詢結束；有失敗就依 pickAccountQueryError 拋出，否則回傳全部結果 */
+export async function settleAccountQueries<T extends unknown[]>(queries: [...{ [K in keyof T]: Promise<T[K]> }]): Promise<T> {
+    const results = await Promise.allSettled(queries);
+    const failed = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected').map(r => r.reason as unknown);
+    if (failed.length) throw pickAccountQueryError(failed);
+    return results.map(r => (r as PromiseFulfilledResult<unknown>).value) as T;
+}
+
 export function classifyAccountQueryError(message: string | null | undefined): AccountQueryErrorKind {
     const broker = classifyBrokerQueryError(message);
     if (broker || !message) return broker;

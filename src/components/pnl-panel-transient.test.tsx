@@ -4,17 +4,18 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { Account } from '../lib/types/portfolio';
 
-const m = vi.hoisted(() => ({ result: { data: undefined as unknown, loading: false, error: null as string | null }, refresh: vi.fn() }));
+const m = vi.hoisted(() => ({ result: { data: undefined as unknown, loading: false, error: null as string | null }, refresh: vi.fn(), simulation: false }));
 const accounts: Account[] = [{ account_type: 'F', broker_id: 'BR', account_id: 'X', signed: true, person_id: '', username: '' }];
 vi.mock('../lib/account-store', () => ({ useAccounts: () => ({ loaded: true, accounts }) }));
 vi.mock('../hooks/use-query', () => ({ useQuery: () => ({ ...m.result, refresh: m.refresh }) }));
+vi.mock('../lib/server-info-store', async orig => ({ ...await orig<object>(), useServerInfo: () => ({ simulation: m.simulation }) }));
 
 import { PnlPanel } from './pnl-panel';
 
 let view: ReactTestRenderer | undefined;
 const text = () => JSON.stringify(view!.toJSON());
 const retry = () => view!.root.findAll(node => node.type === 'button' && node.children.some(c => typeof c === 'string' && c.includes('重試')));
-afterEach(async () => { await act(async () => view?.unmount()); view = undefined; vi.unstubAllGlobals(); m.refresh.mockReset(); });
+afterEach(async () => { await act(async () => view?.unmount()); view = undefined; vi.unstubAllGlobals(); m.refresh.mockReset(); m.simulation = false; });
 const render = async (result: typeof m.result) => {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     m.result = result;
@@ -46,4 +47,11 @@ it('其他錯誤仍是紅字＋原因＋重試；有資料時狀態列照舊', a
     await act(async () => view!.unmount()); view = undefined;
     await render({ data: [{ date: '2026-11-01', pnl: 300 }], loading: false, error: '500 Query error: session disconnected' });
     expect(text()).toContain('查詢失敗，保留上次資料');
+});
+
+it('模擬環境不分類：裸 500 照舊紅字', async () => {
+    m.simulation = true;
+    await render({ data: undefined, loading: false, error: '500 Internal Server Error' });
+    expect(text()).toContain('損益資訊查詢失敗：500 Internal Server Error');
+    expect(text()).not.toContain('稍後再試');
 });

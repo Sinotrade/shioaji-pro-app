@@ -448,6 +448,29 @@ describe('今日已實現損益與期貨保證金的券商暫時性錯誤（TKAP
         expect(controls!.error).toContain('session disconnected');
     });
 
+    it('同一批裡先回 503、另一個帳戶回真錯誤：紅字、留在狀態列', async () => {
+        setType('F');
+        fixture.pnl.mockReset().mockImplementation(async (_m: string, account: { account_id: string }) => {
+            if (account.account_id.startsWith('A')) throw new Error('503 Service Unavailable');
+            await Promise.resolve();
+            throw new Error('500 Query error: session disconnected');
+        });
+        await mount('F');
+        expect(text()).toContain('損益資訊查詢失敗：500 Query error: session disconnected');
+        expect(text()).not.toContain('稍後再試');
+        expect(controls!.error).toContain('session disconnected');
+    });
+
+    it('模擬環境損益不分類：裸 500 照舊紅字', async () => {
+        setType('S');
+        fixture.simulation = true;
+        fixture.pnl.mockReset().mockRejectedValue(new Error('500 Internal Server Error'));
+        await mount('S');
+        for (let i = 0; i < 3; i += 1) await act(async () => { await Promise.resolve(); });
+        expect(text()).toContain('損益資訊查詢失敗：500 Internal Server Error');
+        expect(text()).not.toContain('稍後再試');
+    });
+
     it('期貨保證金暫時性失敗：沒有上一份顯示灰字＋重試（不再卡載入）；有上一份保留並灰字', async () => {
         setType('F');
         const onRetryFunds = vi.fn();

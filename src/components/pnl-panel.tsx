@@ -17,6 +17,7 @@ import * as styles from './pnl-panel.css';
 import { AsyncStatus } from './async-status';
 import { AccountQueryFailure } from './account-query-failure';
 import { classifyAccountQueryError } from '../lib/trading-limits-error';
+import { useServerInfo } from '../lib/server-info-store';
 import { UsRealizedPnlSection } from './us-account-panels';
 
 interface PnlRow {
@@ -96,7 +97,9 @@ export function PnlPanel() {
     );
     // 已實現損益經券商 TKAP01 損益後台／r6：夜間偶發 503、6044（裸 500）、AS400 未連線
     // 是暫時性／未開放，灰字＋原始訊息放 title；其他才是查詢失敗
-    const errorKind = classifyAccountQueryError(error);
+    // 模擬環境不走券商後台，錯誤照舊（不分類）
+    const sim = useServerInfo()?.simulation === true;
+    const errorKind = sim ? null : classifyAccountQueryError(error);
     const controls = <div className={panel.refreshToolbar}>
         {error && data && (errorKind
             ? <span role="status" className={dock.acctHint} title={error}>
@@ -122,7 +125,7 @@ export function PnlPanel() {
     if (rows.length === 0) {
         return (
             <div className={panel.panelBody}>{controls}<div className={dock.emptyState}>
-                {error && !data && !loading ? <AccountQueryFailure what='損益' error={error} onRetry={() => void refresh()} /> : <AsyncStatus
+                {error && !data && !loading ? <AccountQueryFailure what='損益' error={error} kind={errorKind} onRetry={() => void refresh()} /> : <AsyncStatus
                     phase={loading && !data ? 'loading' : data ? 'empty' : 'idle'}
                     text={loading && !data ? '載入已實現損益…' : data ? '近 30 日無已實現損益' : '尚無帳戶資料'}
                 />}

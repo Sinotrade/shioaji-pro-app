@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { classifyAccountQueryError, classifyBrokerQueryError, isBrokerServiceUnavailableError, isTradingLimitsWindowError, TRADING_LIMITS_NOT_SENT } from './trading-limits-error';
+import { classifyAccountQueryError, classifyBrokerQueryError, isBrokerServiceUnavailableError, isTradingLimitsWindowError, pickAccountQueryError, settleAccountQueries, TRADING_LIMITS_NOT_SENT } from './trading-limits-error';
 
 describe('isTradingLimitsWindowError', () => {
     it.each([
@@ -64,5 +64,25 @@ describe('classifyAccountQueryError（交割、預收）', () => {
         '帳戶交割日期不一致，合計待確認', '502 Bad Gateway', '404 Not Found', '60440 something', '500 6044',
         '500 Query error: session disconnected {"account_id":"6044"}'])('%s 仍是真錯誤', m => {
         expect(classifyAccountQueryError(m)).toBeNull();
+    });
+});
+
+describe('pickAccountQueryError／settleAccountQueries（多帳戶並行）', () => {
+    it('有真錯誤就挑真錯誤，全是暫時性才挑第一個', () => {
+        const t1 = new Error('503 Service Unavailable');
+        const t2 = new Error('500 Internal Server Error');
+        const real = new Error('500 Query error: session disconnected');
+        expect(pickAccountQueryError([t1, real, t2])).toBe(real);
+        expect(pickAccountQueryError([t1, t2])).toBe(t1);
+    });
+    it('先到的暫時性錯誤不會蓋掉晚到的真錯誤', async () => {
+        let late!: (e: Error) => void;
+        const slow = new Promise<number>((_, reject) => { late = reject; });
+        const run = settleAccountQueries([Promise.reject(new Error('503 Service Unavailable')), slow, Promise.resolve(1)]);
+        late(new Error('500 parse failed'));
+        await expect(run).rejects.toThrow('500 parse failed');
+    });
+    it('全部成功回傳原順序', async () => {
+        await expect(settleAccountQueries([Promise.resolve(1), Promise.resolve('a')])).resolves.toEqual([1, 'a']);
     });
 });

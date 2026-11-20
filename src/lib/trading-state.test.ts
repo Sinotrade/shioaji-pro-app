@@ -1444,6 +1444,15 @@ describe('持倉／期貨保證金的券商暫時性失敗（TKAP01 6044、503�
         expect(state.queries.account.failure).toBeNull();
         expect(state.queries.account.error).toContain('保證金查詢失敗');
     });
+    it('模擬環境不分類：503 照舊是查詢失敗', async () => {
+        const info = await import('./server-info-store');
+        info.observeServerInfo(info.beginServerInfoRequest(), { simulation: true } as import('./shioaji').ServerInfo);
+        mocks.positions.mockRejectedValueOnce(new Error('503 Service Unavailable'));
+        const state = await read('positions');
+        expect(state.queries.positions.failure).toBeNull();
+        expect(state.queries.positions.error).toContain('持倉查詢失敗');
+        info.forgetServerInfo('http://fixture.invalid');
+    });
     it('證券餘額不走這些後台：503 仍照舊是查詢失敗', async () => {
         mocks.balance.mockRejectedValueOnce(new Error('503 Service Unavailable'));
         const state = await read('account');
