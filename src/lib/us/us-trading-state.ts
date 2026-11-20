@@ -177,6 +177,8 @@ function onReconcileDrained() {
     else void recomputeHint().catch(() => undefined);
 }
 
+const isCurrentAccount = (account: Account) => usAccounts().some(a => keyOf(a) === keyOf(account));
+
 function mergeAccount(account: Account, rows: UsTrade[]) {
     const k = keyOf(account);
     const incoming = rows
@@ -184,7 +186,9 @@ function mergeAccount(account: Account, rows: UsTrade[]) {
             && (!t.order.account.account_type || t.order.account.account_type === 'H')))
         .map(t => ({ ...t, account }));
     // 美東換日後，快照裡昨天的 DAY 單不採用（不只看資料裡的最大日期）
-    return dropBeforeNyDate(dropExpiredDayOrders([...state.trades.filter(t => keyOf(t.account) !== k), ...incoming]), nyDate());
+    // 只留目前仍可交易的帳戶（被移除帳戶的列不會因別的帳戶重查而留下）
+    const keys = new Set(usAccounts().map(keyOf));
+    return dropBeforeNyDate(dropExpiredDayOrders([...state.trades.filter(t => keyOf(t.account) !== k && keys.has(keyOf(t.account))), ...incoming]), nyDate());
 }
 
 /**
@@ -243,6 +247,8 @@ export function refreshUsAccount(account: Account): Promise<void> {
     const run = fetchUsTrades(account, true).then(rows => {
         // 換了伺服器：結果作廢；模式穩定後的重查由 startUsTradingState 觸發
         if (base !== getApiBase()) return;
+        // 查詢期間帳戶被移除：結果不採用
+        if (!isCurrentAccount(account)) return;
         let merged = mergeAccount(account, Array.isArray(rows) ? rows : []);
         let unapplied = false;
         for (const report of buffer) {
@@ -472,13 +478,15 @@ function newRowFromReport(rows: AccountedUsTrade[], report: OrderEventReport, ac
  * 回報建立的委託列在美股合約清單還沒載入時沒有交易所（exchange null）。
  * 改價第二步重下需要交易所：查到後補上（改價在補上前會被擋，不會先刪單）。
  */
+/** 進行中的查詢，以「伺服器＋代碼」去重：換伺服器後新伺服器的列不會被舊查詢擋住 */
 const exchangeLookups = new Set<string>();
 export function fillMissingExchanges(): Promise<void> {
+    const base = getApiBase();
     const codes = [...new Set(state.trades.filter(t => !t.contract.exchange).map(t => t.contract.code.trim().toUpperCase()))]
-        .filter(code => code && !exchangeLookups.has(code));
+        .filter(code => code && !exchangeLookups.has(`${base}|${code}`));
     return Promise.all(codes.map(code => {
-        exchangeLookups.add(code);
-        const base = getApiBase();
+        const key = `${base}|${code}`;
+        exchangeLookups.add(key);
         return resolveUsContract(code).then(contract => {
             if (base !== getApiBase() || !contract.exchange) return;
             let changed = false;
@@ -488,7 +496,7 @@ export function fillMissingExchanges(): Promise<void> {
                 return { ...t, contract: { ...t.contract, exchange: contract.exchange } };
             });
             if (changed) publish({ trades });
-        }).catch(() => undefined).finally(() => { exchangeLookups.delete(code); });
+        }).catch(() => undefined).finally(() => { exchangeLookups.delete(key); });
     })).then(() => undefined);
 }
 
@@ -502,6 +510,8 @@ function fillMissing<T extends object>(base: T, current: T): T {
 /** 下單／刪單回應：把 HTTP Trade 放進列表（較新的回報不被覆蓋） */
 export function observeUsTrade(trade: UsTrade, account: Account) {
     if (!trade?.order?.id) return;
+    // 回應晚到時帳戶可能已移除：不再收進列表
+    if (!isCurrentAccount(account)) return;
     const old = state.trades.find(t => t.order.id === trade.order.id && keyOf(t.account) === keyOf(account));
     if (old) {
         // 回應可能比回報晚：只補缺的欄位
@@ -865,6 +875,7 @@ export function resetUsTradingStateForTest(next: Partial<UsTradingState> = {}) {
     positionsCapability = null;
     capabilityBase = '';
     releasePositionQuotes();
+    exchangeLookups.clear();
     listeners.forEach(l => l());
 }
 

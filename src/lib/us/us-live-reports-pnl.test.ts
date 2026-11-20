@@ -9,7 +9,9 @@ const m = vi.hoisted(() => ({
     onTick: null as null | ((t: { code: string; close: string; simtrade?: boolean }) => void),
     retained: [] as string[], released: [] as string[],
     accountsListener: null as null | (() => void), place: vi.fn(),
+    base: 'http://a', resolve: null as null | ((code: string) => Promise<unknown>),
 }));
+vi.mock('../runtime', async original => ({ ...await original<object>(), getApiBase: () => m.base }));
 vi.mock('../account-store', () => ({
     getAccountState: () => ({ accounts: m.accounts }),
     subscribeAccounts: (fn: () => void) => { m.accountsListener = fn; return () => undefined; },
@@ -30,7 +32,7 @@ vi.mock('../quote-ownership', () => ({
 }));
 vi.mock('./us-contracts', () => ({
     getUsContractRecord: (code: string) => (['NVDA', 'AAPL', 'SNDL'].includes(code) ? { code, exchange: 'NASDAQ' } : undefined),
-    resolveUsContract: async (code: string) => ({ code, region: 'US', exchange: 'NASDAQ', security_type: 'STK' }),
+    resolveUsContract: (code: string) => m.resolve ? m.resolve(code) : Promise.resolve({ code, region: 'US', exchange: 'NASDAQ', security_type: 'STK' }),
 }));
 
 import fx from './__fixtures__/intl-order-events.json';
@@ -63,6 +65,7 @@ const trades = () => us.getUsTradingState().trades;
 beforeEach(() => {
     m.accounts = [H];
     m.place.mockReset();
+    m.base = 'http://a'; m.resolve = null;
     m.trades.mockReset(); m.health.mockReset(); m.positions.mockReset(); m.apiGet.mockReset();
     vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
     vi.setSystemTime(Date.UTC(2026, 10, 18, 15, 0));
@@ -319,5 +322,41 @@ describe('review fixes (PR #432)', () => {
         // 新帳戶的庫存會重查
         await flush();
         expect(m.positions).toHaveBeenCalledWith(H2);
+    });
+});
+
+describe('review fixes round 2 (PR #432)', () => {
+    const xyz = (id: string, seq: number) => normalizeOrderEvent({ state: 'IntlOrder', data: { IntlOrder: { ...fx.orderNew.data.IntlOrder,
+        event_id: `v1:IO:T:2:${seq}`, order: { ...fx.orderNew.data.IntlOrder.order, id }, status: { ...fx.orderNew.data.IntlOrder.status, id },
+        contract: { ...fx.orderNew.data.IntlOrder.contract, code: 'XYZ' } } } })!;
+
+    it('a pending exchange lookup on server A does not block the same symbol on server B', async () => {
+        let resolveA!: (v: unknown) => void;
+        m.resolve = () => new Promise(r => { resolveA = r; });
+        m.onEvent!(xyz('a1', 1)); // 伺服器 A：XYZ 查詢中
+        m.base = 'http://b';
+        m.resolve = (code) => Promise.resolve({ code, region: 'US', exchange: 'NYSE', security_type: 'STK' });
+        m.onEvent!(xyz('b1', 2)); // 伺服器 B 的同代碼列
+        resolveA({ code: 'XYZ', region: 'US', exchange: 'NASDAQ', security_type: 'STK' }); // A 的結果作廢
+        await flush();
+        expect(trades().find(t => t.order.id === 'b1')!.contract.exchange).toBe('NYSE');
+    });
+
+    it('an order response for an account that was removed is not adopted, and later re-reads do not keep it', async () => {
+        const H2: Account = { ...H, account_id: '0000002' };
+        m.accounts = [H2];
+        m.accountsListener!();
+        const response: UsTrade = {
+            contract: { security_type: 'STK', exchange: 'NASDAQ', code: 'NVDA', region: 'US' },
+            order: { id: 'late1', seqno: '1', ordno: '1', action: 'Buy', price: '173', quantity: '5', trade_date: '20261118' },
+            status: { id: 'late1', status: 'Submitted', status_code: '00', order_quantity: '5', deal_quantity: '0', cancel_quantity: '5', msg: '', deals: [] },
+        };
+        us.observeUsTrade(response, H); // 減量／刪單回應晚到，H 已移除
+        expect(trades()).toEqual([]);
+        // 帳戶移除前就開始的 H 查詢晚到：也不採用
+        await us.refreshUsAccount(H2);
+        m.trades.mockResolvedValueOnce([response]);
+        await us.refreshUsAccount(H);
+        expect(trades().some(t => t.account.account_id === H.account_id)).toBe(false);
     });
 });
