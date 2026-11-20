@@ -7,6 +7,7 @@ vi.mock('../lib/runtime', () => ({ getApiBase: () => 'http://account-pane-fixtur
 vi.mock('../lib/shioaji', () => ({ fetchInfo: async () => ({ simulation: fixture.simulation }), fetchProfitLoss: fixture.pnl, fetchProfitLossSummary: fixture.summary,
     fetchSettlements: fixture.settlements, fetchTradingLimits: fixture.limits, fetchStockReserveSummary: fixture.reserve, fetchStockReserveDetail: fixture.reserve, fetchEarmarkingDetail: fixture.reserve, resolveContract: vi.fn(), fetchFuturesRoots: vi.fn(async () => [{ root: 'NSF', name: '美國那斯達克100期貨' }]) }));
 import { AccountPane, type AccountRefreshControls } from './bottom-dock-account';
+import type { AccountFunds } from '../lib/types/portfolio';
 let view: ReactTestRenderer | undefined;
 afterEach(async () => { await act(async () => view?.unmount()); vi.useRealTimers(); vi.unstubAllGlobals(); });
 it('fans out explicit futures accounts, sums both and keeps a complete snapshot after a partial failure', async () => {
@@ -380,5 +381,98 @@ describe('正式環境台股帳務查詢時段與券商暫時性錯誤', () => {
         expect(text()).toContain('交割資訊查詢失敗：');
         expect(text()).not.toContain('稍後再試');
         expect(controls!.error).toContain('session disconnected');
+    });
+});
+
+describe('今日已實現損益與期貨保證金的券商暫時性錯誤（TKAP01／r6）', () => {
+    let run = 0;
+    let controls: AccountRefreshControls | null;
+    const text = () => JSON.stringify(view!.toJSON());
+    const retry = () => view!.root.findAll(node => node.type === 'button' && node.children.some(child => typeof child === 'string' && child.includes('重試')));
+    const mount = async (market: 'S' | 'F', extra: Record<string, unknown> = {}) => {
+        await act(async () => { view = create(createElement(AccountPane, { positions: [], market, scopeAccount: null, onRefreshControls: value => { controls = value; }, ...extra })); });
+    };
+    const setType = (type: 'S' | 'F') => fixture.accounts.forEach((a, i) => { a.account_type = type; a.account_id = `${'AB'[i]}-pnl-${run}`; });
+    beforeEach(() => {
+        vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+        vi.stubGlobal('localStorage', { getItem: () => null, setItem: vi.fn() });
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-11-20T21:30:00+08:00'));
+        run += 1; controls = null; fixture.simulation = false;
+        fixture.pnl.mockReset().mockResolvedValue([]); fixture.summary.mockReset().mockResolvedValue({ total: { pnl: 0 }, profitloss_sum: [] });
+        fixture.settlements.mockReset().mockResolvedValue([]); fixture.reserve.mockReset().mockResolvedValue({ stocks: [] });
+        fixture.limits.mockReset().mockResolvedValue(null);
+    });
+
+    it.each([
+        ['S', 'list', '500 Internal Server Error'],
+        ['S', 'summary', '503 9906 系統忙碌'],
+        ['F', 'list', '503 Service Unavailable'],
+        ['F', 'summary', '500 TKAP01 6044 無法取得交易狀態'],
+    ] as const)('%s 損益 %s 遇到 %s：灰字＋重試、不算報表錯誤，重試成功顯示資料', async (type, which, message) => {
+        setType(type);
+        (which === 'list' ? fixture.pnl : fixture.summary).mockReset().mockRejectedValue(new Error(message));
+        await mount(type);
+        expect(text()).not.toContain('載入已實現損益');
+        expect(text()).toContain('券商暫時查不到資料，稍後再試');
+        expect(text()).not.toContain('損益資訊查詢失敗');
+        expect(view!.root.findAll(node => node.type === 'span' && node.props.title === message)).toHaveLength(1);
+        expect(controls!.error).toBeNull();
+        fixture.pnl.mockReset().mockResolvedValue([{ id: 1, code: '2330', pnl: 600, quantity: 1, date: '20261120', dseq: 'x' }]);
+        fixture.summary.mockReset().mockResolvedValue({ total: { pnl: 600 }, profitloss_sum: [{}] });
+        await act(async () => { vi.advanceTimersByTime(1600); retry().forEach(b => b.props.onClick()); });
+        for (let i = 0; i < 5; i += 1) await act(async () => { await Promise.resolve(); });
+        expect(text()).toContain('1,200');
+        expect(text()).not.toContain('稍後再試');
+    });
+
+    it('已有損益時遇到暫時性錯誤：保留資料、灰字、不進狀態列', async () => {
+        setType('F');
+        fixture.summary.mockResolvedValue({ total: { pnl: 700 }, profitloss_sum: [{}] });
+        fixture.pnl.mockResolvedValue([{ id: 1, code: 'TXF', pnl: 700, quantity: 1, date: '20261120' }]);
+        await mount('F');
+        expect(text()).toContain('1,400');
+        fixture.pnl.mockReset().mockRejectedValue(new Error('500 Internal Server Error'));
+        await act(async () => { vi.advanceTimersByTime(1600); await controls!.refresh(); });
+        expect(text()).toContain('1,400');
+        expect(text()).toContain('券商暫時查不到資料，稍後再試');
+        expect(controls!.error).toBeNull();
+    });
+
+    it('損益的其他錯誤仍是紅字＋重試，並留在狀態列', async () => {
+        setType('S');
+        fixture.pnl.mockReset().mockRejectedValue(new Error('500 Query error: session disconnected'));
+        await mount('S');
+        expect(text()).toContain('損益資訊查詢失敗：');
+        expect(text()).not.toContain('稍後再試');
+        expect(controls!.error).toContain('session disconnected');
+    });
+
+    it('期貨保證金暫時性失敗：沒有上一份顯示灰字＋重試（不再卡載入）；有上一份保留並灰字', async () => {
+        setType('F');
+        const onRetryFunds = vi.fn();
+        const failed = (margin?: object) => fixture.accounts.map(account => ({ account, ...(margin ? { margin } : {}), error: '券商保證金暫時查不到資料，稍後再試，保留此帳戶上次資料', rawError: '503 Service Unavailable', errorKind: 'temporary' })) as unknown as AccountFunds[];
+        await mount('F', { funds: failed(), onRetryFunds });
+        expect(text()).not.toContain('載入期貨帳務');
+        expect(text()).toContain('券商暫時查不到資料，稍後再試');
+        expect(text()).not.toContain('期貨帳務資訊查詢失敗');
+        expect(view!.root.findAll(node => node.type === 'span' && node.props.title === '503 Service Unavailable').length).toBeGreaterThan(0);
+        retry()[0]!.props.onClick();
+        expect(onRetryFunds).toHaveBeenCalledTimes(1);
+        const margin = { yesterday_balance: 0, today_balance: 0, equity: 5000, initial_margin: 0, maintenance_margin: 0, available_margin: 0, risk_indicator: 0, plus_margin_indicator: 0, future_settle_profitloss: 0 };
+        await act(async () => { view!.update(createElement(AccountPane, { positions: [], market: 'F', scopeAccount: null, funds: failed(margin), onRetryFunds })); });
+        expect(text()).toContain('10,000');
+        expect(text()).toContain('券商暫時查不到資料，稍後再試');
+    });
+
+    it('期貨保證金真錯誤：紅字＋原文，不顯示舊保證金', async () => {
+        setType('F');
+        const margin = { yesterday_balance: 0, today_balance: 0, equity: 5000, initial_margin: 0, maintenance_margin: 0, available_margin: 0, risk_indicator: 0, plus_margin_indicator: 0, future_settle_profitloss: 0 };
+        const funds = fixture.accounts.map(account => ({ account, margin, error: '保證金查詢失敗，保留此帳戶上次資料', rawError: '500 margin parse failed' }));
+        await mount('F', { funds });
+        expect(text()).toContain('期貨帳務資訊查詢失敗：');
+        expect(text()).toContain('500 margin parse failed');
+        expect(text()).not.toContain('10,000');
+        expect(text()).not.toContain('稍後再試');
     });
 });

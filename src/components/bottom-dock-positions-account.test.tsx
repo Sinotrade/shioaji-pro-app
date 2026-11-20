@@ -38,6 +38,25 @@ it('shows loading before the first positions result and empty only after a succe
     expect(JSON.stringify(view!.toJSON())).toContain('持倉尚未確認');
     expect(JSON.stringify(view!.toJSON())).not.toContain('NO OPEN POSITIONS');
 });
+it('持倉只因券商暫時性錯誤失敗：灰字＋重試、原文在 title；真錯誤仍是紅字', async () => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+    vi.stubGlobal('localStorage', { getItem: () => null, setItem: vi.fn() });
+    const onRetry = vi.fn();
+    const props = { positions: [], mode: 'merged' as const, market: 'all' as const, initialStatus: 'failed' as const,
+        scopeKey: '', fallback: { stock: null, futures: selected }, onChanged: vi.fn(), onSelectCode: vi.fn(), onRetry };
+    await act(async () => { view = create(createElement(PositionsPane, { ...props, failure: { kind: 'temporary', raw: '500 Internal Server Error' } })); });
+    expect(JSON.stringify(view!.toJSON())).toContain('券商暫時查不到資料，稍後再試');
+    expect(JSON.stringify(view!.toJSON())).not.toContain('持倉尚未確認');
+    expect(view!.root.findAll(node => node.type === 'span' && node.props.title === '500 Internal Server Error')).toHaveLength(1);
+    const retry = view!.root.findAll(node => node.type === 'button' && node.children.some(c => typeof c === 'string' && c.includes('重試')));
+    retry[0]!.props.onClick();
+    expect(onRetry).toHaveBeenCalledTimes(1);
+    await act(async () => { view!.update(createElement(PositionsPane, { ...props, failure: { kind: 'unavailable', raw: 'no AS400Query Connection' } })); });
+    expect(JSON.stringify(view!.toJSON())).toContain('券商持倉服務目前未開放');
+    await act(async () => { view!.update(createElement(PositionsPane, { ...props, failure: null })); });
+    expect(JSON.stringify(view!.toJSON())).toContain('持倉尚未確認');
+    expect(JSON.stringify(view!.toJSON())).not.toContain('稍後再試');
+});
 async function click(label: string) {
     const button = view!.root.findAllByType('button').find(b => b.children.filter(c => typeof c === 'string').join('').trim() === label)!;
     await act(async () => { await button.props.onClick({ stopPropagation: vi.fn() }); });

@@ -84,6 +84,9 @@ export function BottomDock({
     const queryStatus = portfolio.queries[tab];
     const positionsQuery = portfolio.queries.positions;
     const positionsStatus = queryDisplayState(positionsQuery);
+    // 持倉只因券商暫時性／未開放失敗、沒有其他待對帳原因時，空表顯示灰字而非紅字
+    const positionsFailure = positionsQuery.failure && positionsQuery.reasons.every(r => r === 'query-failed')
+        ? positionsQuery.failure : null;
     const ordersQuery = portfolio.queries.orders;
     const ordersStatus = queryDisplayState(ordersQuery);
     // 操作通知已呈現改刪單結果；不在委託表重複常駐通用提示。
@@ -376,11 +379,13 @@ export function BottomDock({
                     </span>
                 )}
             </div>
-            {queryError && <div role="status" style={{ padding: '4px 10px', fontSize: 12 }}>{queryError}</div>}
+            {queryError && <div role="status" title={queryStatus.failure?.raw} style={{ padding: '4px 10px', fontSize: 12 }}>{queryError}</div>}
             {tab === 'positions' && (
                 <PositionsPane
                     positions={positions}
                     initialStatus={positionsStatus}
+                    failure={positionsFailure}
+                    onRetry={() => void refreshTradingState('positions')}
                     mode={mode}
                     market={market}
                     scopeKey={scope}
@@ -415,6 +420,7 @@ export function BottomDock({
                     <AccountPane
                         mode={mode}
                         funds={portfolio.funds}
+                        onRetryFunds={() => void refreshTradingState('account')}
                         // 股票市值估算要跟摘要列一樣尊重帳戶範圍 — 多帳戶時
                         // 選單一帳戶不能把別的帳戶持倉算進來
                         positions={

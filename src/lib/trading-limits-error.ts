@@ -45,12 +45,14 @@ export function classifyBrokerQueryError(message: string | null | undefined): Br
     return null;
 }
 
-// 交割行事曆、預收券款／圈存（不設時段閘門）的暫時性失敗：
+// 經券商 TKAP01 損益後台／r6 的台股帳務查詢（交割、預收券款／圈存、已實現損益、
+// 持倉、期貨保證金；不設時段閘門）的暫時性失敗：
 // - HTTP 503（sw 之後可能把 TKAP01 暫時錯誤改成 503 並帶原訊息）
 // - TKAP01 6044「無法取得交易狀態」（帶原訊息時）
 // - 目前 6044 只以 HTTP 500、內容只有 "Internal Server Error" 送回 — 只認這個
 //   「整段就是 500 Internal Server Error」的情形；帶其他訊息的 500 仍是真錯誤。
-// 只給這幾個帳務查詢用：其他地方的裸 500 不能當成暫時性。
+// 只給上列帳務查詢用（呈現在 components/account-query-failure.tsx）：其他地方的裸 500
+// 不能當成暫時性。
 const HTTP_503 = /^503\b/;
 // 裸 "500"：HTTP/2 或 Tauri 的回應可能沒有 statusText，throwApiError 只剩狀態碼
 const BARE_500 = /^500(\s+Internal\s+Server\s+Error)?$/i;
