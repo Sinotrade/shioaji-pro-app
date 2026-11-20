@@ -620,6 +620,7 @@ let positionsSeq = 0;
 
 export async function refreshUsPositions(): Promise<void> {
     const seq = ++positionsSeq;
+    const queriedAt = Date.now();
     const accounts = usAccounts();
     if (!accounts.length) { serverPositions = []; publish({ positions: [], positionsStatus: 'idle', positionsError: null }); syncPositionQuotes(); return; }
     const base = getApiBase();
@@ -658,6 +659,7 @@ export async function refreshUsPositions(): Promise<void> {
     }
     // 查詢回來的 market_price 是後端參考價（不一定是最後成交）：依計價時段偏好用即時成交重算
     serverPositions = rows;
+    serverPositionsAt = queriedAt;
     publish({ positions: rows.map(markFromServer), positionsStatus: 'ready', positionsError: null, positionsVersion: state.positionsVersion + 1 });
     syncPositionQuotes();
     loadRegularSnapshots();
@@ -675,17 +677,23 @@ export async function refreshUsPositions(): Promise<void> {
 // 最後一筆一般盤成交，今天還沒有一般盤成交時取快照的一般盤收盤（snapshot close；
 // 快照的 close 只由一般盤更新，延長時段只動 ext_close／last_price）。
 
-/** 與台股 TICK_MARK_MAX_AGE_MS 相同：庫存重查後只沿用 60 秒內的即時成交 */
+/**
+ * 與台股 TICK_MARK_MAX_AGE_MS 相同的 60 秒規則：即時成交只有在不早於最後一次
+ * 庫存查詢 60 秒以上時才蓋過查詢值。以「查詢時間」為基準（不是現在時間），
+ * 所以切換計價時段時仍能沿用查詢後收到的最新成交；斷線時清空（期間可能漏收）。
+ */
 export const US_TICK_MARK_MAX_AGE_MS = 60_000;
-/** 最新即時成交（key：美股代碼大寫） */
+/** 最新即時成交（任何時段；key：美股代碼大寫）；at＝收到時間 */
 const lastUsTicks = new Map<string, { price: string; at: number }>();
-/** 今天（美東）最後一筆一般盤成交 */
-const lastRegularTicks = new Map<string, { price: string; nyDate: string }>();
-/** 快照的一般盤收盤（只用一般盤、今天還沒有一般盤成交時用）；key：伺服器|美東日期|代碼 */
-const regularSnapshotClose = new Map<string, string>();
+/** 最後一筆一般盤成交；nyDate 取自成交本身的時間，不是收到時間 */
+const lastRegularTicks = new Map<string, { price: string; at: number; nyDate: string }>();
+/** 快照的一般盤收盤（只用一般盤時的後備）；key：伺服器|代碼；每次庫存重查都重抓 */
+const regularSnapshotClose = new Map<string, { close: string; at: number }>();
 const snapshotLookups = new Set<string>();
-/** 最後一次庫存查詢的原始列（未經即時價重算）：切換計價時段時從這裡重算 */
+/** 最後一次庫存查詢的原始列（未經即時價重算）與查詢發出時間：切換計價時段時從這裡重算 */
 let serverPositions: (IntlPosition & { account: Account })[] = [];
+let serverPositionsAt = 0;
+
 
 /**
  * 以即時價重算一列美股庫存（純函式）。價格、股數不合法或沒有成本時原樣回傳。
@@ -707,35 +715,48 @@ export function markUsPosition<T extends IntlPosition>(p: T, price: UsAmount): T
     return { ...p, market_price: px, market_value: value, pnl, pnl_pct: pct };
 }
 
-/** 依計價時段偏好，從查詢原始列算出要顯示的市價（沒有可用的即時價就用查詢值） */
-function markFromServer<T extends IntlPosition>(p: T): T {
-    const code = p.code.trim().toUpperCase();
-    if (getUsPnlSession() === 'regular') {
-        const regular = lastRegularTicks.get(code);
-        if (regular && regular.nyDate === nyDate()) return markUsPosition(p, regular.price);
-        const close = regularSnapshotClose.get(`${getApiBase()}|${nyDate()}|${code}`);
-        return close ? markUsPosition(p, close) : p;
-    }
-    const t = lastUsTicks.get(code);
-    return t && Date.now() - t.at <= US_TICK_MARK_MAX_AGE_MS ? markUsPosition(p, t.price) : p;
+/** 即時價是否比最後一次庫存查詢新（60 秒規則，見 US_TICK_MARK_MAX_AGE_MS） */
+function freshAgainstQuery(at: number): boolean {
+    return at >= serverPositionsAt - US_TICK_MARK_MAX_AGE_MS;
 }
 
-/** 計價時段切換、或快照載入：從查詢原始列重算 */
+/** 依計價時段偏好，該代碼目前可用的最新市價；沒有就回 null（用查詢值） */
+function latestMark(code: string): string | null {
+    if (getUsPnlSession() === 'regular') {
+        const tick = lastRegularTicks.get(code);
+        const t = tick && tick.nyDate === nyDate() && freshAgainstQuery(tick.at) ? tick : undefined;
+        const snap = regularSnapshotClose.get(`${getApiBase()}|${code}`);
+        const s = snap && freshAgainstQuery(snap.at) ? snap : undefined;
+        if (t && s) return t.at >= s.at ? t.price : s.close;
+        return t?.price ?? s?.close ?? null;
+    }
+    const t = lastUsTicks.get(code);
+    return t && freshAgainstQuery(t.at) ? t.price : null;
+}
+
+/** 從查詢原始列算出要顯示的市價（沒有可用的即時價就用查詢值） */
+function markFromServer<T extends IntlPosition>(p: T): T {
+    const price = latestMark(p.code.trim().toUpperCase());
+    return price ? markUsPosition(p, price) : p;
+}
+
+/** 計價時段切換、或快照載入：從查詢原始列以最新的可用市價重算 */
 function remarkPositions() {
     if (state.positionsStatus !== 'ready') return;
     const keys = new Set(usAccounts().map(keyOf));
     publish({ positions: serverPositions.filter(p => keys.has(keyOf(p.account))).map(markFromServer) });
 }
 
-/** 只用一般盤：今天還沒有一般盤成交的持倉代碼，載入快照的一般盤收盤 */
+/**
+ * 只用一般盤：每次庫存重查（與切到只用一般盤時）重抓持倉代碼的快照一般盤收盤，
+ * 與其他快照相同走 fetchUsSnapshotShared（15 秒共用快取）。
+ */
 function loadRegularSnapshots() {
     if (getUsPnlSession() !== 'regular') return;
     const base = getApiBase();
-    const today = nyDate();
-    for (const p of serverPositions) {
-        const code = p.code.trim().toUpperCase();
-        const key = `${base}|${today}|${code}`;
-        if (lastRegularTicks.get(code)?.nyDate === today || regularSnapshotClose.has(key) || snapshotLookups.has(key)) continue;
+    for (const code of new Set(serverPositions.map(p => p.code.trim().toUpperCase()))) {
+        const key = `${base}|${code}`;
+        if (snapshotLookups.has(key)) continue;
         snapshotLookups.add(key);
         void resolveUsContract(code)
             .then(contract => fetchUsSnapshotShared({ code, exchange: contract.exchange }))
@@ -743,7 +764,7 @@ function loadRegularSnapshots() {
                 if (base !== getApiBase() || !snap || !(snap.close > 0)) return;
                 const close = decNormalize(String(snap.close));
                 if (!close) return;
-                regularSnapshotClose.set(key, close);
+                regularSnapshotClose.set(key, { close, at: Date.now() });
                 remarkPositions();
             })
             .catch(() => undefined)
@@ -756,18 +777,29 @@ function onUsPnlSessionChanged() {
     loadRegularSnapshots();
 }
 
-/** 即時成交（onAnyTick）：更新持有該代碼的庫存列。session 缺值視為非一般盤 */
-export function onUsPositionTick(tick: { code: string; close: string; simtrade?: boolean }, session?: string) {
+/** 斷線／重連：期間可能漏收成交，即時價全部作廢（與台股 lastTicks 相同） */
+function clearUsTickMarks() {
+    lastUsTicks.clear();
+    lastRegularTicks.clear();
+}
+
+/**
+ * 即時成交（onAnyTick）：更新持有該代碼的庫存列。session 缺值視為非一般盤；
+ * tsMs 是成交本身的時間（決定美東日期），缺值才用收到時間。
+ */
+export function onUsPositionTick(tick: { code: string; close: string; simtrade?: boolean }, session?: string, tsMs?: number) {
     if (tick.simtrade || !tick.code.startsWith('US:')) return;
     const code = tick.code.slice(3).toUpperCase();
     const price = decNormalize(tick.close);
     if (!price || !decIsPositive(price)) return;
-    if (lastUsTicks.size >= 2000 && !lastUsTicks.has(code)) { lastUsTicks.clear(); lastRegularTicks.clear(); }
-    lastUsTicks.set(code, { price, at: Date.now() });
-    const regular = session === 'Regular';
-    if (regular) lastRegularTicks.set(code, { price, nyDate: nyDate() });
-    // 只用一般盤：延長時段的成交只記錄、不重算
-    if (getUsPnlSession() === 'regular' && !regular) return;
+    if (lastUsTicks.size >= 2000 && !lastUsTicks.has(code)) clearUsTickMarks();
+    const now = Date.now();
+    lastUsTicks.set(code, { price, at: now });
+    const today = nyDate();
+    const regularToday = session === 'Regular' && nyDate(tsMs ?? now) === today;
+    if (regularToday) lastRegularTicks.set(code, { price, at: now, nyDate: today });
+    // 只用一般盤：延長時段（或不是今天）的成交只記錄、不重算
+    if (getUsPnlSession() === 'regular' && !regularToday) return;
     let changed = false;
     const positions = state.positions.map(p => {
         if (p.code.trim().toUpperCase() !== code) return p;
@@ -801,8 +833,7 @@ function syncPositionQuotes() {
 function releasePositionQuotes() {
     positionQuotes.forEach(e => e.release?.());
     positionQuotes.clear();
-    lastUsTicks.clear();
-    lastRegularTicks.clear();
+    clearUsTickMarks();
 }
 
 /**
@@ -831,7 +862,10 @@ export function startUsTradingState() {
     started = true;
     const stopEvents = onOrderEvent(onUsReport);
     // 美股 tick 的 session 在 recordUsTick 的 meta（stream 先記 meta 再送 tick）
-    const stopTicks = onAnyTick(tick => onUsPositionTick(tick, tick.code.startsWith('US:') ? getUsTickMeta(tick.code)?.session : undefined));
+    const stopTicks = onAnyTick(tick => {
+        const meta = tick.code.startsWith('US:') ? getUsTickMeta(tick.code) : undefined;
+        onUsPositionTick(tick, meta?.session, meta?.ts);
+    });
     const stopPnlSession = subscribeUsPnlSession(onUsPnlSessionChanged);
     const gapTimers = new Set<ReturnType<typeof setTimeout>>();
     const stopGaps = usReportLedger.onGap((base, opened) => {
@@ -849,12 +883,12 @@ export function startUsTradingState() {
         if (live && !wasLive) {
             wasLive = true;
             // 第一次連上或重連：回報不重播，H 帳戶一律重查
-            if (hadDown) raiseHint();
+            if (hadDown) { raiseHint(); clearUsTickMarks(); }
             void refreshUsTrades().catch(() => undefined);
         } else if (!live && wasLive) {
             wasLive = false;
             hadDown = true;
-            lastUsTicks.clear(); // 與台股相同：斷線期間的成交可能漏收
+            clearUsTickMarks(); // 與台股相同：斷線期間的成交可能漏收
         }
     };
     const stopStatus = subscribeStatusStore(statusChanged);
@@ -946,6 +980,7 @@ export function resetUsTradingStateForTest(next: Partial<UsTradingState> = {}) {
     releasePositionQuotes();
     exchangeLookups.clear();
     serverPositions = [];
+    serverPositionsAt = 0;
     regularSnapshotClose.clear();
     snapshotLookups.clear();
     listeners.forEach(l => l());
