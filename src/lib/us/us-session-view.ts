@@ -54,6 +54,11 @@ export interface UsMainLine {
     price: number;
     chg?: number;
     pct?: number;
+    /**
+     * 這是前一個交易日的一般盤收盤（今天一般盤還沒成交：盤前、或今天還沒有整股成交），
+     * 而且當天的漲跌沒有意義（0 或沒有）：漲跌欄改標「昨收」，不顯示 0.00 0.00%
+     */
+    prevClose?: boolean;
 }
 
 export interface UsExtLine {
@@ -146,7 +151,14 @@ export function usSessionView(args: {
     // 主行：今天一般盤已開始的即時值優先；盤前（還沒開）或 tick 比快照舊時用快照
     //（盤前快照的 close 是前一日收盤、漲跌也是前一日的）；都沒有才退回 tick 帶的一般盤值
     const tickNewer = !snap?.tradeDate || !tick?.date || tick.date >= snap.tradeDate;
-    const main = (started && tickNewer ? tickMain() : null) ?? snapMain ?? tickMain();
+    const live = started && tickNewer ? tickMain() : null;
+    const fallback = live ? null : snapMain ?? tickMain();
+    // 退回的值是不是前一日收盤：快照當天還沒有一般盤開盤價（盤前快照 close＝前一日收盤），
+    // 或用的是還沒開盤的 tick 帶的一般盤值
+    const fromPrev = !!fallback && (fallback === snapMain ? !(snap!.open > 0) : !started);
+    const main = live ?? (fallback && fromPrev && !fallback.chg
+        ? { ...fallback, chg: undefined, pct: undefined, prevClose: true }
+        : fallback);
 
     const candidates = [tickExt(tick), snapExt(snap)].filter((c): c is ExtCandidate => !!c && extShows(c, now.phase, now.date));
     // 兩個都可以顯示時取交易日較新的；同一天以即時為準

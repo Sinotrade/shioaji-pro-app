@@ -145,6 +145,8 @@ it('US rows always reserve the extended-hours line (no row-height jump); TW rows
         expect(ext('US:T')[0]!.props['data-us-ext']).toBe('PreMarket');
         const us = text(rowByKey('US:T'));
         expect(us).toContain('24.10'); // 主行：前一日收盤
+        expect(us).toContain('昨收'); // 漲跌 0 沒有意義
+        expect(us).not.toContain('0.00%');
         expect(us).toContain('盤前');
         expect(us).toContain('24.60');
         expect(us).toContain('+0.50');
@@ -186,4 +188,24 @@ it('sorting by change% uses the regular-session change, not the extended-hours p
         vi.useRealTimers();
         resetUsMarketClockForTest();
     }
+});
+
+it('US rows flash only when the main (regular) price changes, not on odd-lot / extended prints', () => {
+    const q = (close: string, regular: string, flashSeq: number) => ({ tick: {
+        code: 'US:T', date: '2026-11-19', close, open: '24.2', price_chg: '', pct_chg: '',
+        us: { session: 'Regular', regular, regularChg: '', regularPct: '', extClose: '', extHigh: '', extLow: '' },
+    }, lastDir: 1, flashSeq });
+    const overlays = () => rowByKey('US:T').findAll((n) => n.type === 'span' && String(n.props.className ?? '').includes('flashOverlay'));
+    quotes['US:T'] = q('25.30', '25.30', 1);
+    const props = { items: [{ contract: usT }] };
+    render(props);
+    expect(overlays()).toHaveLength(0); // 第一次拿到價格不閃
+    const rerender = () => act(() => r!.update(createElement(Watchlist, { ...(r!.root.props as any), items: [{ contract: usT }] })));
+    quotes['US:T'] = q('25.37', '25.30', 2); // 零股成交：主行不變
+    rerender();
+    expect(overlays()).toHaveLength(0);
+    quotes['US:T'] = q('25.40', '25.40', 3); // 一般盤價上漲
+    rerender();
+    expect(overlays()).toHaveLength(1);
+    expect(String(overlays()[0]!.props.className)).toContain('up');
 });

@@ -58,7 +58,8 @@ describe('usSessionView', () => {
         const row = parseUsSnapshotRow({ region: 'US', ts: 1795092423642980000, trade_date: '2026-11-19', code: 'AAPL', exchange: 'NASDAQ', open: 0.0, high: 0.0, low: 0.0, close: 352.45, reference: 352.45, change_price: 0.0, change_rate: 0.0, session: 'PreMarket', last_price: 354.06, ext_close: 353.98, ext_high: 356.0, ext_low: 353.58 })!;
         const t = tick('2026-11-19', { session: 'PreMarket', regular: '', extClose: '354.12', extHigh: '356', extLow: '353.58' }, { open: '', close: '354.13' });
         const v = usSessionView({ tick: t, snap: row, reference: '352.45', now: at(19, 7) });
-        expect(v.main).toEqual({ price: 352.45, chg: 0, pct: 0 });
+        // 漲跌 0 沒有意義：標昨收，不給 0.00 0.00%
+        expect(v.main).toEqual({ price: 352.45, chg: undefined, pct: undefined, prevClose: true });
         expect(v.ext).toMatchObject({ session: 'PreMarket', label: '盤前', price: 354.12, base: 352.45, high: 356, low: 353.58, closed: false });
         expect(v.ext!.chg).toBeCloseTo(1.67, 6);
         expect(v.ext!.pct).toBeCloseTo((1.67 / 352.45) * 100, 6);
@@ -137,6 +138,20 @@ describe('usSessionView', () => {
         const none = usSessionView({ tick: bare, snap: null, reference: null, now: at(19, 8) });
         expect(none.main).toBeNull();
         expect(none.ext).toMatchObject({ price: 110, base: null, chg: undefined, pct: undefined });
+    });
+
+    it('prevClose: a snapshot with no regular open today, or a not-yet-open tick; a real change is kept', () => {
+        // 一般盤時段、今天還沒有整股成交的商品：快照 open 0、漲跌 0
+        const idle = usSessionView({ snap: snap({ open: 0, changePrice: 0, changeRate: 0 }), reference: '352', now: at(19, 12) });
+        expect(idle.main).toMatchObject({ price: 352, prevClose: true, chg: undefined });
+        // 快照沒有，只有盤前 tick 帶的一般盤值（open 空）
+        const t = tick('2026-11-19', { session: 'PreMarket', regular: '352', extClose: '353' }, { open: '' });
+        expect(usSessionView({ tick: t, snap: null, reference: '352', now: at(19, 7) }).main).toMatchObject({ price: 352, prevClose: true });
+        // 前一日快照仍帶真實漲跌（例如 04:00 前打開）：照常顯示
+        const y = usSessionView({ snap: snap({ open: 0, changePrice: 1.5, changeRate: 0.43 }), reference: null, now: at(19, 7) });
+        expect(y.main).toEqual({ price: 352, chg: 1.5, pct: 0.43 });
+        // 今天已開盤：不是昨收
+        expect(usSessionView({ snap: snap(), reference: '349', now: at(19, 12) }).main!.prevClose).toBeUndefined();
     });
 
     it('legacy tick without session fields: close is the regular price', () => {

@@ -595,6 +595,8 @@ export const usExtBlock = style({
     opacity: 0.85,
 });
 export const usExtEmpty = style({ visibility: 'hidden' });
+// 大字是前一日收盤：漲跌格改標「昨收」
+export const usPrevClose = style({ fontFamily: vars.font.body, color: vars.color.mutedForeground });
 // 盤後已結束（20:00–04:00 ET、週末）：保留最後的盤後價，轉灰
 export const usExtClosed = style({ color: vars.color.mutedForeground, opacity: 0.7 });
 export const usExtBadge = style({

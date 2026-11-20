@@ -106,6 +106,9 @@ export const usExt = style({
     opacity: 0.85,
 });
 
+// 主行是前一日收盤、當天漲跌沒有意義：漲跌格改標「昨收」
+export const usPrevClose = style({ color: vars.color.mutedForeground });
+
 // 盤後已結束（20:00–04:00 ET、週末）：保留最後的盤後價、整行轉灰
 export const usExtClosed = style({
     color: vars.color.mutedForeground,

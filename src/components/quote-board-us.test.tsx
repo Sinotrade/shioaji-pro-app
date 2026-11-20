@@ -102,6 +102,9 @@ describe('QuoteBoard (US through the TW board)', () => {
         mount();
         const big = view!.root.find(n => typeof n.props.className === 'string' && n.props.className.includes('bigPrice'));
         expect(big.children).toEqual(['352.45']);
+        // 漲跌 0 沒有意義：標昨收，不顯示 0.00 0.00%
+        expect(view!.root.find(n => n.props['data-testid'] === 'us-board-prev-close').children).toEqual(['昨收']);
+        expect(text()).not.toContain('"0.00"');
         expect(extBlock().props['data-us-ext']).toBe('PreMarket');
         expect(extText()).toContain('盤前');
         expect(extText()).toContain('354.12');

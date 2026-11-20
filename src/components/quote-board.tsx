@@ -508,6 +508,7 @@ export function QuoteBoard({
     // 參考價、更新時間收進漲跌與現價的滑過提示
     const timeText = (isIndex ? index?.time : tick?.time)?.slice(0, 8);
     const priceTitle = [
+        usView?.main?.prevClose ? '前一交易日一般盤收盤' : undefined,
         usExt ? `一般盤價；${usExt.label} ${boardPrice(usExt.price)} ${fmtSigned(usExt.chg, changeDigits)} ${fmtPct(usExt.pct)}` : undefined,
         usFreshness ? `行情${usFreshness}` : undefined,
         isUs && timeText ? '時間為美東時間' : undefined,
@@ -790,8 +791,18 @@ export function QuoteBoard({
                 }
                 title={ref ? `參考 ${boardPrice(ref)}` : undefined}
             >
-                <span>{fmtSigned(chg, changeDigits)}</span>
-                <span className={ref ? styles.tipLabel : undefined}>{fmtPct(pct)}</span>
+                {usView?.main?.prevClose ? (
+                    // 美股大字是前一日收盤、當天漲跌沒有意義：標「昨收」，第二行佔位不顯示（看板不跳）
+                    <>
+                        <span className={styles.usPrevClose} data-testid='us-board-prev-close'>昨收</span>
+                        <span className={styles.usExtEmpty} aria-hidden='true'>{fmtPct(0)}</span>
+                    </>
+                ) : (
+                    <>
+                        <span>{fmtSigned(chg, changeDigits)}</span>
+                        <span className={ref ? styles.tipLabel : undefined}>{fmtPct(pct)}</span>
+                    </>
+                )}
                 <span className={styles.srOnly} data-board-details>{details}</span>
             </div>
 

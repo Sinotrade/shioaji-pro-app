@@ -191,7 +191,12 @@ const WatchRow = memo(function WatchRow({
         : dir;
     // the flash overlay is re-keyed by flashSeq so the animation replays on
     // every real deal — the row itself stays mounted (hover state survives)
-    const flashDir = !quote?.flashSeq
+    // 美股：只在主行（一般盤價）變動時閃，零股、盤前盤後成交不閃
+    const usFlash = useMainPriceFlash(us ? usQuote?.price : undefined);
+    const flashSeq = us ? usFlash.seq : quote?.flashSeq;
+    const flashDir = us
+        ? usFlash.seq ? usFlash.dir : null
+        : !quote?.flashSeq
         ? null
         : quote.lastDir === -1
           ? ('down' as const)
@@ -237,7 +242,7 @@ const WatchRow = memo(function WatchRow({
         >
             {flashDir && (
                 <span
-                    key={quote?.flashSeq}
+                    key={flashSeq}
                     className={styles.flashOverlay[flashDir]}
                 />
             )}
@@ -283,9 +288,16 @@ const WatchRow = memo(function WatchRow({
                             <span className={`${styles.price} ${panel.dirText[priceDir]}`}>
                                 {fmtUsPrice(usQuote.price)}
                             </span>
-                            <span className={`${styles.change} ${panel.dirText[priceDir]}`}>
-                                {fmtSigned(usQuote.chg, usPriceDecimals(usQuote.price))} {fmtPct(usQuote.pct)}
-                            </span>
+                            {usQuote.prevClose ? (
+                                // 前一日收盤、當天漲跌沒有意義：標「昨收」（同一格，列高不變）
+                                <span className={`${styles.change} ${styles.usPrevClose}`} title='前一交易日一般盤收盤'>
+                                    昨收
+                                </span>
+                            ) : (
+                                <span className={`${styles.change} ${panel.dirText[priceDir]}`}>
+                                    {fmtSigned(usQuote.chg, usPriceDecimals(usQuote.price))} {fmtPct(usQuote.pct)}
+                                </span>
+                            )}
                         </>
                     ) : (
                         <>
@@ -365,6 +377,19 @@ const WatchRow = memo(function WatchRow({
         </div>
     );
 });
+
+/** 價格變動時遞增（第一次拿到價格不算）；美股自選列用來只依主行價格閃爍 */
+function useMainPriceFlash(price: number | undefined): { seq: number; dir: 'up' | 'down' } {
+    const prev = useRef(price);
+    const [flash, setFlash] = useState<{ seq: number; dir: 'up' | 'down' }>({ seq: 0, dir: 'up' });
+    useEffect(() => {
+        const before = prev.current;
+        prev.current = price;
+        if (before === undefined || price === undefined || before === price) return;
+        setFlash((f) => ({ seq: f.seq + 1, dir: price > before ? 'up' : 'down' }));
+    }, [price]);
+    return flash;
+}
 
 /** 自選列的盤前／盤後副行（小字、同一套漲跌顏色；盤後結束轉灰） */
 function UsExtRow({ ext }: { ext: UsExtLine | null }) {
