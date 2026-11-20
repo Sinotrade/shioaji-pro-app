@@ -2331,6 +2331,17 @@ export function CandleChart({
                         一般盤
                     </button>
                 )}
+                {usExtended && (
+                    // 盤前盤後沒有歷史：明白標出來，不讓人以為圖上就是完整的盤前盤後
+                    <span
+                        className={styles.tfBtn.normal}
+                        style={{ cursor: 'default' }}
+                        data-testid='us-extended-note'
+                        title='SDK 的歷史只有一般盤；盤前盤後只畫 App 開著時收到的成交，之前的不會出現'
+                    >
+                        盤前盤後僅即時
+                    </span>
+                )}
                 <button
                     className={styles.iconBtn}
                     onClick={resetView}

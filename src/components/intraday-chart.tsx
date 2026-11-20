@@ -1579,7 +1579,7 @@ export function IntradayChart({
     const chipLabel =
         sessionLabel ??
         (usContract
-            ? sessionMode === 'all' ? '含盤前盤後' : '一般盤'
+            ? sessionMode === 'all' ? '含盤前盤後・僅即時' : '一般盤'
             : sessionMode === 'day'
             ? '日盤'
             : sessionMode === 'night'

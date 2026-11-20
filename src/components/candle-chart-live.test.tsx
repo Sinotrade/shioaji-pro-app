@@ -281,6 +281,7 @@ describe('CandleChart US session (一般盤／含盤前盤後)', () => {
         const r = mount({ contract: aapl, interval: '1m', sessionMode: 'all', onSessionModeChange });
         await flush();
         expect(toggle(r).props['aria-pressed']).toBe(false);
+        expect(r.root.findAll((n) => n.props['data-testid'] === 'us-extended-note').length).toBeGreaterThan(0);
         const data = lastData();
         expect(data[0]).toMatchObject({ time: T('2026-11-19T08:01:00'), open: 340, close: 341 });
         const vol = created.filter((c) => c.kind === 'Histogram').at(-1)!.last as any[];

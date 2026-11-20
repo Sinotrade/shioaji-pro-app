@@ -257,7 +257,7 @@ describe('IntradayChart (US)', () => {
             snap.value = { tradeDate: '2026-11-19', reference: 99 };
             const r = mount({ contract: aapl, sessionMode: 'all' });
             await flush();
-            expect(chip(r).children.join('')).toBe('含盤前盤後');
+            expect(chip(r).children.join('')).toBe('含盤前盤後・僅即時');
             const f = filler().last as any[];
             expect(f[0].time).toBe(T('2026-11-19T04:01:00'));
             expect(f.at(-1).time).toBe(T('2026-11-19T20:00:00'));
