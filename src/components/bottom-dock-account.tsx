@@ -38,7 +38,7 @@ import type {
 import { canonicalBrokerCode, resolveRealizedName } from '../lib/realized-name';
 import { bizDateLabel, settleDateLabel } from '../lib/settle-date';
 import { classifyAccountQueryError, classifyBrokerQueryError, TRADING_LIMITS_NOT_SENT } from '../lib/trading-limits-error';
-import { useServerInfo } from '../lib/server-info-store';
+import { knownServerInfo, useServerInfo } from '../lib/server-info-store';
 import { getApiBase } from '../lib/runtime';
 import { TRADING_LIMITS_WINDOW, twQueryWindowState, windowLabel, type TwQueryWindow } from '../lib/tw-query-window';
 import { useTwQueryWindow } from '../hooks/use-tw-query-window';
@@ -748,6 +748,13 @@ function AccountPaneContent({ positions, balance, margin, funds, market, scopeAc
     // 自己問到的結果綁定 API 位址：換伺服器後，前一台晚到的回應不能拿來當這台的模式
     const [fetched, setFetched] = useState<{ base: string; simulation: boolean | null } | undefined>(undefined);
     const storeKnown = !!storeInfo;
+    // store 被清掉（同位址 sidecar 換模式重啟等）時，先前自己問到的模式立刻作廢 —
+    // 在 render 期間處理，避免同一次 commit 的查詢 effect 拿舊的「模擬」放行
+    const [prevStoreKnown, setPrevStoreKnown] = useState(storeKnown);
+    if (prevStoreKnown !== storeKnown) {
+        setPrevStoreKnown(storeKnown);
+        setFetched(undefined);
+    }
     useEffect(() => {
         if (storeKnown) return;
         let alive = true;
@@ -878,7 +885,9 @@ function AccountPaneContent({ positions, balance, margin, funds, market, scopeAc
                 // 送出當下再確認一次時段：React 狀態可能比牆鐘晚（計時器延後、睡眠喚醒），
                 // 傳輸層準備（啟動讀取閘門、Tauri 載入）也可能把實際送出拖過 15:00
                 const guard = () => {
-                    if (!sim && !twQueryWindowState(Date.now(), TRADING_LIMITS_WINDOW).open) {
+                    // 送出當下的模式以共用 store 為準（若已知）
+                    const simNow = knownServerInfo()?.simulation ?? sim;
+                    if (simNow !== true && !twQueryWindowState(Date.now(), TRADING_LIMITS_WINDOW).open) {
                         throw new Error(TRADING_LIMITS_NOT_SENT);
                     }
                 };
@@ -936,7 +945,7 @@ function AccountPaneContent({ positions, balance, margin, funds, market, scopeAc
     const limitsExpected = limits === undefined ? !!limitsKind : limitsKind === 'unavailable';
     // 交割、預收的暫時性失敗不論有無舊資料，區塊內都有灰字提示
     const settleExpected = !!classifyAccountQueryError(errorSettle);
-    const reserveExpected = !sim && !!classifyAccountQueryError(errorReserve);
+    const reserveExpected = !!classifyAccountQueryError(errorReserve);
     const reportsError = [
         settleExpected ? null : errorSettle,
         errorPnl,

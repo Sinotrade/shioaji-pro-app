@@ -283,6 +283,23 @@ describe('正式環境台股帳務查詢時段與券商暫時性錯誤', () => {
         expect(text()).toContain('現股 可用/上限');
     });
 
+    it('模擬 sidecar 在同一位址重啟成正式：舊的模擬判斷作廢，深夜不再送額度查詢', async () => {
+        const store = await import('../lib/server-info-store');
+        fixture.simulation = true;
+        vi.setSystemTime(new Date('2026-11-21T01:54:00+08:00'));
+        await mount();
+        expect(fixture.limits).toHaveBeenCalledTimes(2);
+        fixture.simulation = false;
+        await act(async () => { store.observeServerInfo(store.beginServerInfoRequest(), { simulation: false } as never); });
+        expect(text()).toContain('非交易時段無額度資料');
+        await act(async () => { vi.advanceTimersByTime(1600); await controls!.refresh(); });
+        expect(fixture.limits).toHaveBeenCalledTimes(2);
+        await act(async () => { store.forgetServerInfo('http://account-pane-fixture.invalid'); });
+        await act(async () => { vi.advanceTimersByTime(1600); await controls!.refresh(); });
+        expect(fixture.limits).toHaveBeenCalledTimes(2);
+        expect(text()).toContain('非交易時段無額度資料');
+    });
+
     it('時段內券商回 AS400 未連線：灰字提示、原文只在 title、不算報表錯誤', async () => {
         vi.setSystemTime(new Date('2026-11-20T10:00:00+08:00'));
         fixture.limits.mockReset().mockRejectedValue(new Error(AS400));
