@@ -10,7 +10,7 @@
 // 模式；某帳戶失敗時保留它上次的資料並標示，合計只算這次成功的帳戶。
 
 import { ChevronDown, ChevronRight } from 'lucide-react';
-import { Fragment, useCallback, useEffect, useState, type ReactNode } from 'react';
+import { Fragment, useCallback, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { useQuery } from '../hooks/use-query';
 import { maskAccountId, maskMoney, usePrivacyMode, usePrivacyMoney } from '../lib/privacy';
 import type { Account } from '../lib/types/portfolio';
@@ -41,11 +41,13 @@ import {
     onUsDealSettled,
     runUsBatch,
     US_MODE_CHANGED_ERROR,
+    usDealSeq,
     someFailed,
     type PerAccount,
 } from '../lib/us/us-account-batch';
 import { TW_POSITION_DETAIL_MISMATCH } from '../lib/tw-account-detail';
 import { dateStrOffset } from '../lib/utils/kbars';
+import { getServerModeVersion, subscribeServerInfo } from '../lib/server-info-store';
 import { msToNextUsBoundary } from '../lib/us/us-session-view';
 import { nyDateTime } from '../lib/us/us-quotes';
 import { DetailTable, DetailView, ExpandableRow } from './account-detail';
@@ -286,26 +288,53 @@ function failureKind(errors: string[]): 'temporary' | 'unavailable' | null {
     return kinds.every(k => k === 'unavailable') ? 'unavailable' : 'temporary';
 }
 
+/** 每個今日損益查詢（query key）開始查詢時的成交通知序號 */
+const todayPnlFetchedSeq = new Map<string, number>();
+/** 查詢中或剛查完（useQuery 去重／1.5 秒節流）時到的成交：查完後補查一次的間隔 */
+const DEAL_TRAILING_REFRESH_MS = 1600;
+
 export function UsTodayPnlSection({ accounts }: { accounts: Account[] }) {
     const privMoney = usePrivacyMoney();
     const today = useNyToday();
+    // 同一位址的 sidecar 換模式（模擬↔正式）：換一份快取，不沿用另一個模式的損益
+    const mode = useSyncExternalStore(subscribeServerInfo, getServerModeVersion);
     const key = accounts.map(acctKey).join(',');
+    const queryKey = `us-pnl-today:${key}:${today}:m${mode}`;
     const { data, error, loading, refresh } = useQuery<PerAccount<IntlProfitLoss[]>[]>(
-        useCallback(() => runUsBatch(batch => batch.each('pnl-today', accounts, async a => {
-            const rows = await fetchUsProfitLoss(a, today, today);
-            return rows.filter(r => r.date === today);
-        })), [key, today]),
-        `us-pnl-today:${key}:${today}`, accounts.length > 0 && !!today,
+        useCallback(() => {
+            todayPnlFetchedSeq.set(queryKey, usDealSeq());
+            // 失敗時沿用的「上次成功」也以日期分開：換日後不會拿昨天的列充當今天
+            return runUsBatch(batch => batch.each(`pnl-today:${today}`, accounts, async a => {
+                const rows = await fetchUsProfitLoss(a, today, today);
+                return rows.filter(r => r.date === today);
+            }));
+        }, [key, today, queryKey]),
+        queryKey, accounts.length > 0 && !!today,
     );
-    // dock「更新帳務」、美股下單／刪單後，以及成交回報後（延遲合併）重查
+    // dock「更新帳務」、美股下單／刪單後重查
     useEffect(() => onUsAccountRefresh(() => void refresh()), [refresh]);
-    useEffect(() => onUsDealSettled(() => void refresh()), [refresh]);
+    // 成交回報後（延遲合併）重查。查詢中或節流中的呼叫不會真的重查：查完若這份
+    // 仍早於該筆成交，再補查一次。切到別的分頁時錯過的成交，掛回來時補查
+    const alive = useRef(true);
+    useEffect(() => {
+        alive.current = true;
+        const ensureAfter = (target: number, retry: boolean) => {
+            void refresh().then(() => {
+                if (!alive.current || (todayPnlFetchedSeq.get(queryKey) ?? -1) >= target || !retry) return;
+                setTimeout(() => { if (alive.current) ensureAfter(target, false); }, DEAL_TRAILING_REFRESH_MS);
+            });
+        };
+        const seen = todayPnlFetchedSeq.get(queryKey);
+        if (seen !== undefined && seen < usDealSeq()) ensureAfter(usDealSeq(), true);
+        const off = onUsDealSettled(() => ensureAfter(usDealSeq(), true));
+        return () => { alive.current = false; off(); };
+    }, [refresh, queryKey]);
     const [open, setOpen] = useState(false);
     if (accounts.length === 0) return null;
 
     // 同台股：依損益絕對值由大到小
     const abs = (v: string) => v.trim().replace(/^-/, '') || '0';
-    const rows = flatten(data ?? []).sort((a, b) => decCompare(abs(b.pnl), abs(a.pnl)) || 0);
+    const rows = flatten(data ?? []).filter(r => r.date === today).sort((a, b) => decCompare(abs(b.pnl), abs(a.pnl)) || 0);
     const total = freshTotal(rows, p => p.pnl);
     const failed = allFailed(data);
     const partial = someFailed(data) && !failed;
@@ -396,7 +425,8 @@ function UsPnlRow({ row, account, priv, stale }: { row: IntlProfitLoss; account:
                 <td className={dock.td}>{row.date}{stale ? STALE_MARK : ''}</td>
                 <td className={dock.td}>{row.code}<UsTag /></td>
                 <td className={dock.td}>{maskMoney(`${fmtDec(row.quantity)} 股`, priv)}</td>
-                <td className={dock.td}>{fmtUsAvgPrice(row.price)}</td>
+                {/* 賣價隨遮金額隱藏（同沖銷明細的買價） */}
+                <td className={dock.td}>{maskMoney(fmtUsAvgPrice(row.price), priv)}</td>
                 <td className={`${dock.td} ${panel.dirText[dir]}`}>{signedUsd(row.pnl, priv)}</td>
                 {/* pnl_pct 已是百分比 */}
                 <td className={`${dock.td} ${panel.dirText[dir]}`}>{`${fmtUsPnl(row.pnl_pct)}%`}</td>

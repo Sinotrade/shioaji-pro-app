@@ -223,5 +223,7 @@ export function usAccountErrorKind(error: unknown): 'unavailable' | 'temporary' 
     const message = (error instanceof Error ? error.message : String(error ?? '')).trim();
     if (!message) return null;
     if (/^502\b|UPSTREAM_ERROR/.test(message) || message === US_UPSTREAM_TEMPORARY) return 'temporary';
+    // 批次查詢顯示文字已去掉狀態碼：「Internal Server Error」就是原本的裸 500
+    if (/^Internal\s+Server\s+Error$/i.test(message)) return 'temporary';
     return classifyAccountQueryError(message) === 'temporary' ? 'temporary' : null;
 }
