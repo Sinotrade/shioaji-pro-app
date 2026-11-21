@@ -552,10 +552,12 @@ function scheduleDealPositionsRefresh() {
     for (const delay of US_DEAL_POSITIONS_DELAYS_MS) {
         const timer = setTimeout(() => {
             dealPositionsTimers.delete(timer);
-            // 換了伺服器／模式：由模式切換的重查負責，不用舊環境的排程
-            if (base !== getApiBase() || mode !== getServerModeVersion()) { clearDealPositionsTimers(); return; }
-            // 今日已實現損益（帳務分頁）同一組延遲重查；和庫存是否支援無關
+            // 今日已實現損益（帳務分頁）同一組延遲重查；和庫存是否支援無關。
+            // 換了模式也照樣通知：/info 暫時失敗後恢復也會換模式版本，帳務分頁
+            // 換新快取後可能太早查到成交前的資料，延遲的這兩次重查不能丟
             notifyUsDealSettled();
+            // 換了伺服器／模式：庫存由模式切換的重查負責，不用舊環境的排程
+            if (base !== getApiBase() || mode !== getServerModeVersion()) return;
             if (!usAccounts().length || state.positionsStatus === 'unsupported') return;
             void refreshUsPositions().catch(() => undefined);
         }, delay);
