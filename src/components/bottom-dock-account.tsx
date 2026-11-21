@@ -1066,5 +1066,5 @@ function AccountPaneContent({ positions, balance, margin, funds, market, scopeAc
     );
 }
 
-// 美股帳務在 us-account-panels.tsx（UsAccountSection）
-export { UsAccountSection } from './us-account-panels';
+// 美股帳務在 us-account-panels.tsx（UsAccountSection、UsTodayPnlSection）
+export { UsAccountSection, UsTodayPnlSection } from './us-account-panels';
