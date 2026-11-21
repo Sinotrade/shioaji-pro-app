@@ -18,6 +18,8 @@ vi.mock('../lib/us/us-account-api', async () => {
 
 import { nyToday, US_PARTIAL_FAILURE, US_POSITION_DETAIL_MISMATCH, UsAccountSection, UsPositionDetail, UsRealizedPnlSection, UsTodayPnlSection } from './us-account-panels';
 import { notifyUsDealSettled, requestUsAccountRefresh, resetUsAccountBatchForTest } from '../lib/us/us-account-batch';
+import { beginServerInfoRequest, observeServerInfo } from '../lib/server-info-store';
+import { usAccountErrorKind } from '../lib/us/us-account-api';
 
 const H = { account_type: 'H', person_id: 'P', broker_id: '9A95', account_id: '0000001', signed: true, username: 'u' };
 const H2 = { ...H, account_id: '0000002' };
@@ -295,6 +297,73 @@ describe('UsTodayPnlSection', () => {
         expect(t).toContain(US_PARTIAL_FAILURE);
         await act(async () => { findToggle()!.props.onClick(); });
         expect(all()).toContain('（上次查詢）');
+    });
+
+    it('a deal arriving while a query is in flight gets a trailing query, so old data is not left as current', async () => {
+        let release!: (v: unknown) => void;
+        m.pnl.mockReturnValueOnce(new Promise(r => { release = r; }));
+        await mount(createElement(UsTodayPnlSection, { accounts: [acct()] }));
+        expect(m.pnl).toHaveBeenCalledTimes(1);
+        m.pnl.mockResolvedValue([pl({ pnl: '7' })]);
+        await act(async () => { notifyUsDealSettled(); });
+        expect(m.pnl).toHaveBeenCalledTimes(1); // 查詢中：去重，不另查
+        vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+        vi.setSystemTime(new Date('2026-11-21T03:00:01Z'));
+        await act(async () => { release([]); await vi.advanceTimersByTimeAsync(0); });
+        expect(all()).toContain('今日無美股已實現損益');
+        await act(async () => { await vi.advanceTimersByTimeAsync(1700); });
+        expect(m.pnl).toHaveBeenCalledTimes(2);
+        expect(all()).toContain('+7.00 USD');
+    });
+
+    it('re-queries on remount when a deal came while another dock tab was open', async () => {
+        m.pnl.mockResolvedValue([]);
+        const accounts = [acct()];
+        await mount(createElement(UsTodayPnlSection, { accounts }));
+        await act(async () => view?.unmount()); view = undefined;
+        notifyUsDealSettled();
+        vi.setSystemTime(new Date('2026-11-21T03:00:05Z'));
+        m.pnl.mockResolvedValue([pl({ pnl: '4' })]);
+        await mount(createElement(UsTodayPnlSection, { accounts }));
+        expect(m.pnl).toHaveBeenCalledTimes(2);
+        expect(all()).toContain('+4.00 USD');
+    });
+
+    it('a server mode change (same address) does not reuse the other mode\'s P&L', async () => {
+        m.pnl.mockResolvedValue([pl({ pnl: '5' })]);
+        const accounts = [acct()];
+        await mount(createElement(UsTodayPnlSection, { accounts }));
+        expect(all()).toContain('+5.00 USD');
+        m.pnl.mockResolvedValue([]);
+        await act(async () => {
+            observeServerInfo(beginServerInfoRequest(), { simulation: seq % 2 === 0 } as never);
+            await new Promise(r => setTimeout(r, 0));
+        });
+        await settle();
+        expect(m.pnl).toHaveBeenCalledTimes(2);
+        expect(all()).not.toContain('+5.00 USD');
+    });
+
+    it('after NY midnight a failed account does not show yesterday\'s rows as today\'s', async () => {
+        m.pnl.mockResolvedValue([pl({ pnl: '9' })]);
+        const accounts = [acct()];
+        await mount(createElement(UsTodayPnlSection, { accounts }));
+        expect(all()).toContain('+9.00 USD');
+        await act(async () => view?.unmount()); view = undefined;
+        vi.setSystemTime(new Date('2026-11-21T06:00:00Z')); // 美東 11/21 01:00
+        m.pnl.mockRejectedValue(new Error('502 UPSTREAM_ERROR'));
+        await mount(createElement(UsTodayPnlSection, { accounts }));
+        const t = all();
+        expect(m.pnl).toHaveBeenLastCalledWith(expect.anything(), '2026-11-21', '2026-11-21');
+        expect(t).toContain('美東 11/21');
+        expect(t).not.toContain('9.00');
+        expect(t).toContain('券商暫時查不到資料');
+    });
+
+    it('classifies the status-stripped bare 500 as temporary', () => {
+        expect(usAccountErrorKind('Internal Server Error')).toBe('temporary');
+        expect(usAccountErrorKind('400 INVALID_ACCOUNT')).toBeNull();
+        expect(usAccountErrorKind(Object.assign(new Error('503'), { status: 503 }))).toBe('unavailable');
     });
 
     it('503 everywhere is one calm not-yet-open line', async () => {

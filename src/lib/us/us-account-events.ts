@@ -19,7 +19,14 @@ const dealListeners = new Set<() => void>();
  * 和庫存重查用同一組延遲排程（us-trading-state 的 scheduleDealPositionsRefresh）。
  */
 export function notifyUsDealSettled() {
+    dealSeq++;
     dealListeners.forEach(l => l());
+}
+
+let dealSeq = 0;
+/** 成交通知的序號：畫面沒掛著（切到別的分頁）時錯過的通知，重新掛上時用它補查 */
+export function usDealSeq() {
+    return dealSeq;
 }
 
 export function onUsDealSettled(listener: () => void) {
