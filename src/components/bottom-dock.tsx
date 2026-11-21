@@ -36,7 +36,7 @@ import type {
 } from '../lib/types/portfolio';
 import { fmtMoney, fmtSigned } from '../lib/utils/format';
 import { vars } from '../theme.css';
-import { AccountPane, UsAccountSection, type AccountRefreshControls } from './bottom-dock-account';
+import { AccountPane, UsAccountSection, UsTodayPnlSection, type AccountRefreshControls } from './bottom-dock-account';
 import { OrdersPane } from './bottom-dock-orders';
 import { useUsDockSummary } from './bottom-dock-us';
 import { refreshUsPositions, refreshUsTrades, usAccounts } from '../lib/us/us-trading-state';
@@ -441,6 +441,7 @@ export function BottomDock({
                         onRefreshControls={setAccountRefresh}
                     />
                     {us.shown && <UsAccountSection accounts={usAccounts()} />}
+                    {us.shown && <UsTodayPnlSection accounts={usAccounts()} />}
                 </div>
             )}
         </div>

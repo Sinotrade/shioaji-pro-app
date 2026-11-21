@@ -32,6 +32,7 @@ import { fetchUsSnapshotShared } from './us-history';
 import { getUsPnlSession, subscribeUsPnlSession } from './us-pnl-prefs';
 import { getUsTickMeta } from './us-quotes';
 import { fetchUsPositions, fetchUsTradeCacheHealth, fetchUsTrades } from './us-api';
+import { notifyUsDealSettled } from './us-account-events';
 import { apiGet } from '../api';
 
 export const US_DEAL_UNHEALTHY_HINT = '美股成交回報可能不完整，以委託查詢為準';
@@ -536,7 +537,7 @@ function onUsReport(report: OrderEventReport) {
     if (report.kind === 'deal') scheduleDealPositionsRefresh();
 }
 
-// 成交後重查庫存：paper 等伺服器在成交回報之後才更新庫存，立刻查會拿到舊值。
+// 成交後重查庫存與今日已實現損益：paper 等伺服器在成交回報之後才更新，立刻查會拿到舊值。
 // 最後一筆成交後 1.5 秒查一次，5 秒再補一次；連續成交合併成同一組。
 export const US_DEAL_POSITIONS_DELAYS_MS = [1500, 5000] as const;
 const dealPositionsTimers = new Set<ReturnType<typeof setTimeout>>();
@@ -553,6 +554,8 @@ function scheduleDealPositionsRefresh() {
             dealPositionsTimers.delete(timer);
             // 換了伺服器／模式：由模式切換的重查負責，不用舊環境的排程
             if (base !== getApiBase() || mode !== getServerModeVersion()) { clearDealPositionsTimers(); return; }
+            // 今日已實現損益（帳務分頁）同一組延遲重查；和庫存是否支援無關
+            notifyUsDealSettled();
             if (!usAccounts().length || state.positionsStatus === 'unsupported') return;
             void refreshUsPositions().catch(() => undefined);
         }, delay);
