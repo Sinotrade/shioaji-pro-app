@@ -10,7 +10,7 @@
 // 模式；某帳戶失敗時保留它上次的資料並標示，合計只算這次成功的帳戶。
 
 import { ChevronDown, ChevronRight } from 'lucide-react';
-import { Fragment, useCallback, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
+import { Fragment, useCallback, useEffect, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { useQuery } from '../hooks/use-query';
 import { maskAccountId, maskMoney, usePrivacyMode, usePrivacyMoney } from '../lib/privacy';
 import type { Account } from '../lib/types/portfolio';
@@ -315,19 +315,24 @@ export function UsTodayPnlSection({ accounts }: { accounts: Account[] }) {
     useEffect(() => onUsAccountRefresh(() => void refresh()), [refresh]);
     // 成交回報後（延遲合併）重查。查詢中或節流中的呼叫不會真的重查：查完若這份
     // 仍早於該筆成交，再補查一次。切到別的分頁時錯過的成交，掛回來時補查
-    const alive = useRef(true);
     useEffect(() => {
-        alive.current = true;
+        // 每次 effect 自己的取消旗標與計時器：換日／換模式／換帳戶後舊的補查不再跑
+        let cancelled = false;
+        const timers = new Set<ReturnType<typeof setTimeout>>();
         const ensureAfter = (target: number, retry: boolean) => {
             void refresh().then(() => {
-                if (!alive.current || (todayPnlFetchedSeq.get(queryKey) ?? -1) >= target || !retry) return;
-                setTimeout(() => { if (alive.current) ensureAfter(target, false); }, DEAL_TRAILING_REFRESH_MS);
+                if (cancelled || !retry || (todayPnlFetchedSeq.get(queryKey) ?? -1) >= target) return;
+                const timer = setTimeout(() => {
+                    timers.delete(timer);
+                    if (!cancelled) ensureAfter(target, false);
+                }, DEAL_TRAILING_REFRESH_MS);
+                timers.add(timer);
             });
         };
         const seen = todayPnlFetchedSeq.get(queryKey);
         if (seen !== undefined && seen < usDealSeq()) ensureAfter(usDealSeq(), true);
         const off = onUsDealSettled(() => ensureAfter(usDealSeq(), true));
-        return () => { alive.current = false; off(); };
+        return () => { cancelled = true; timers.forEach(clearTimeout); timers.clear(); off(); };
     }, [refresh, queryKey]);
     const [open, setOpen] = useState(false);
     if (accounts.length === 0) return null;
@@ -379,10 +384,15 @@ export function UsTodayPnlSection({ accounts }: { accounts: Account[] }) {
             {body}
             {/* 部分帳戶失敗：合計不含它們（它們上次的列標「上次查詢」） */}
             {data && (partial || (failed && rows.length > 0)) && (
-                <span className={dock.acctHint} role='status' title={failureText(data)}>
-                    {failureKind(accountErrors) ? `${US_PARTIAL_FAILURE}（券商暫時查不到資料）` : `${US_PARTIAL_FAILURE}：${failureText(data)}`}
-                    {' '}<RetryButton onRetry={retry} />
-                </span>
+                failureKind(accountErrors) ? (
+                    <span className={dock.acctHint} role='status' title={failureText(data)}>
+                        {`${US_PARTIAL_FAILURE}（券商暫時查不到資料）`}
+                        {' '}<RetryButton onRetry={retry} />
+                    </span>
+                ) : (
+                    // 真錯誤：紅字＋重試（同台股），保留的列仍標「上次查詢」
+                    <AccountQueryFailure what='美股損益' error={`${US_PARTIAL_FAILURE}：${failureText(data)}`} kind={null} onRetry={retry} />
+                )
             )}
             {/* 保留上一份時的整批刷新失敗：標示這份不是剛更新的 */}
             {data && error && (
@@ -438,9 +448,11 @@ function UsPnlRow({ row, account, priv, stale }: { row: IntlProfitLoss; account:
 const usDetailError = (error: string) => <span className={dock.usNote} role='status'>{usAccountErrorText(error)}</span>;
 
 function UsPnlDetail({ account, detailId, priv }: { account: Account; detailId: string; priv: boolean }) {
+    // 同一位址換模式（模擬↔正式）不沿用另一個模式的沖銷明細
+    const mode = useSyncExternalStore(subscribeServerInfo, getServerModeVersion);
     const { data, error, loading } = useQuery(
         useCallback(() => fetchUsProfitLossDetail(account, detailId), [acctKey(account), detailId]),
-        `us-pnl-detail:${acctKey(account)}:${detailId}`, true,
+        `us-pnl-detail:${acctKey(account)}:${detailId}:m${mode}`, true,
     );
     return (
         <DetailView data={data} error={error} loading={loading} loadingText='明細查詢中…' emptyText='沒有沖銷明細' renderError={usDetailError}>
