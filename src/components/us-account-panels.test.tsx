@@ -360,6 +360,20 @@ describe('UsTodayPnlSection', () => {
         expect(t).toContain('券商暫時查不到資料');
     });
 
+    it('a genuine error on one account keeps its marked rows and is shown red, not as a quiet hint', async () => {
+        m.pnl.mockImplementation(async (a: typeof H) => [pl({ detail_id: a.account_id, pnl: '1' })]);
+        await mount(createElement(UsTodayPnlSection, { accounts: [acct(), acct(H2)] }));
+        m.pnl.mockImplementation(async (a: typeof H) => {
+            if (a.account_id.startsWith('0000002')) throw new Error('400 INVALID_ACCOUNT');
+            return [pl({ detail_id: a.account_id, pnl: '1' })];
+        });
+        vi.setSystemTime(new Date('2026-11-21T03:00:05Z'));
+        await act(async () => { requestUsAccountRefresh(); await new Promise(r => setTimeout(r, 0)); });
+        const t = all();
+        expect(t).toContain(`美股損益資訊查詢失敗：${US_PARTIAL_FAILURE}：INVALID_ACCOUNT`);
+        expect(t).toContain('+1.00 USD');
+    });
+
     it('classifies the status-stripped bare 500 as temporary', () => {
         expect(usAccountErrorKind('Internal Server Error')).toBe('temporary');
         expect(usAccountErrorKind('400 INVALID_ACCOUNT')).toBeNull();
