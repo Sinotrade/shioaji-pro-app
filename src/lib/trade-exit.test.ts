@@ -1,4 +1,4 @@
-import { beforeEach, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { operationNotice } from '../test/operation-notice';
 import type { Account } from './types/portfolio';
 import type { ContractBase } from './types/contract';
@@ -11,12 +11,14 @@ vi.mock('./risk', () => ({ checkOrderAllowed: m.risk, getRiskSettings: () => ({ 
 vi.mock('./stream', () => ({ getStreamStatus: () => m.live }));
 vi.mock('./shioaji', () => ({ placeStockOrder: m.stock, placeFuturesOrder: m.future, fetchTrades: m.fetch, cancelOrder: m.cancel, cancelOrders: (ids: string[]) => Promise.allSettled(ids.map(id => m.cancel(id))), fetchTradeCacheHealth: m.health }));
 vi.mock('./trading-state', () => ({ tradeCacheContinuous: () => m.continuous }));
+const lock = vi.hoisted(() => ({ blocked: false }));
+vi.mock('./app-lock', () => ({ isAppAccessBlocked: () => lock.blocked, APP_LOCKED_MESSAGE: '應用程式已鎖定，這筆沒有送出' }));
 import { placeStockExitByShares, placeQuickOrder, cancelAllOrders, onNotice } from './trade';
 import { beginServerInfoRequest, forgetServerInfo, observeServerInfo } from './server-info-store';
 const account = { account_type:'S', account_id:'a', broker_id:'b', signed:true, person_id:'fixture', username:'fixture' };
 const contract = { code:'2330',security_type:'STK',exchange:'TSE',limit_down:90,limit_up:110 } as ContractBase & {limit_down:number;limit_up:number};
 beforeEach(() => { vi.clearAllMocks(); m.continuous=false; m.health.mockReset().mockResolvedValue({ state: 'Healthy', reasons: [] }); m.base='fixture'; m.live='live'; m.accounts=[account]; m.selected=account; m.risk.mockReturnValue(null); m.confirm.mockResolvedValue(true); m.stock.mockResolvedValue({}); m.future.mockResolvedValue({}); });
-beforeEach(() => { forgetServerInfo(m.base); });
+beforeEach(() => { forgetServerInfo(m.base); lock.blocked = false; });
 const setSimulation = (simulation: boolean) => observeServerInfo(beginServerInfoRequest(), { simulation } as import('./shioaji').ServerInfo);
 
 it.each(['S', 'F'] as const)('sends an unsigned %s account unchanged in simulation (#228)', async type => {
@@ -255,4 +257,28 @@ it('foreign-underlying warrant: one-click market exit refused before confirmatio
     await expect(placeStockExitByShares(foreignWarrant,'Sell',2000,account)).rejects.toMatchObject({ mutationNotStarted: true, message: expect.stringContaining('請在下單面板以限價平倉') });
     expect(m.confirm).not.toHaveBeenCalled();
     expect(m.stock).not.toHaveBeenCalled();
+});
+
+// 應用程式鎖（A18）：按下確認之後、送出之前被鎖住，手動單不送；自動單（停損停利、觸價）照送
+describe('locked between confirmation and dispatch', () => {
+    // 送單 stub 照真的流程先跑 beforeDispatch（丟出錯誤就不送）
+    const dispatched = vi.fn();
+    beforeEach(() => {
+        dispatched.mockClear();
+        m.stock.mockImplementation(async (_contract, _order, _account, opts) => { opts?.beforeDispatch?.(); dispatched(); return {}; });
+        m.confirm.mockImplementation(async () => { lock.blocked = true; return true; });
+    });
+    it('a manual order confirmed just before locking is not sent', async () => {
+        await expect(placeQuickOrder(contract, 'Buy', 100, 1)).rejects.toMatchObject({ mutationNotStarted: true, message: '應用程式已鎖定，這筆沒有送出' });
+        expect(dispatched).not.toHaveBeenCalled();
+    });
+    it('automatic orders still go out while locked', async () => {
+        lock.blocked = true;
+        await placeQuickOrder(contract, 'Sell', 100, 1, { source: 'auto' });
+        expect(dispatched).toHaveBeenCalledOnce();
+    });
+    it('a manual split exit (inner legs are auto) is stopped before any leg', async () => {
+        await expect(placeStockExitByShares(contract, 'Sell', 1500, account)).rejects.toMatchObject({ mutationNotStarted: true });
+        expect(m.stock).not.toHaveBeenCalled();
+    });
 });

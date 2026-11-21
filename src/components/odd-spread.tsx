@@ -56,6 +56,7 @@ import {
     type ClickLock,
     type SpreadExecRecord,
 } from '../lib/odd-spread-service';
+import { APP_LOCKED_MESSAGE, isAppAccessBlocked } from '../lib/app-lock';
 import { requestOrderConfirm, accountConfirmLabel } from '../lib/order-confirm';
 import { maskMoney, usePrivacyMoney } from '../lib/privacy';
 import { getApiBase } from '../lib/runtime';
@@ -313,7 +314,11 @@ export function OddSpreadView({
             return;
         }
         const pinned = { base: env0.base, simulation: env0.simulation };
-        const beforeSend = () => { if (!envMatches(pinned)) throw new Error('伺服器或模擬／正式環境已切換，未送出'); };
+        // 零股拆成多筆時每筆是 source:'auto'，trade.ts 不查鎖：確認後被鎖住就在這裡擋
+        const beforeSend = () => {
+            if (isAppAccessBlocked()) throw new Error(APP_LOCKED_MESSAGE);
+            if (!envMatches(pinned)) throw new Error('伺服器或模擬／正式環境已切換，未送出');
+        };
         const sent: string[] = [];
         let slices: { price: number; quantity: number }[] = [];
         const side = action === 'Buy' ? '買' : '賣';

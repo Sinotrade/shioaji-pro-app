@@ -11,7 +11,9 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { StrictMode, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import { AppLockBoundary } from '../components/app-lock-boundary';
 import { darkTwClass } from '../theme.css';
+import { initializeAppLock } from '../lib/app-lock';
 import { fmtPrice } from '../lib/utils/format';
 import { contractMarket } from '../lib/contract-market';
 import * as styles from './approval.css';
@@ -563,10 +565,15 @@ function ApprovalApp({ preview }: { preview: ApprovalRequest | null }) {
 const rootElement =
     typeof document === 'undefined' ? null : document.getElementById('root');
 if (rootElement) {
+    // 核可視窗是另一個入口（獨立 WebView）：鎖定狀態經 localStorage 與主視窗共用，
+    // 事件攔截要自己裝。鎖定中不能在這裡核准 Agent 交易，要在 render 之前裝好
+    initializeAppLock();
     document.documentElement.classList.add(darkTwClass);
     createRoot(rootElement).render(
         <StrictMode>
-            <ApprovalApp preview={previewRequest()} />
+            <AppLockBoundary>
+                <ApprovalApp preview={previewRequest()} />
+            </AppLockBoundary>
         </StrictMode>,
     );
 }

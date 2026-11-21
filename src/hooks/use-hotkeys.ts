@@ -1,9 +1,14 @@
 // src/hooks/use-hotkeys.ts — global trading hotkeys.
 // B/S: switch order tickets to buy/sell · Esc Esc: cancel all orders
 // (opt-in via 風控 settings, default off) · Cmd/Ctrl+K: symbol palette.
-// Ignored while typing in form fields.
+// Ignored while typing in form fields. ⇧⌘L 鎖定在 lib/app-lock 的攔截層。
+//
+// 應用程式鎖遮住畫面期間（isAppAccessBlocked）一律不動作，並清掉等待中的 Esc 第一下：
+// 鎖定前後的兩下 Esc 不能湊成 Esc×2 全部刪單。按鍵本來就被 lib/app-lock 的攔截層擋在
+// 前面；Esc×2 全部刪單不能只靠那一層，兩個 listener 自己再擋一次。
 
 import { useEffect } from 'react';
+import { isAppAccessBlocked } from '../lib/app-lock';
 import { noteEscPress, resetEscCancelArm } from '../lib/esc-cancel-arm';
 import { getRiskSettings } from '../lib/risk';
 import { cancelAllOrders, notify } from '../lib/trade';
@@ -39,6 +44,10 @@ export function useHotkeys({
         // 擋不掉；等整個派送結束（setTimeout 0 — microtask 會在每個 listener
         // 之間就跑掉，太早）還沒被算成一下的 Esc，一律清除武裝。
         const onEscCapture = (e: KeyboardEvent) => {
+            if (isAppAccessBlocked()) {
+                resetEscCancelArm();
+                return;
+            }
             if (e.key !== 'Escape') return;
             // 先同步結清上一個 Esc：它沒被算成一下（被元件吃掉、擋下）就清除
             // 武裝 — 不能只靠下面的計時器，連續按鍵時下一個 keydown 可能比
@@ -53,6 +62,10 @@ export function useHotkeys({
             }, 0);
         };
         const onKey = (e: KeyboardEvent) => {
+            if (isAppAccessBlocked()) {
+                resetEscCancelArm();
+                return;
+            }
             // OS key auto-repeat must never count — holding Esc a beat too
             // long would otherwise arm AND fire cancel-all in one press
             if (e.repeat) return;

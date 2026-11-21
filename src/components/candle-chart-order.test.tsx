@@ -27,6 +27,7 @@ const m = vi.hoisted(() => ({
     updatePrice: vi.fn(),
     dragEvents: false,
     dragHost: null as EventTarget | null,
+    appLocked: false,
     hostNode: null as { style: { cursor?: string } } | null,
     lines: [] as { options: () => { price: number }; applyOptions: (p: { price: number }) => void }[],
     // 主窗格那一列的範圍（host 另含副圖與時間軸）；預設與 host 相同
@@ -43,6 +44,7 @@ vi.mock('../hooks/use-chart-drawings', async (importOriginal) => {
 });
 vi.mock('../lib/trade', () => ({ notify: m.notify, placeQuickOrder: m.place }));
 vi.mock('../lib/api', async (importOriginal) => ({ ...await importOriginal<typeof import('../lib/api')>(), apiPost: m.creditPost }));
+vi.mock('../lib/app-lock', async (importOriginal) => ({ ...await importOriginal<typeof import('../lib/app-lock')>(), isAppAccessBlocked: () => m.appLocked }));
 vi.mock('../lib/shioaji', () => ({ cancelOrder: async () => {}, updateOrderPrice: m.updatePrice }));
 vi.mock('../lib/trigger-engine', () => ({ addTrigger: m.addTrigger, removeTrigger: vi.fn(), useTriggers: () => [] }));
 vi.mock('../lib/account-store', () => ({ ensureAccounts: () => undefined,
@@ -141,6 +143,7 @@ function capture(target: ReactTestInstance, kind: 'PointerDown' | 'KeyDown') {
 }
 
 beforeEach(() => {
+    m.appLocked = false;
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     vi.stubGlobal('requestAnimationFrame', (cb: any) => setTimeout(cb, 0));
     vi.stubGlobal('cancelAnimationFrame', (id: any) => clearTimeout(id));
@@ -344,6 +347,15 @@ describe('chart order settings button', () => {
         const drag = await orderDrag();
         await drag.start(); await drag.release(); await drag.release();
         expect(m.updatePrice).toHaveBeenCalledExactlyOnceWith('drag-order', 105);
+    });
+
+    it('拖曳中被 App Lock 鎖住：線回原價，放開不改價', async () => {
+        const drag = await orderDrag();
+        await drag.start();
+        m.appLocked = true;
+        await drag.release();
+        expect(drag.line.options().price).toBe(100);
+        expect(m.updatePrice).not.toHaveBeenCalled();
     });
 
     it.each([['下方', 450, 790], ['右側', 105, 900], ['上方', -5, 790], ['左側', 105, -5]])('拖曳後在圖外（%s）放開視為取消，不送改價、線回原價', async (_side, y, x) => {

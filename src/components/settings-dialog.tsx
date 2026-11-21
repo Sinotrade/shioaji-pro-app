@@ -1,11 +1,12 @@
 import { canTrade } from '../lib/account-tradable';
 // src/components/settings-dialog.tsx — 統一設定面板：外觀／音效與隱私／
-// 帳號／風控／版面 五分類。原本散在 header 的主題/帳號/版面 popover 全數
-// 收斂到這裡；風控「規則」也在此（Kill Switch 留在 header，一鍵可達）。
+// 應用程式鎖／帳號／風控／Agent／版面 分類。原本散在 header 的主題/帳號/版面
+// popover 全數收斂到這裡；風控「規則」也在此（Kill Switch 留在 header，一鍵可達）。
 
 import {
     Bot,
     LayoutGrid,
+    LockKeyhole,
     Palette,
     RefreshCw,
     ShieldAlert,
@@ -76,6 +77,7 @@ import {
     setAgentHarnessEnabled,
 } from '../lib/tauri';
 import { CUSTOM_BASES } from '../lib/custom-theme';
+import { AppLockSettings } from './app-lock-settings';
 import { CustomThemeEditor } from './custom-theme-editor';
 import { BackgroundExecutionSetting } from './background-execution-setting';
 import { ExternalLink } from './external-link';
@@ -105,6 +107,7 @@ const LIMIT_STYLE_OPTIONS: { key: LimitStyle; label: string; title: string }[] =
 type SettingsTab =
     | 'appearance'
     | 'soundPrivacy'
+    | 'appLock'
     | 'accounts'
     | 'risk'
     | 'agent'
@@ -113,6 +116,7 @@ type SettingsTab =
 const TABS: { key: SettingsTab; label: string; icon: React.ReactNode }[] = [
     { key: 'appearance', label: '外觀', icon: <Palette size={13} /> },
     { key: 'soundPrivacy', label: '音效與隱私', icon: <Volume2 size={13} /> },
+    { key: 'appLock', label: '應用程式鎖', icon: <LockKeyhole size={13} /> },
     { key: 'accounts', label: '帳號', icon: <UserRound size={13} /> },
     { key: 'risk', label: '風控', icon: <ShieldAlert size={13} /> },
     { key: 'agent', label: 'Agent', icon: <Bot size={13} /> },
@@ -753,6 +757,7 @@ export function SettingsDialog({
                     <div className={styles.content}>
                         {tab === 'appearance' && <AppearanceSection />}
                         {tab === 'soundPrivacy' && <SoundPrivacySection />}
+                        {tab === 'appLock' && <AppLockSettings />}
                         {tab === 'accounts' && <AccountsSection />}
                         {tab === 'risk' && <RiskSection />}
                         {tab === 'agent' && <AgentSection />}

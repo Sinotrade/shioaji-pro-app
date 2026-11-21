@@ -7,12 +7,16 @@ import { isTauri, loadDesktopSettings, saveCredentialProfile, selectCredentialPr
 import { classifyServerStart, type ServerStartError } from '../lib/server-start-error';
 import { ServerStartErrorPanel } from './server-start-error-panel';
 import { clearStoredSpawnKeyHash } from '../lib/spawn-keys';
+import { API_MANAGEMENT_URL } from '../lib/account-signing';
+import { LOGGED_OUT_KEY } from '../lib/app-lock';
+import { ExternalLink } from './external-link';
 import { FeatureGate } from './feature-gate';
 import { CredentialProfiles } from './credential-profiles';
 import { timedOnboarding } from '../lib/server-actions';
 import * as styles from './onboarding-setup.css';
 import * as dialog from './server-settings-dialog.css';
 
+const LOGGED_OUT_TEXT = new Map([['1', '解鎖密碼連續錯 10 次，已登出。'], ['forgot', '已登出，並清除這台電腦的 API 金鑰。']]);
 const AGENT_STARTER_PROMPT = '我是第一次使用，還沒有永豐 Shioaji API Key，可以引導我怎麼申請嗎？';
 export function OnboardingSetup() {
     const [settings, setSettings] = useState<DesktopSettings>(EMPTY_DESKTOP_SETTINGS);
@@ -24,6 +28,9 @@ export function OnboardingSetup() {
     const [loaded, setLoaded] = useState(false);
     const [confirmLogout, setConfirmLogout] = useState(false);
     const logoutInFlight = useRef(false);
+    // 應用程式鎖登出後的說明（連續輸錯 10 次、按了忘記密碼）：顯示這一次，之後就清掉
+    const [lockedOut] = useState(() => { try { return LOGGED_OUT_TEXT.get(localStorage.getItem(LOGGED_OUT_KEY) ?? ''); } catch { return undefined; } });
+    useEffect(() => { try { localStorage.removeItem(LOGGED_OUT_KEY); } catch { /* 下次再清 */ } }, []);
     const stopForChange = async () => {
         const result = await serverStop({ stopAgents: true, ownedOnly: true });
         if (!result.ok) throw new Error(result.output || '無法停止伺服器，尚未變更帳號。');
@@ -104,6 +111,9 @@ export function OnboardingSetup() {
     return (<div className={styles.shell}><div className={styles.layout}>
         <div className={styles.card}>
             <div><div className={styles.logo}>Shioaji Pro</div><div className={styles.subtitle}>設定或選擇帳號以啟動交易伺服器</div></div>
+            {lockedOut && <p className={styles.errorText} role="alert">
+                {lockedOut}請重新輸入 API 金鑰登入；還沒有金鑰可到<ExternalLink href={API_MANAGEMENT_URL}>這裡申請</ExternalLink>。應用程式鎖已關閉，登入後可到「設定 → 應用程式鎖」重新開啟。
+            </p>}
             {error && <p className={styles.errorText} role="alert">{error}</p>}
             {startError && <ServerStartErrorPanel error={startError.error} logPath={startError.logPath} onOpenLogFolder={isTauri ? openServerLogFolder : undefined} />}
             {loaded && <CredentialProfiles settings={settings} busy={busy} running={false} onSave={save} onAction={action} onImported={setSettings} onStart={start} onBusyChange={setBusy} />}

@@ -624,6 +624,12 @@ export const switchTrack = styleVariants({
             borderColor: vars.color.border,
             '::after': { left: '2px', background: vars.color.mutedForeground },
             ':hover': { borderColor: vars.color.borderBright },
+            // 高對比（forced-colors）會把圓點洗成和軌道同色，開關看不出開或關
+            '@media': { '(forced-colors: active)': {
+                forcedColorAdjust: 'none', background: 'Canvas', borderColor: 'ButtonText',
+                '::after': { background: 'ButtonText' },
+                ':hover': { borderColor: 'ButtonText' }, // 上面的 :hover 規則特異性較高，不補的話滑過去會變回主題色
+            } },
         },
     ],
     on: [
@@ -632,6 +638,10 @@ export const switchTrack = styleVariants({
             background: vars.color.accentDim,
             borderColor: vars.color.accent,
             '::after': { left: '16px', background: vars.color.accent },
+            '@media': { '(forced-colors: active)': {
+                forcedColorAdjust: 'none', background: 'Highlight', borderColor: 'Highlight',
+                '::after': { background: 'HighlightText' },
+            } },
         },
     ],
 });

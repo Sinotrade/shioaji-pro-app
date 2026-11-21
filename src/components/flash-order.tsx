@@ -48,6 +48,7 @@ import { OrderSettingsButton } from './chart-order-popover';
 import { useDisplayBook } from '../hooks/use-display-book';
 import type { Snapshot } from '../lib/types/market';
 import { maskMoney, usePrivacyMoney } from '../lib/privacy';
+import { isAppAccessBlocked } from '../lib/app-lock';
 import { cancellationSummary } from '../lib/trade-mutations';
 import { noteOrderTraceEntry } from '../lib/order-trace';
 import { cancelOrders } from '../lib/shioaji';
@@ -1442,6 +1443,8 @@ function FlashOrderTw({
             // a plain click is the button's own click (deletes); only a drag moves
             if (!moved) return;
             dragEnded.current = markKey(g);
+            // 拖到一半被 App Lock 鎖住：放開不移單（鎖定中不能手動操作）
+            if (isAppAccessBlocked()) return;
             const target = rowAt(ev.clientY);
             if (target !== null) void moveMarks(g, target);
         };

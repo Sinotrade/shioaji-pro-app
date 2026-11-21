@@ -32,7 +32,7 @@ import { EXPECTED_SERVER_VERSION, sameServerVersion } from '../lib/runtime';
 import { diagnoseOutput, errorLines, validateDesktopSettings, validateProfileSettings } from '../lib/server-diagnostics';
 import { describeServerEnvNotice, type ServerSwitchTarget } from '../lib/server-env-notice';
 import { serverStartErrorCopy } from '../lib/server-start-error';
-import { clearStoredSpawnKeyHash } from '../lib/spawn-keys';
+import { logoutAndReload } from '../lib/logout';
 import { orderTraceDiagnostics } from '../lib/order-trace';
 import {
     STALE_RUN_MS,
@@ -73,7 +73,6 @@ import {
     saveCredentialProfile,
     selectCredentialProfile,
     deleteCredentialProfile,
-    logoutCredentialProfile,
     EMPTY_DESKTOP_SETTINGS,
     subscribeAgentHarnessEnabled,
     serverStart,
@@ -375,15 +374,7 @@ export function ServerManager({
         setConfirmLogout(false);
         void (async () => {
             try {
-                setServerIdentityVerified(false);
-                const stopped = await serverStop({ stopAgents: true, ownedOnly: true });
-                if (!stopped.ok) {
-                    serverActionDeps.reloadAfterFailedStop();
-                    throw new Error(stopped.output || '無法停止本機伺服器');
-                }
-                await logoutCredentialProfile();
-                clearStoredSpawnKeyHash();
-                window.location.reload();
+                await logoutAndReload();
             } catch (e) {
                 notify({ kind: 'err', title: '登出未完成', body: e instanceof Error ? e.message : String(e) });
             } finally {

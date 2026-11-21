@@ -7,8 +7,10 @@ import { StrictMode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { AppGate } from './app-gate';
 import { AppErrorBoundary } from './components/app-error-boundary';
+import { AppLockBoundary } from './components/app-lock-boundary';
 import './index.css';
 import { startAnalytics } from './lib/analytics';
+import { initializeAppLock } from './lib/app-lock';
 import { bootstrap } from './lib/boot';
 import { initTheme } from './lib/theme-store';
 import { startBracketRuntime } from './lib/bracket';
@@ -17,6 +19,10 @@ import { startOddSpreadService } from './lib/odd-spread-service';
 import { startTriggerEngine } from './lib/trigger-engine';
 import { startConditionalRuntime } from './lib/conditional/runtime';
 
+// 應用程式鎖：要最先註冊 window 擷取階段的事件攔截（含 ⇧⌘L、睡眠偵測），早於下面所有
+// start*()／bootstrap() 與 App 掛載後才註冊的快捷鍵 listener（同一個 window
+// 擷取階段先註冊先執行）。重複呼叫只會裝一次，HMR 重跑本檔也安全。
+initializeAppLock();
 initTheme();
 startAnalytics();
 // both are no-ops outside the main window (#102: main-only execution)
@@ -55,8 +61,11 @@ const root = rootHost.__shioajiRoot ?? createRoot(rootHost);
 rootHost.__shioajiRoot = root;
 root.render(
     <StrictMode>
-        <AppErrorBoundary>
-            <AppGate />
-        </AppErrorBoundary>
+        {/* 鎖在外層：App 出錯換成錯誤頁時，鎖定畫面不能跟著卸載（攔截層還在，會鎖死） */}
+        <AppLockBoundary>
+            <AppErrorBoundary>
+                <AppGate />
+            </AppErrorBoundary>
+        </AppLockBoundary>
     </StrictMode>,
 );

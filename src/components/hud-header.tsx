@@ -29,6 +29,7 @@ import { externalServerLabel, useServerAttachment } from '../lib/server-adoption
 import { SettingsDialog } from './settings-dialog';
 import { flashPopoutParams, reseedPopoutFlashAccounts } from '../lib/flash-account';
 import { mainFlashSelection } from '../lib/order-account';
+import { ScreenLockSwitch } from './screen-lock-switch';
 import * as styles from './hud-header.css';
 
 const STATUS_LABEL = {
@@ -317,6 +318,7 @@ export function HudHeader({
                 onToggle={setServerMgrOpen}
             />
             <KillSwitchButton />
+            {headerItems.screenLock && <ScreenLockSwitch />}
             <button
                 className={styles.resetBtn}
                 onClick={onOpenPanelLibrary}
