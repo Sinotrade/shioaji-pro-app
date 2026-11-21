@@ -187,8 +187,9 @@ function handleUsTick(raw: string) {
     let parsed: ReturnType<typeof normalizeUsTick>;
     try { parsed = normalizeUsTick(JSON.parse(raw) as RawUsTick); } catch { return; }
     if (!parsed) return;
-    ingestTick(parsed.tick);
+    // 先記 meta（session 等）再送 tick：onAnyTick 監聽者（美股庫存計價時段）讀得到這筆的 session
     recordUsTick(parsed.meta);
+    ingestTick(parsed.tick);
 }
 
 function handleUsBidAsk(raw: string) {
@@ -206,6 +207,25 @@ const US_WANT_KEY = 'us-quotes';
 const usWanted = () => usStreamRefs > 0 || remoteUsWanted;
 const usSources = new Map<string, EventSource>();
 let usReopenTimer: ReturnType<typeof setTimeout> | null = null;
+/** 美股成交 SSE 斷線或斷線後重連（期間可能漏收成交；庫存即時價要作廢） */
+const usTickStreamResetListeners = new Set<() => void>();
+let usTickStreamDropped = false;
+/** 轉送給彈出視窗用的事件名（只走 shared wire，不是伺服器的 SSE 事件） */
+const US_TICK_RESET_WIRE = 'us_tick_stream_reset';
+function emitUsTickStreamReset() {
+    usTickStreamResetListeners.forEach(l => l());
+}
+/** 擁有者：通知自己，並經 shared wire 轉給彈出視窗（與美股成交轉送同一條） */
+function broadcastUsTickStreamReset() {
+    emitUsTickStreamReset();
+    shared?.publish({ kind: 'event', name: US_TICK_RESET_WIRE, raw: '' });
+}
+export function onUsTickStreamReset(listener: () => void) {
+    usTickStreamResetListeners.add(listener);
+    return () => {
+        usTickStreamResetListeners.delete(listener);
+    };
+}
 
 function openUsStreams() {
     if (!usWanted() || typeof EventSource === 'undefined') return;
@@ -222,8 +242,16 @@ function openUsStreams() {
         source.onerror = () => {
             source.close();
             usSources.delete(name);
+            if (name === US_TICK_EVENT) { usTickStreamDropped = true; broadcastUsTickStreamReset(); }
             scheduleUsReopen();
         };
+        if (name === US_TICK_EVENT) {
+            source.onopen = () => {
+                if (!usTickStreamDropped) return;
+                usTickStreamDropped = false;
+                broadcastUsTickStreamReset();
+            };
+        }
         usSources.set(name, source);
     }
 }
@@ -730,6 +758,8 @@ function dispatchWire(wire: StreamWire) {
         setStatus(wire.status);
         return;
     }
+    // 擁有者轉來的美股成交 SSE 斷線／重連：不是行情活動，不碰看門狗
+    if (wire.name === US_TICK_RESET_WIRE) { emitUsTickStreamReset(); return; }
     markActivity();
     const { name, raw } = wire;
     if (name === 'tick_stk' || name === 'tick_fop') handleTick(raw);

@@ -4,6 +4,8 @@ const m = vi.hoisted(() => ({
     accounts: [] as unknown[],
     trades: vi.fn(), health: vi.fn(), positions: vi.fn(), apiGet: vi.fn(),
     onEvent: null as null | ((r: unknown) => void),
+    onTick: null as null | ((t: { code: string; close: string; simtrade?: boolean; volume?: number }) => void),
+    retained: [] as string[], released: [] as string[],
     streamStatus: 'down', statusListener: null as null | (() => void),
 }));
 vi.mock('../account-store', () => ({
@@ -14,10 +16,19 @@ vi.mock('../account-tradable', () => ({ canTrade: () => true }));
 vi.mock('../stream', () => ({
     ensureStream: vi.fn(), getStreamStatus: () => m.streamStatus,
     onOrderEvent: (fn: (r: unknown) => void) => { m.onEvent = fn; return () => undefined; },
+    onAnyTick: (fn: typeof m.onTick) => { m.onTick = fn; return () => undefined; },
+    onUsTickStreamReset: () => () => undefined,
     subscribeStatusStore: (fn: () => void) => { m.statusListener = fn; return () => undefined; },
 }));
 vi.mock('./us-api', () => ({ fetchUsTrades: m.trades, fetchUsTradeCacheHealth: m.health, fetchUsPositions: m.positions }));
 vi.mock('../api', () => ({ apiGet: m.apiGet }));
+vi.mock('../quote-ownership', () => ({
+    retainQuote: (c: { code: string }) => { m.retained.push(c.code); return () => { m.released.push(c.code); }; },
+}));
+vi.mock('./us-contracts', () => ({
+    getUsContractRecord: (code: string) => (code === 'NVDA' || code === 'AAPL' ? { code, exchange: 'NASDAQ' } : undefined),
+    resolveUsContract: async (code: string) => ({ code, region: 'US', exchange: 'NASDAQ', security_type: 'STK' }),
+}));
 
 import fx from './__fixtures__/intl-order-events.json';
 import { normalizeOrderEvent } from '../order-report';
