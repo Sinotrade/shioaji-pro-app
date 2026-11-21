@@ -110,4 +110,4 @@ export function failureText<T>(rows: PerAccount<T>[] | undefined): string {
     return [...new Set((rows ?? []).flatMap(r => (r.state === 'stale' || r.state === 'error' ? [r.error] : [])))].join('；');
 }
 
-export { onUsAccountRefresh, requestUsAccountRefresh } from './us-account-events';
+export { notifyUsDealSettled, onUsAccountRefresh, onUsDealSettled, requestUsAccountRefresh } from './us-account-events';

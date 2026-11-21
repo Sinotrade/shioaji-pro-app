@@ -24,7 +24,7 @@ vi.mock('../lib/stream', () => ({ ensureStream: vi.fn(), getStreamStatus: () => 
 vi.mock('../lib/quote-ownership', () => ({ retainQuote: () => () => undefined }));
 vi.mock('./bottom-dock-positions', () => ({ PositionsPane: (p: Record<string, unknown>) => { m.panes.positions = p; return null; } }));
 vi.mock('./bottom-dock-orders', () => ({ OrdersPane: (p: Record<string, unknown>) => { m.panes.orders = p; return null; } }));
-vi.mock('./bottom-dock-account', () => ({ AccountPane: () => null, UsAccountSection: () => '美股帳務' }));
+vi.mock('./bottom-dock-account', () => ({ AccountPane: () => null, UsAccountSection: () => '美股帳務', UsTodayPnlSection: () => null }));
 vi.mock('./bottom-dock-shared', async original => ({ ...await original<object>(), useDockPref: (_k: string, _a: unknown, fallback: string) => [fallback, vi.fn()] }));
 import { BottomDock } from './bottom-dock';
 

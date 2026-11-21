@@ -12,6 +12,7 @@
 
 import type { Account } from '../types/portfolio';
 import type { Action } from '../types/order';
+import { classifyAccountQueryError } from '../trading-limits-error';
 import { decNormalize, decSub } from './decimal';
 import { hQuery } from './us-api';
 
@@ -191,6 +192,8 @@ export async function fetchUsPositionDetail(account: Account, detailId: number):
 // ---- 服務未開放（BC gtrade 尚未部署） ----
 
 export const US_ACCOUNT_UNAVAILABLE = '美股帳務服務尚未開放';
+/** gtrade 上游暫時失敗（502）的顯示文字 */
+export const US_UPSTREAM_TEMPORARY = '券商美股帳務暫時無法查詢，請稍後再試';
 
 /** 503（gtrade 未部署）或 404（舊 SDK 沒有這支）：顯示「尚未開放」，不跳錯誤 */
 export function isUsAccountUnavailable(error: unknown): boolean {
@@ -205,6 +208,20 @@ export function usAccountErrorText(error: unknown): string {
     if (isUsAccountUnavailable(error)) return US_ACCOUNT_UNAVAILABLE;
     const message = error instanceof Error ? error.message : String(error ?? '');
     if (/INVALID_CURRENCY/.test(message)) return '幣別不支援';
-    if (/^502\b|UPSTREAM_ERROR/.test(message)) return '券商美股帳務暫時無法查詢，請稍後再試';
+    if (/^502\b|UPSTREAM_ERROR/.test(message)) return US_UPSTREAM_TEMPORARY;
     return message.replace(/^\d{3}\s+/, '').trim() || message;
+}
+
+/**
+ * 美股帳務查詢錯誤分類（呈現在 components/account-query-failure.tsx，和台股同一套）：
+ * - 'unavailable'：503／404 服務尚未開放
+ * - 'temporary'：gtrade 上游暫時失敗（502／UPSTREAM_ERROR，含已轉成顯示文字的）、裸 500
+ * - null：真正的錯誤（紅字）
+ */
+export function usAccountErrorKind(error: unknown): 'unavailable' | 'temporary' | null {
+    if (isUsAccountUnavailable(error)) return 'unavailable';
+    const message = (error instanceof Error ? error.message : String(error ?? '')).trim();
+    if (!message) return null;
+    if (/^502\b|UPSTREAM_ERROR/.test(message) || message === US_UPSTREAM_TEMPORARY) return 'temporary';
+    return classifyAccountQueryError(message) === 'temporary' ? 'temporary' : null;
 }

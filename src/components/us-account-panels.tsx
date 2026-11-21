@@ -2,17 +2,19 @@
 //
 // - UsAccountSection：帳務分頁的美股區（餘額、可下單金額、圈存、未交割款）
 // - UsRealizedPnlSection：損益面板的美股已實現損益（可展開沖銷明細）與現金股利
+// - UsTodayPnlSection：帳務分頁的美股今日已實現損益（美東交易日；同台股今日區塊的互動）
 // - UsPositionDetail：庫存列展開的取得批次明細
 //
 // 金額一律 USD decimal 字串，絕不和台幣相加。服務未開放（503）顯示一行狀態，
 // 不跳錯誤。多帳戶批次查詢見 lib/us/us-account-batch.ts：同一批只用一種伺服器
 // 模式；某帳戶失敗時保留它上次的資料並標示，合計只算這次成功的帳戶。
 
-import { Fragment, useCallback, useEffect } from 'react';
+import { ChevronDown, ChevronRight } from 'lucide-react';
+import { Fragment, useCallback, useEffect, useState, type ReactNode } from 'react';
 import { useQuery } from '../hooks/use-query';
 import { maskAccountId, maskMoney, usePrivacyMode, usePrivacyMoney } from '../lib/privacy';
 import type { Account } from '../lib/types/portfolio';
-import { decAdd, decRound, fmtDec, fmtUsAvgPrice } from '../lib/us/decimal';
+import { decAdd, decCompare, decRound, fmtDec, fmtUsAvgPrice } from '../lib/us/decimal';
 import {
     fetchUsBalance,
     fetchUsDividends,
@@ -21,6 +23,7 @@ import {
     fetchUsProfitLossDetail,
     fetchUsSettlements,
     US_ACCOUNT_UNAVAILABLE,
+    usAccountErrorKind,
     usAccountErrorText,
     usHeldAmount,
     type IntlAccountBalance,
@@ -35,13 +38,19 @@ import {
     allUnavailable,
     failureText,
     onUsAccountRefresh,
+    onUsDealSettled,
     runUsBatch,
+    US_MODE_CHANGED_ERROR,
     someFailed,
     type PerAccount,
 } from '../lib/us/us-account-batch';
 import { TW_POSITION_DETAIL_MISMATCH } from '../lib/tw-account-detail';
 import { dateStrOffset } from '../lib/utils/kbars';
+import { msToNextUsBoundary } from '../lib/us/us-session-view';
+import { nyDateTime } from '../lib/us/us-quotes';
 import { DetailTable, DetailView, ExpandableRow } from './account-detail';
+import { AccountQueryFailure, RetryButton } from './account-query-failure';
+import { AsyncStatus } from './async-status';
 import { fmtUsPnl, usAmountDir, UsTag } from './bottom-dock-shared';
 import * as dock from './bottom-dock.css';
 import * as panel from './panel.css';
@@ -203,22 +212,7 @@ export function UsRealizedPnlSection({ accounts, days = 30 }: { accounts: Accoun
                             ? <div className={dock.usNote} role='alert'>美股已實現損益查詢失敗：{failureText(data.pnl)}</div>
                             : <FundRow label='已實現損益合計' value={signedUsd(total, privMoney)} dir={usAmountDir(total)} />}
                         {pnlRows.length === 0 ? (pnlFailed ? null : <div className={dock.usNote}>近 {days} 日無美股已實現損益</div>) : (
-                            <table className={dock.table}>
-                                <thead>
-                                    <tr>
-                                        <th className={dock.th} style={{ width: '1.4rem' }} />
-                                        <th className={dock.th}>日期</th>
-                                        <th className={dock.th}>代碼</th>
-                                        <th className={dock.th}>股數</th>
-                                        <th className={dock.th}>賣價</th>
-                                        <th className={dock.th}>損益</th>
-                                        <th className={dock.th}>報酬率</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {pnlRows.map(p => <UsPnlRow key={`${acctKey(p.account)}:${p.detail_id}:${p.date}:${p.code}`} row={p} account={p.account} priv={privMoney} stale={p.stale} />)}
-                                </tbody>
-                            </table>
+                            <UsPnlTable rows={pnlRows} priv={privMoney} />
                         )}
                         <UsHeader title='美股現金股利（USD）' />
                         {divFailed && <div className={dock.usNote} role='alert'>美股現金股利查詢失敗：{failureText(data.dividends)}</div>}
@@ -255,6 +249,139 @@ export function UsRealizedPnlSection({ accounts, days = 30 }: { accounts: Accoun
                 )}
             <div className={panel.refreshToolbar}><RefreshButton label='更新美股損益' loading={loading} onClick={() => void refresh()} /></div>
         </section>
+    );
+}
+
+// ---- 帳務分頁：今日已實現損益 ----
+//
+// 「今日」＝美東日期（America/New_York）。IntlProfitLoss.date 是賣出成交的交易日
+// （TSHK 損益中台 tdate；paper 用美東交易日 us_session_date），美股委託列表的換日
+// 也用美東日期（dropBeforeNyDate）。gtrade 省略日期時預設台北當天，所以一定明帶
+// begin_date＝end_date＝美東今天，回來的列再核對一次日期。
+
+/** 美東今天 YYYY-MM-DD；美東午夜（與時段界線）重算 */
+export function nyToday(nowMs = Date.now()): string {
+    return nyDateTime(nowMs * 1000).date;
+}
+
+function useNyToday(): string {
+    const [today, setToday] = useState(() => nyToday());
+    useEffect(() => {
+        let timer: ReturnType<typeof setTimeout>;
+        const tick = () => {
+            setToday(nyToday());
+            timer = setTimeout(tick, msToNextUsBoundary(Date.now()));
+        };
+        timer = setTimeout(tick, msToNextUsBoundary(Date.now()));
+        return () => clearTimeout(timer);
+    }, []);
+    return today;
+}
+
+/** 失敗分類：全部是暫時性／未開放才灰字，夾一筆真錯誤就紅字（同台股） */
+function failureKind(errors: string[]): 'temporary' | 'unavailable' | null {
+    if (errors.length === 0) return null;
+    const kinds = errors.map(e => (e === US_MODE_CHANGED_ERROR ? 'temporary' : usAccountErrorKind(e)));
+    if (kinds.some(k => k === null)) return null;
+    return kinds.every(k => k === 'unavailable') ? 'unavailable' : 'temporary';
+}
+
+export function UsTodayPnlSection({ accounts }: { accounts: Account[] }) {
+    const privMoney = usePrivacyMoney();
+    const today = useNyToday();
+    const key = accounts.map(acctKey).join(',');
+    const { data, error, loading, refresh } = useQuery<PerAccount<IntlProfitLoss[]>[]>(
+        useCallback(() => runUsBatch(batch => batch.each('pnl-today', accounts, async a => {
+            const rows = await fetchUsProfitLoss(a, today, today);
+            return rows.filter(r => r.date === today);
+        })), [key, today]),
+        `us-pnl-today:${key}:${today}`, accounts.length > 0 && !!today,
+    );
+    // dock「更新帳務」、美股下單／刪單後，以及成交回報後（延遲合併）重查
+    useEffect(() => onUsAccountRefresh(() => void refresh()), [refresh]);
+    useEffect(() => onUsDealSettled(() => void refresh()), [refresh]);
+    const [open, setOpen] = useState(false);
+    if (accounts.length === 0) return null;
+
+    // 同台股：依損益絕對值由大到小
+    const abs = (v: string) => v.trim().replace(/^-/, '') || '0';
+    const rows = flatten(data ?? []).sort((a, b) => decCompare(abs(b.pnl), abs(a.pnl)) || 0);
+    const total = freshTotal(rows, p => p.pnl);
+    const failed = allFailed(data);
+    const partial = someFailed(data) && !failed;
+    const accountErrors = (data ?? []).flatMap(r => (r.state === 'stale' || r.state === 'error' ? [r.error] : []));
+    const retry = () => void refresh();
+
+    let body: ReactNode;
+    if (!data) {
+        body = error
+            ? <AccountQueryFailure what='美股損益' error={usAccountErrorText(error)} kind={failureKind([error])} onRetry={retry} />
+            : <AsyncStatus phase='loading' text={loading ? '載入美股已實現損益' : ' '} className={dock.loadingRow} />;
+    } else if (allUnavailable(data)) {
+        body = <span className={dock.acctHint} role='status'>{US_ACCOUNT_UNAVAILABLE}</span>;
+    } else if (failed && rows.length === 0) {
+        body = <AccountQueryFailure what='美股損益' error={failureText(data)} kind={failureKind(accountErrors)} onRetry={retry} />;
+    } else if (rows.length === 0) {
+        body = <span className={dock.acctHint}>今日無美股已實現損益</span>;
+    } else {
+        body = (
+            <>
+                <button
+                    type='button'
+                    className={dock.pnlToggle}
+                    title={open ? '收合明細' : '展開明細'}
+                    aria-expanded={open}
+                    onClick={() => setOpen(v => !v)}
+                >
+                    {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                    <span className={`${dock.pnlTotal} ${panel.dirText[usAmountDir(total)]}`}>
+                        {failed ? '—' : signedUsd(total, privMoney)}
+                    </span>
+                    <span className={dock.pnlCount}>{rows.length} 筆</span>
+                </button>
+                {open && <UsPnlTable rows={rows} priv={privMoney} />}
+            </>
+        );
+    }
+
+    return (
+        <section aria-label='美股今日已實現損益' className={dock.acctSection}>
+            <UsHeader title={`今日已實現損益（USD，美東 ${today.slice(5).replace('-', '/')}）`} note='不和台幣合計' />
+            {body}
+            {/* 部分帳戶失敗：合計不含它們（它們上次的列標「上次查詢」） */}
+            {data && (partial || (failed && rows.length > 0)) && (
+                <span className={dock.acctHint} role='status' title={failureText(data)}>
+                    {failureKind(accountErrors) ? `${US_PARTIAL_FAILURE}（券商暫時查不到資料）` : `${US_PARTIAL_FAILURE}：${failureText(data)}`}
+                    {' '}<RetryButton onRetry={retry} />
+                </span>
+            )}
+            {/* 保留上一份時的整批刷新失敗：標示這份不是剛更新的 */}
+            {data && error && (
+                <AccountQueryFailure what='美股損益' error={`${usAccountErrorText(error)}（顯示上次資料）`} kind={failureKind([error])} onRetry={retry} />
+            )}
+        </section>
+    );
+}
+
+/** 已實現損益表（30 日損益面板與帳務分頁今日區塊共用）：每列可展開沖銷明細 */
+function UsPnlTable({ rows, priv }: { rows: Tagged<IntlProfitLoss>[]; priv: boolean }) {
+    return (
+        <table className={dock.table} aria-label='美股已實現損益明細'>
+            <thead>
+                <tr>
+                    <th className={dock.th} style={{ width: '1.4rem' }} />
+                    <th className={dock.th}>日期</th>
+                    <th className={dock.th}>代碼</th>
+                    <th className={dock.th}>股數</th>
+                    <th className={dock.th}>賣價</th>
+                    <th className={dock.th}>損益</th>
+                    <th className={dock.th}>報酬率</th>
+                </tr>
+            </thead>
+            <tbody>
+                {rows.map(p => <UsPnlRow key={`${acctKey(p.account)}:${p.detail_id}:${p.date}:${p.code}`} row={p} account={p.account} priv={priv} stale={p.stale} />)}
+            </tbody>
+        </table>
     );
 }
 
