@@ -70,6 +70,7 @@ import * as styles from './flash-order.css';
 import { orderStatusWithNumber } from '../lib/order-status-label';
 import { flashOrderTotals, flashTotalsSince, flashWorkingOrders, sameContractMonth } from '../lib/flash-order-totals';
 import { useStockOrderConditionsVersion } from '../lib/stock-order-conditions';
+import { holdEscForDisarm } from '../lib/shortcuts/guards';
 import { FlashTotalsRow } from './flash-totals-bar';
 // 美股分支延遲載入：台股面板（與其測試）不必載入美股下單模組
 const UsFlashOrder = lazy(() => import('./flash-order-us').then(m => ({ default: m.UsFlashOrder })));
@@ -842,11 +843,16 @@ function FlashOrderTw({
     }, [menuShown]);
     useEffect(() => {
         if (!armed) return;
+        // 啟用中 Esc 歸閃電下單：只解除，不算全部刪單的第一下（2026-11-06 決定）
+        const releaseEsc = holdEscForDisarm();
         const onKey = (e: KeyboardEvent) => {
             if (e.key === 'Escape' && !settingsOpenRef.current && !menuOpenRef.current && !e.defaultPrevented) setArmed(false);
         };
         window.addEventListener('keydown', onKey);
-        return () => window.removeEventListener('keydown', onKey);
+        return () => {
+            window.removeEventListener('keydown', onKey);
+            releaseEsc();
+        };
     }, [armed]);
 
     // viewport rows = whatever fits the panel height

@@ -4,9 +4,9 @@ import { canTrade } from '../lib/account-tradable';
 
 import { classifyOrderError, OUTCOME_UNKNOWN_GUIDANCE, reconcileAfterUnknownOutcome, reportOrderError } from '../lib/order-outcome';
 import { Check, ChevronDown, Lock } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ORDER_CONTEXT_CHANGED_MESSAGE, useOrderContext } from '../hooks/use-order-context';
-import { TICKET_ACTION_EVENT } from '../hooks/use-hotkeys';
+import { TicketKeyHint, useIsTicketKeyTarget, useTicketAction } from './shortcuts/ticket-key-hint';
 import { useQuote, useTradingLive } from '../hooks/use-stream';
 import {
     type AllocPreset,
@@ -235,18 +235,16 @@ function TwOrderTicket({
         fixedQty,
     ]);
 
-    // B/S hotkeys switch action
-    useEffect(() => {
-        const onAction = (e: Event) => {
-            const a = (e as CustomEvent).detail?.action;
-            if (a === 'Buy' || a === 'Sell') {
-                setAction(a);
-                setArmed(false);
-            }
-        };
-        window.addEventListener(TICKET_ACTION_EVENT, onAction);
-        return () => window.removeEventListener(TICKET_ACTION_EVENT, onAction);
-    }, []);
+    // B/S 快捷鍵：只有目前選取的這個下單面板切換方向（不送單）
+    const rootRef = useRef<HTMLDivElement>(null);
+    const keyTarget = useIsTicketKeyTarget(rootRef);
+    useTicketAction(
+        rootRef,
+        useCallback((a: 'Buy' | 'Sell') => {
+            setAction(a);
+            setArmed(false);
+        }, []),
+    );
 
     // 融券/借券類條件為賣出限定 — 切回買進時歸位
     useEffect(() => {
@@ -797,7 +795,7 @@ function TwOrderTicket({
     }
 
     return (
-        <div className={styles.body}>
+        <div className={styles.body} ref={rootRef}>
                 {activeAccount && (
                     <div className={styles.chipRow} ref={chipRef}>
                         <button
@@ -875,6 +873,7 @@ function TwOrderTicket({
                         }}
                     >
                         買進 Buy
+                        <TicketKeyHint side='Buy' active={keyTarget} />
                     </button>
                     <button
                         className={
@@ -886,6 +885,7 @@ function TwOrderTicket({
                         }}
                     >
                         賣出 Sell
+                        <TicketKeyHint side='Sell' active={keyTarget} />
                     </button>
                 </div>
 

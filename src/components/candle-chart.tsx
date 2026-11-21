@@ -55,6 +55,9 @@ import {
     useChartDrawings,
     type ChartDrawingsApi,
 } from '../hooks/use-chart-drawings';
+import { chordText } from '../lib/shortcuts/keys';
+import { defById, effectiveKeys } from '../lib/shortcuts/registry';
+import { useShortcutState } from '../lib/shortcuts/store';
 import {
     takeDrawingNotices,
     takeDrawingSaveErrorNotice,
@@ -313,7 +316,10 @@ export function CandleChart({
     // 只取這個布林：別的風控欄位變動時不必重繪整張圖
     const orderLineLock = useSyncExternalStore(subscribeRiskSettings, () => getRiskSettings().orderLineLock);
     // 平台只判斷一次（每筆報價都會重繪）
-    const [orderLockShortcut] = useState(() => (typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform || navigator.userAgent) ? '⌘L' : 'Ctrl+L'));
+    // 鎖定鍵的顯示跟著 設定 → 快捷鍵（未設定時只寫「點擊」）
+    const shortcutState = useShortcutState();
+    const lockKey = effectiveKeys(defById('chart.lockOrders')!, shortcutState.overrides)[0];
+    const orderLockShortcut = lockKey ? chordText(lockKey, shortcutState.platform) : null;
     useEffect(() => {
         const onKey = (e: KeyboardEvent) => {
             if (e.repeat) return;
@@ -2261,8 +2267,8 @@ export function CandleChart({
                     className={styles.orderLockBtn[orderLineLock ? 'locked' : workingOrders.some((t) => canUpdateOrderPrice(t.order)) ? 'live' : 'idle']}
                     onClick={() => setRiskSettings({ orderLineLock: !orderLineLock })}
                     title={orderLineLock
-                        ? `委託線已鎖定（所有圖表）：按住線只會平移圖表，點價時點在線上不下單 — 點擊或按 ${orderLockShortcut} 解鎖`
-                        : `委託線可拖曳改價 — 點擊或按 ${orderLockShortcut} 鎖定，避免誤拖（所有圖表，重開後保留）`}
+                        ? `委託線已鎖定（所有圖表）：按住線只會平移圖表，點價時點在線上不下單 — 點擊${orderLockShortcut ? `或按 ${orderLockShortcut} ` : ''}解鎖`
+                        : `委託線可拖曳改價 — 點擊${orderLockShortcut ? `或按 ${orderLockShortcut} ` : ''}鎖定，避免誤拖（所有圖表，重開後保留）`}
                     aria-label='委託線鎖定'
                     aria-keyshortcuts='Control+L Meta+L'
                     aria-pressed={orderLineLock}

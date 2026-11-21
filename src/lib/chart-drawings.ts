@@ -1638,6 +1638,19 @@ export function showAllDrawings(key: string) {
     );
 }
 
+// 快捷鍵「隱藏／顯示全部畫圖」：有顯示中的就全部隱藏，否則全部顯示。
+// 回傳切換後是否為隱藏（沒有任何物件時回 null）
+export function toggleAllDrawingsHidden(key: string): boolean | null {
+    const list = store[key];
+    if (!list?.length) return null;
+    const hide = list.some((d) => !d.hidden);
+    commit(
+        key,
+        list.map((d) => (d.hidden === hide ? d : { ...d, hidden: hide })),
+    );
+    return hide;
+}
+
 // 一鍵清除目前商品所有畫圖 — 鎖定的物件保留（鎖定的用意就是防誤刪）
 export function clearDrawings(key: string) {
     const list = store[key];

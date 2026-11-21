@@ -66,6 +66,8 @@ import { WarrantPanel } from './components/warrant-panel';
 import { Watchlist } from './components/watchlist';
 import * as grid from './grid.css';
 import { useHotkeys } from './hooks/use-hotkeys';
+import { ShortcutHelpHost } from './components/shortcuts/shortcut-help';
+import { trackPanelFocus } from './lib/shortcuts/guards';
 import { useWatchlist } from './hooks/use-watchlist';
 import { markWorkspaceVisible } from './lib/frontend-ready';
 import { trackActivity } from './lib/activity';
@@ -1015,6 +1017,8 @@ function PopoutView({
     return (
         <div className={styles.shell}>
             <EventToasts />
+            {/* 彈出視窗也能開提示頁；交易鍵只在主視窗 */}
+            <ShortcutHelpHost popoutPanel={type} />
             <OrderConfirmHost />
             <UsRepriceHost />
             <PendingTriggers compact />
@@ -1743,6 +1747,8 @@ function MainApp() {
         onOpenPalette: openPalette,
         onAfterCancelAll: refreshTrading,
     });
+    // B／S 等面板快捷鍵的對象：最後點選／聚焦的 grid 面板
+    useEffect(() => trackPanelFocus(), []);
 
     const jumpToCode = useCallback(
         async (key: string, securityType?: SecurityType) => {
@@ -1810,6 +1816,7 @@ function MainApp() {
                     .map((i) => i.contract.code)}
             />
 <EventToasts />
+            <ShortcutHelpHost />
             <OrderConfirmHost />
             <UsRepriceHost />
             <PendingTriggers />
@@ -1846,6 +1853,7 @@ function MainApp() {
                             <div
                                 key={block.id}
                                 data-block-id={block.id}
+                                data-block-type={block.type}
                                 className={grid.cell}
                             >
                                 <BlockView

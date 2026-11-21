@@ -69,6 +69,7 @@ import type { Account, AccountedPosition } from '../lib/types/portfolio';
 import { isBondEtfCode, stockTaxRate } from '../lib/utils/contract-cost';
 import { fmtCompactInt, fmtPrice } from '../lib/utils/format';
 import { stepPrice } from '../lib/utils/ticksize';
+import { holdEscForDisarm } from '../lib/shortcuts/guards';
 import * as styles from './odd-spread.css';
 
 const DIRECTIONS: SpreadDirection[] = ['buyRoundSellOdd', 'buyOddSellRound'];
@@ -650,9 +651,14 @@ function SpreadExecuteButton({ q, blocked, label, privMoney, contextKey, onExecu
 function ArmEscape({ armed, onDisarm }: { armed: boolean; onDisarm: () => void }) {
     useEffect(() => {
         if (!armed) return;
+        // 啟用中 Esc 只解除整零價差，不算全部刪單的第一下（同閃電下單）
+        const releaseEsc = holdEscForDisarm();
         const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onDisarm(); };
         window.addEventListener('keydown', onKey);
-        return () => window.removeEventListener('keydown', onKey);
+        return () => {
+            window.removeEventListener('keydown', onKey);
+            releaseEsc();
+        };
     }, [armed, onDisarm]);
     return null;
 }
