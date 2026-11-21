@@ -12,6 +12,9 @@ vi.mock('../lib/server-info-store', async orig => ({ ...await orig<object>(), us
 
 import { PnlPanel } from './pnl-panel';
 
+// fetchPnl 的列：帳戶＋市場＋券商原始列，date 已統一成 YYYY-MM-DD
+const fut = (date: string, pnl: number) => ({ account: accounts[0], market: 'F', date, pnl, row: { id: 0, code: 'TXFL6', quantity: 1, pnl, date: date.replace(/-/g, ''), entry_price: 1, cover_price: 1, fee: 0, tax: 0, direction: 'Buy' } });
+
 let view: ReactTestRenderer | undefined;
 const text = () => JSON.stringify(view!.toJSON());
 const retry = () => view!.root.findAll(node => node.type === 'button' && node.children.some(c => typeof c === 'string' && c.includes('重試')));
@@ -33,7 +36,7 @@ it.each(['500 Internal Server Error', '503 Service Unavailable', '500 TKAP01 604
     });
 
 it('已有資料時暫時性錯誤：保留資料、灰字，不顯示原文', async () => {
-    await render({ data: [{ date: '2026-11-01', pnl: 300 }, { date: '2026-11-02', pnl: 200 }], loading: false, error: '500 Internal Server Error' });
+    await render({ data: [fut('2026-11-01', 300), fut('2026-11-02', 200)], loading: false, error: '500 Internal Server Error' });
     expect(text()).toContain('+500');
     expect(text()).toContain('券商暫時查不到資料');
     expect(text()).not.toContain('查詢失敗');
@@ -45,7 +48,7 @@ it('其他錯誤仍是紅字＋原因＋重試；有資料時狀態列照舊', a
     expect(text()).not.toContain('稍後再試');
     expect(retry()).toHaveLength(1);
     await act(async () => view!.unmount()); view = undefined;
-    await render({ data: [{ date: '2026-11-01', pnl: 300 }], loading: false, error: '500 Query error: session disconnected' });
+    await render({ data: [fut('2026-11-01', 300)], loading: false, error: '500 Query error: session disconnected' });
     expect(text()).toContain('查詢失敗，保留上次資料');
 });
 

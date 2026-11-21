@@ -1,10 +1,14 @@
 import { createElement } from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-const fixture = vi.hoisted(() => ({ accounts: ['A', 'B'].map(account_id => ({ account_type: 'F', broker_id: 'BR', account_id, signed: true, person_id: '', username: '' })), pnl: vi.fn(), summary: vi.fn(), settlements: vi.fn(), limits: vi.fn(), reserve: vi.fn(), simulation: false }));
+const fixture = vi.hoisted(() => ({ accounts: ['A', 'B'].map(account_id => ({ account_type: 'F', broker_id: 'BR', account_id, signed: true, person_id: '', username: '' })), pnl: vi.fn(), pnlDetail: vi.fn(), summary: vi.fn(), settlements: vi.fn(), limits: vi.fn(), reserve: vi.fn(), simulation: false }));
 vi.mock('../lib/account-store', () => ({ useAccounts: () => ({ accounts: fixture.accounts }), getAccountState: () => ({ accounts: fixture.accounts }) }));
 vi.mock('../lib/runtime', () => ({ getApiBase: () => 'http://account-pane-fixture.invalid' }));
-vi.mock('../lib/shioaji', () => ({ fetchInfo: async () => ({ simulation: fixture.simulation }), fetchProfitLoss: fixture.pnl, fetchProfitLossSummary: fixture.summary,
+vi.mock('../lib/shioaji', () => ({ fetchInfo: async () => ({ simulation: fixture.simulation }), fetchProfitLoss: fixture.pnl, fetchPositionDetail: vi.fn(),
+    fetchProfitLossDetailOf: async (market: string, account: unknown, day: string, pick: (rows: unknown[]) => { id: number } | undefined) => {
+        const row = pick(await fixture.pnl(market, account, day, day, market === 'S' ? 'Share' : undefined));
+        return row ? { row, detail: await fixture.pnlDetail(market, account, row.id, market === 'S' ? 'Share' : 'Common') } : null;
+    }, fetchProfitLossSummary: fixture.summary,
     fetchSettlements: fixture.settlements, fetchTradingLimits: fixture.limits, fetchStockReserveSummary: fixture.reserve, fetchStockReserveDetail: fixture.reserve, fetchEarmarkingDetail: fixture.reserve, resolveContract: vi.fn(), fetchFuturesRoots: vi.fn(async () => [{ root: 'NSF', name: '美國那斯達克100期貨' }]) }));
 import { AccountPane, type AccountRefreshControls } from './bottom-dock-account';
 import type { AccountFunds } from '../lib/types/portfolio';
@@ -139,11 +143,38 @@ it('#268 遮金額：今日已實現損益展開列的數量也遮', async () =>
         await act(async () => { await Promise.resolve(); });
         const json = JSON.stringify(view!.toJSON());
         expect(json).toContain('TXFJ6');
-        expect(json).not.toMatch(/37口|123,456/);
+        expect(json).not.toMatch(/37 ?口|123,456/);
         expect(json).toContain('•••••');
     } finally {
         setPrivacyMoney(false);
     }
+});
+
+it('今日已實現損益：股票以股數查（零股不截成 0 張），每筆可展開沖銷明細', async () => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+    vi.stubGlobal('localStorage', { getItem: () => null, setItem: vi.fn() });
+    fixture.accounts.forEach(a => { a.account_type = 'S'; a.account_id = `${a.account_id.split('-')[0]}-cls`; });
+    const { resolveContract } = await import('../lib/shioaji');
+    vi.mocked(resolveContract).mockReset().mockImplementation(async (code: string) => ({ code, name: '' }) as never);
+    const sold = { id: 3, code: '2330', quantity: 1500, pnl: 4321, date: '2026-11-20', dseq: 'D1', price: 1010, pr_ratio: 0.01, pnl_pct: 1, cond: 'Cash', seqno: 'S1' };
+    fixture.pnl.mockReset().mockImplementation(async (_m, account) => (account.account_id === 'A-cls' ? [sold] : []));
+    fixture.summary.mockResolvedValue({ total: { pnl: 4321 }, profitloss_sum: [] });
+    fixture.limits.mockResolvedValue({ trading_limit: 0 }); fixture.reserve.mockResolvedValue({ stocks: [] }); fixture.settlements.mockResolvedValue([]);
+    fixture.pnlDetail.mockReset().mockResolvedValue([{ date: '2026-11-03', code: '2330', quantity: 1500, dseq: 'B1', fee: 20, tax: 0, currency: 'TWD', price: 1000, cost: 1500020, rep_margintrading_amt: 0, rep_collateral: 0, rep_margin: 0, shortselling_fee: 0, ex_dividend_amt: 0, interest: 0, trade_type: 'Common', cond: 'Cash' }]);
+    await act(async () => { view = create(createElement(AccountPane, { positions: [], market: 'S', scopeAccount: null })); });
+    expect(fixture.pnl.mock.calls[0]!.slice(2)).toEqual([undefined, undefined, 'Share']);
+    await act(async () => { view!.root.findAll(node => node.type === 'button' && node.props.title === '展開明細')[0]!.props.onClick(); });
+    expect(JSON.stringify(view!.toJSON())).toContain('1張+500股');
+    const row = view!.root.findAll(node => node.props.role === 'button' && node.props.title === '展開沖銷明細')[0]!;
+    await act(async () => { row.props.onClick(); });
+    for (let i = 0; i < 5; i += 1) await act(async () => { await Promise.resolve(); });
+    // 先以該列日期重查 profit_loss（刷新 sidecar 快取），再用找回的 id 查明細
+    expect(fixture.pnl.mock.calls.at(-1)!.slice(2)).toEqual(['2026-11-20', '2026-11-20', 'Share']);
+    expect(fixture.pnlDetail).toHaveBeenCalledWith('S', expect.objectContaining({ account_id: 'A-cls' }), 3, 'Share');
+    const json = JSON.stringify(view!.toJSON());
+    expect(json).toContain('沖銷明細');
+    expect(json).toContain('2026-11-03');
+    expect(json).toContain('1,500,020');
 });
 
 describe('#381 交易額度查詢失敗', () => {

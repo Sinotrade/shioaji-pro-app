@@ -8,7 +8,10 @@ const m = vi.hoisted(() => ({ money: true }));
 const accounts: Account[] = [{ account_type: 'S', broker_id: '9A95', account_id: '9816502', signed: true, person_id: '', username: '' }];
 vi.mock('../lib/account-store', () => ({ useAccounts: () => ({ loaded: true, accounts }) }));
 vi.mock('../hooks/use-query', () => ({
-    useQuery: () => ({ data: [{ date: '2026-10-01', pnl: 1127993 }, { date: '2026-10-02', pnl: -45678 }, { date: '2026-10-03', pnl: 23456 }], loading: false, error: null, refresh: vi.fn() }),
+    useQuery: () => ({ data: [['2026-10-01', 1127993], ['2026-10-02', -45678], ['2026-10-03', 23456]].map(([date, pnl], id) => ({
+        account: accounts[0], market: 'S', date, pnl,
+        row: { id, code: '2330', quantity: 1500, pnl, date, dseq: `D${id}`, price: 1000, pr_ratio: 0.1, pnl_pct: 10, cond: 'Cash', seqno: `S${id}` },
+    })), loading: false, error: null, refresh: vi.fn() }),
 }));
 vi.mock('../lib/privacy', async (orig) => ({ ...(await orig<typeof import('../lib/privacy')>()), usePrivacyMoney: () => m.money }));
 
@@ -23,10 +26,13 @@ it('masks realized P&L amounts when 遮金額 is on', async () => {
         m.money = true;
         await act(async () => { view = create(createElement(PnlPanel)); });
         const masked = text(view);
-        expect(masked).not.toMatch(/1,105,771|1,127,993|575,725|45,678/);
+        expect(masked).not.toMatch(/1,105,771|1,127,993|575,725|45,678|23,456/);
+        // 明細列的數量也隨遮金額隱藏（#268）
+        expect(masked).not.toContain('1張+500股');
         expect(masked).toContain('•••••');
         m.money = false;
         await act(async () => { view.update(createElement(PnlPanel)); });
         expect(text(view)).toContain('1,105,771');
+        expect(text(view)).toContain('1張+500股');
     } finally { await act(async () => view?.unmount()); vi.unstubAllGlobals(); }
 });

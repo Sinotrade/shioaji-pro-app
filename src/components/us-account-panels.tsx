@@ -8,8 +8,7 @@
 // 不跳錯誤。多帳戶批次查詢見 lib/us/us-account-batch.ts：同一批只用一種伺服器
 // 模式；某帳戶失敗時保留它上次的資料並標示，合計只算這次成功的帳戶。
 
-import { ChevronDown, ChevronRight } from 'lucide-react';
-import { Fragment, useCallback, useEffect, useState } from 'react';
+import { Fragment, useCallback, useEffect } from 'react';
 import { useQuery } from '../hooks/use-query';
 import { maskAccountId, maskMoney, usePrivacyMode, usePrivacyMoney } from '../lib/privacy';
 import type { Account } from '../lib/types/portfolio';
@@ -26,7 +25,9 @@ import {
     usHeldAmount,
     type IntlAccountBalance,
     type IntlDividend,
+    type IntlPositionDetail,
     type IntlProfitLoss,
+    type IntlProfitLossDetail,
     type IntlSettlement,
 } from '../lib/us/us-account-api';
 import {
@@ -38,7 +39,9 @@ import {
     someFailed,
     type PerAccount,
 } from '../lib/us/us-account-batch';
+import { TW_POSITION_DETAIL_MISMATCH } from '../lib/tw-account-detail';
 import { dateStrOffset } from '../lib/utils/kbars';
+import { DetailTable, DetailView, ExpandableRow } from './account-detail';
 import { fmtUsPnl, usAmountDir, UsTag } from './bottom-dock-shared';
 import * as dock from './bottom-dock.css';
 import * as panel from './panel.css';
@@ -256,12 +259,13 @@ export function UsRealizedPnlSection({ accounts, days = 30 }: { accounts: Accoun
 }
 
 function UsPnlRow({ row, account, priv, stale }: { row: IntlProfitLoss; account: Account; priv: boolean; stale: boolean }) {
-    const [open, setOpen] = useState(false);
     const dir = usAmountDir(row.pnl);
     return (
-        <>
-            <tr className={dock.clickableRow} onClick={() => setOpen(o => !o)} aria-expanded={open} title='展開沖銷明細'>
-                <td className={dock.td}>{open ? <ChevronDown size={12} aria-hidden /> : <ChevronRight size={12} aria-hidden />}</td>
+        <ExpandableRow
+            title='展開沖銷明細'
+            detailSpan={6}
+            renderDetail={() => <UsPnlDetail account={account} detailId={row.detail_id} priv={priv} />}
+            cells={<>
                 <td className={dock.td}>{row.date}{stale ? STALE_MARK : ''}</td>
                 <td className={dock.td}>{row.code}<UsTag /></td>
                 <td className={dock.td}>{maskMoney(`${fmtDec(row.quantity)} 股`, priv)}</td>
@@ -269,60 +273,47 @@ function UsPnlRow({ row, account, priv, stale }: { row: IntlProfitLoss; account:
                 <td className={`${dock.td} ${panel.dirText[dir]}`}>{signedUsd(row.pnl, priv)}</td>
                 {/* pnl_pct 已是百分比 */}
                 <td className={`${dock.td} ${panel.dirText[dir]}`}>{`${fmtUsPnl(row.pnl_pct)}%`}</td>
-            </tr>
-            {open && (
-                <tr>
-                    <td className={dock.td} />
-                    <td className={dock.td} colSpan={6}><UsPnlDetail account={account} detailId={row.detail_id} priv={priv} /></td>
-                </tr>
-            )}
-        </>
+            </>}
+        />
     );
 }
+
+const usDetailError = (error: string) => <span className={dock.usNote} role='status'>{usAccountErrorText(error)}</span>;
 
 function UsPnlDetail({ account, detailId, priv }: { account: Account; detailId: string; priv: boolean }) {
     const { data, error, loading } = useQuery(
         useCallback(() => fetchUsProfitLossDetail(account, detailId), [acctKey(account), detailId]),
         `us-pnl-detail:${acctKey(account)}:${detailId}`, true,
     );
-    if (!data) return <span className={dock.usNote} role='status'>{error ? usAccountErrorText(error) : loading ? '明細查詢中…' : ' '}</span>;
-    if (data.length === 0) return <span className={dock.usNote}>沒有沖銷明細</span>;
     return (
-        <>
-            <table className={dock.table} aria-label='沖銷明細'>
-                <thead>
-                    <tr>
-                        <th className={dock.th}>買進日</th>
-                        <th className={dock.th}>股數</th>
-                        <th className={dock.th}>買價</th>
-                        <th className={dock.th}>成本</th>
-                        <th className={dock.th}>原委託手續費</th>
-                        <th className={dock.th}>原委託稅</th>
-                        <th className={dock.th}>其他規費</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {data.map((d, i) => (
-                        <tr key={`${d.acquired_date ?? 'x'}:${i}`}>
-                            <td className={dock.td}>{d.acquired_date ?? '—'}</td>
-                            <td className={dock.td}>{maskMoney(`${fmtDec(d.quantity)} 股`, priv)}</td>
-                            <td className={dock.td}>{fmtUsAvgPrice(d.price)}</td>
-                            <td className={dock.td}>{usd(d.cost, priv)}</td>
-                            <td className={dock.td}>{usd(d.fee, priv)}</td>
-                            <td className={dock.td}>{usd(d.tax, priv)}</td>
-                            <td className={dock.td}>{usd(d.other_fees, priv)}</td>
-                        </tr>
-                    ))}
-                </tbody>
-            </table>
-            <span className={dock.usNote}>先進先出（FIFO）沖銷；手續費與稅是整筆原始委託的金額，不按本次股數分攤。</span>
-        </>
+        <DetailView data={data} error={error} loading={loading} loadingText='明細查詢中…' emptyText='沒有沖銷明細' renderError={usDetailError}>
+            {rows => (
+                <>
+                    <DetailTable<IntlProfitLossDetail>
+                        label='沖銷明細'
+                        rows={rows}
+                        rowKey={(d, i) => `${d.acquired_date ?? 'x'}:${i}`}
+                        columns={[
+                            { header: '買進日', cell: d => d.acquired_date ?? '—' },
+                            { header: '股數', cell: d => maskMoney(`${fmtDec(d.quantity)} 股`, priv) },
+                            { header: '買價', cell: d => maskMoney(fmtUsAvgPrice(d.price), priv) },
+                            { header: '成本', cell: d => usd(d.cost, priv) },
+                            { header: '原委託手續費', cell: d => usd(d.fee, priv) },
+                            { header: '原委託稅', cell: d => usd(d.tax, priv) },
+                            { header: '其他規費', cell: d => usd(d.other_fees, priv) },
+                        ]}
+                    />
+                    <span className={dock.usNote}>先進先出（FIFO）沖銷；手續費與稅是整筆原始委託的金額，不按本次股數分攤。</span>
+                </>
+            )}
+        </DetailView>
     );
 }
 
 // ---- 庫存列展開：取得批次 ----
 
-export const US_POSITION_DETAIL_MISMATCH = '庫存已變動，明細與這一列不符；請更新持倉後再展開';
+/** 和台股庫存明細同一句（兩個市場同一種互動） */
+export const US_POSITION_DETAIL_MISMATCH = TW_POSITION_DETAIL_MISMATCH;
 
 export function UsPositionDetail({ account, detailId, code, version }: { account: Account; detailId: number; code: string; version: number }) {
     const priv = usePrivacyMoney();
@@ -335,35 +326,24 @@ export function UsPositionDetail({ account, detailId, code, version }: { account
         }, [acctKey(account), detailId, code]),
         `us-pos-detail:${acctKey(account)}:${code}:v${version}`, true,
     );
-    if (!data) return <span className={dock.usNote} role='status'>{error ? usAccountErrorText(error) : loading ? '庫存明細查詢中…' : ' '}</span>;
-    if (data.length === 0) return <span className={dock.usNote}>沒有庫存明細</span>;
     return (
-        <table className={dock.table} aria-label='美股庫存明細'>
-            <thead>
-                <tr>
-                    <th className={dock.th}>取得日</th>
-                    <th className={dock.th}>方式</th>
-                    <th className={dock.th}>股數（原始）</th>
-                    <th className={dock.th}>成交價</th>
-                    <th className={dock.th}>成本</th>
-                    <th className={dock.th}>損益</th>
-                </tr>
-            </thead>
-            <tbody>
-                {data.map((d, i) => {
-                    const dir = usAmountDir(d.pnl);
-                    return (
-                        <tr key={`${d.acquired_date}:${i}`}>
-                            <td className={dock.td}>{d.acquired_date}</td>
-                            <td className={dock.td}>{d.acquisition_type === 'NonTrade' ? '非交易' : '買進'}</td>
-                            <td className={dock.td}>{maskMoney(`${fmtDec(d.quantity)}（${fmtDec(d.original_quantity)}）股`, priv)}</td>
-                            <td className={dock.td}>{fmtUsAvgPrice(d.price)}</td>
-                            <td className={dock.td}>{usd(d.cost, priv)}</td>
-                            <td className={`${dock.td} ${panel.dirText[dir]}`}>{signedUsd(d.pnl, priv)}</td>
-                        </tr>
-                    );
-                })}
-            </tbody>
-        </table>
+        <DetailView data={data} error={error} loading={loading} loadingText='庫存明細查詢中…' emptyText='沒有庫存明細' renderError={usDetailError}>
+            {rows => (
+                <DetailTable<IntlPositionDetail>
+                    label='美股庫存明細'
+                    rows={rows}
+                    rowKey={(d, i) => `${d.acquired_date}:${i}`}
+                    columns={[
+                        { header: '取得日', cell: d => d.acquired_date },
+                        { header: '方式', cell: d => (d.acquisition_type === 'NonTrade' ? '非交易' : '買進') },
+                        { header: '股數（原始）', cell: d => maskMoney(`${fmtDec(d.quantity)}（${fmtDec(d.original_quantity)}）股`, priv) },
+                        // 成交價即成本價：和持倉表的成本一樣隨遮金額隱藏
+                        { header: '成交價', cell: d => maskMoney(fmtUsAvgPrice(d.price), priv) },
+                        { header: '成本', cell: d => usd(d.cost, priv) },
+                        { header: '損益', cell: d => signedUsd(d.pnl, priv), dir: d => usAmountDir(d.pnl) },
+                    ]}
+                />
+            )}
+        </DetailView>
     );
 }
