@@ -52,9 +52,12 @@ function useDetailError(what: string, retry: () => void) {
         : <AccountQueryFailure what={what} error={error} kind={sim ? null : classifyAccountQueryError(error)} onRetry={retry} />);
 }
 
-function useEmptyText(what: string) {
+/** 明細所屬市場的名稱：證券帳戶「台股」、期貨帳戶「期貨／選擇權」 */
+export const twMarketLabel = (market: TwMarket) => (market === 'F' ? '期貨／選擇權' : '台股');
+
+function useEmptyText(what: string, market: TwMarket) {
     const sim = useServerInfo()?.simulation === true;
-    return sim ? `模擬環境不提供台股${what}（正式環境由券商帳務提供）` : `沒有${what}`;
+    return sim ? `模擬環境不提供${twMarketLabel(market)}${what}（正式環境由券商帳務提供）` : `沒有${what}`;
 }
 
 // ---- 庫存明細 ----
@@ -74,7 +77,7 @@ export function TwPositionDetail({ account, market, row, version }: {
         `tw-pos-detail:${acctKey(account)}:${row.code}:${row.direction}:${row.cond ?? ''}:${row.id}:${row.quantity}:v${version}`, true,
     );
     const renderError = useDetailError('庫存明細', () => void refresh());
-    const emptyText = useEmptyText('庫存明細');
+    const emptyText = useEmptyText('庫存明細', market);
     return (
         <DetailView data={data} error={error} loading={loading} loadingText='庫存明細查詢中…' emptyText={emptyText} renderError={renderError}>
             {rows => market === 'S'
@@ -147,7 +150,7 @@ export function TwPnlDetail({ account, market, row, version }: {
         `tw-pnl-detail:${acctKey(account)}:${market}:${row.code}:${twIsoDate(row.date)}:${pnlRowKey(row)}:${row.pnl}:v${version}`, true,
     );
     const renderError = useDetailError('沖銷明細', () => void refresh());
-    const emptyText = useEmptyText('沖銷明細');
+    const emptyText = useEmptyText('沖銷明細', market);
     return (
         <DetailView data={data} error={error} loading={loading} loadingText='明細查詢中…' emptyText={emptyText} renderError={renderError}>
             {rows => market === 'S'

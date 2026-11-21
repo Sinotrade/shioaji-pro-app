@@ -14,7 +14,7 @@ vi.mock('../lib/tw-account-detail', async () => {
     return { ...real, fetchTwPositionDetail: m.posDetail, fetchTwProfitDetail: m.pnlDetail };
 });
 
-import { TwPositionDetail, TwRealizedTable } from './tw-account-detail';
+import { TwPnlDetail, TwPositionDetail, TwRealizedTable } from './tw-account-detail';
 import { normalizePositionDetail, normalizeProfitDetail, TW_POSITION_DETAIL_MISMATCH } from '../lib/tw-account-detail';
 import type { Account } from '../lib/types/portfolio';
 
@@ -77,6 +77,17 @@ it('simulation explains that TW detail comes from the broker instead of saying t
     await act(async () => { view = create(createElement(TwPositionDetail, { account: S(), market: 'S', row: { id: 0, code: '2330', direction: 'Buy', quantity: 1000 }, version: 1 })); });
     await settle();
     expect(all()).toContain('模擬環境不提供台股庫存明細');
+    await act(async () => view!.unmount());
+    // 期貨列不說「台股」
+    await act(async () => { view = create(createElement(TwPositionDetail, { account: F(), market: 'F', row: { id: 0, code: 'MXFL6', direction: 'Sell', quantity: 2 }, version: 1 })); });
+    await settle();
+    expect(all()).toContain('模擬環境不提供期貨／選擇權庫存明細');
+    expect(all()).not.toContain('台股');
+    await act(async () => view!.unmount());
+    m.pnlDetail.mockResolvedValue([]);
+    await act(async () => { view = create(createElement(TwPnlDetail, { account: F(), market: 'F', row: futRow, version: 1 })); });
+    await settle();
+    expect(all()).toContain('模擬環境不提供期貨／選擇權沖銷明細');
     m.sim = false;
 });
 

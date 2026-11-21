@@ -387,9 +387,10 @@ export function PositionsPane({
             >
                 <td className={styles.td} />
                 <td className={styles.td}>
-                    {Number.isInteger(detailId) && <DetailToggle open={open} what='庫存明細' onToggle={() => toggleDetail(rowKey)} />}
-                    {p.code}
-                    <UsTag />
+                    <span className={styles.codeWithToggle}>
+                        {Number.isInteger(detailId) && <DetailToggle open={open} what='庫存明細' onToggle={() => toggleDetail(rowKey)} />}
+                        <span className={styles.codeWithToggleCode}>{p.code}<UsTag /></span>
+                    </span>
                 </td>
                 {sz === 'wide' && <td className={styles.td} />}
                 <td className={`${styles.td} ${panel.dirText[p.direction === 'Buy' ? 'up' : 'down']}`}>
@@ -537,8 +538,10 @@ export function PositionsPane({
                                 {selectionCell(p)}
                             </td>
                             <td className={styles.td}>
-                                {detail && <DetailToggle open={open} what='庫存明細' onToggle={() => toggleDetail(rowKey)} />}
-                                {p.code}
+                                <span className={styles.codeWithToggle}>
+                                    {detail && <DetailToggle open={open} what='庫存明細' onToggle={() => toggleDetail(rowKey)} />}
+                                    <span className={styles.codeWithToggleCode}>{p.code}</span>
+                                </span>
                             </td>
                             {sz === 'wide' && (
                                 <td className={styles.td}>

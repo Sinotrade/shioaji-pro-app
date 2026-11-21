@@ -101,6 +101,20 @@ export const td = style({
     },
 });
 
+// 持倉代碼欄：展開鈕固定在儲存格最左（每列、台股美股都對齊，同 30 日損益表的箭頭欄），
+// 代碼照舊靠右；兩者至少隔 6px
+export const codeWithToggle = style({
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
+    width: '100%',
+    whiteSpace: 'nowrap',
+});
+
+export const codeWithToggleCode = style({
+    marginLeft: 'auto',
+});
+
 // quantity cells render mixed-unit stock amounts ("5張+10股") — CJK glyphs
 // are line-break opportunities, so pin the whole quantity to one line
 export const qtyCell = style({
