@@ -255,6 +255,31 @@ export interface SseTick {
     underlying_price?: string;
     intraday_odd?: boolean;
     simtrade?: boolean;
+    /**
+     * 美股（US:CODE）才有：一般盤與延長時段的狀態。close 仍是這一筆的成交價
+     * （含零股、盤前盤後，圖表與成交明細用），報價顯示改看這裡。
+     */
+    us?: UsTickSessionFields;
+}
+
+/** 美股 tick 的時段欄位（SDK UsTick；decimal 字串，沒有值是 ''） */
+export interface UsTickSessionFields {
+    session: 'Unknown' | 'PreMarket' | 'Regular' | 'AfterHours' | 'Overnight';
+    /** 交易日（D＝[D−1 20:00, D 20:00) ET；夜盤 20:00 後的成交屬下一個交易日） */
+    tradeDate?: string;
+    /** 這筆的時間，epoch ms（和快照 ts 比新舊） */
+    ts?: number;
+    /** 一般盤最新價（SDK close：只有 updates_last 的成交會更新，零股、盤前盤後不動） */
+    regular: string;
+    /** SDK 的一般盤漲跌與幅度（基準是 reference） */
+    regularChg: string;
+    regularPct: string;
+    /** 目前盤前或盤後時段的最新、最高、最低（只算整股），一般盤時是 '' */
+    extClose: string;
+    extHigh: string;
+    extLow: string;
+    /** 這筆有沒有更新一般盤 close（收盤競價的 session 可能是盤後，但算一般盤） */
+    updatesLast?: boolean;
 }
 
 // SSE bidask events (bidask_stk / bidask_fop)

@@ -23,7 +23,7 @@ import { knownServerInfo } from '../server-info-store';
 import type { ContractBase } from '../types/contract';
 import type { Candle } from '../types/market';
 import { wallClockToUtc } from '../utils/kbars';
-import { nyDateTime, nyWallClockSec, type UsTradingSession } from './us-quotes';
+import { nyDateTime, nyWallClockSec, usSessionOf, type UsTradingSession } from './us-quotes';
 
 // ---- availability ----
 
@@ -226,12 +226,7 @@ export interface UsHistoryTick {
     oddLot: boolean;
 }
 
-const SESSIONS: readonly UsTradingSession[] = ['Unknown', 'PreMarket', 'Regular', 'AfterHours'];
-function sessionOf(v: unknown): UsTradingSession | null {
-    if (typeof v === 'number') return SESSIONS[v] ?? 'Unknown';
-    if (typeof v === 'string') return (SESSIONS as readonly string[]).includes(v) ? v as UsTradingSession : 'Unknown';
-    return null;
-}
+const sessionOf = usSessionOf;
 
 /** 時間欄位 → epoch µs（ns 數字取整到 µs；字串取小數秒前 6 位） */
 // ns 的 JSON 數字（約 1.8e18）超過 2^53，JSON.parse 時已經四捨五入到 256 ns
@@ -324,11 +319,17 @@ export interface UsSnapshot {
     session: UsTradingSession | null;
     /** 最新成交（含盤前／盤後）；close 是一般盤價 */
     lastPrice: number | null;
+    /** 目前（或最後一段）盤前／盤後的最新、最高、最低；一般盤時 0／null → null */
+    extClose?: number | null;
+    extHigh?: number | null;
+    extLow?: number | null;
     /** 前一交易日成交量（量比用；舊 sidecar 沒帶時 undefined） */
     yesterdayVolume?: number;
 }
 
 const optNum = (v: unknown) => (v === null || v === undefined ? null : Number.isFinite(num(v)) ? num(v) : null);
+/** 正數才算有值（快照一般盤時 ext_* 送 0.0） */
+const optPos = (v: unknown) => { const n = optNum(v); return n !== null && n > 0 ? n : null; };
 
 /** 一列 snapshot → UsSnapshot；不是美股列（region 缺＝台股）回 null */
 export function parseUsSnapshotRow(row: unknown): UsSnapshot | null {
@@ -357,14 +358,11 @@ export function parseUsSnapshotRow(row: unknown): UsSnapshot | null {
         sellVolume: optNum(r.sell_volume),
         session: sessionOf(r.session),
         lastPrice: optNum(r.last_price),
+        extClose: optPos(r.ext_close),
+        extHigh: optPos(r.ext_high),
+        extLow: optPos(r.ext_low),
         ...(optNum(r.yesterday_volume) !== null ? { yesterdayVolume: optNum(r.yesterday_volume)! } : {}),
     };
-}
-
-/** 快照 → 自選列的價格／漲跌（與 usLive 同形狀；只在沒有即時成交時用） */
-export function usSnapshotQuote(s: UsSnapshot): { last: string; close: number; chg: number; pct: number } | null {
-    if (!(s.close > 0)) return null;
-    return { last: String(s.close), close: s.close, chg: s.changePrice, pct: s.changeRate };
 }
 
 /** 美股 snapshots（依輸入順序；某列不是美股形狀則該位置為 null） */
@@ -388,10 +386,11 @@ export function fetchUsSnapshots(contracts: Pick<ContractBase, 'code' | 'exchang
 const SNAPSHOT_TTL_MS = 15_000;
 const snapshotCache = new Map<string, { at: number; promise: Promise<UsSnapshot | null> }>();
 
-export function fetchUsSnapshotShared(contract: Pick<ContractBase, 'code' | 'exchange'>, nowMs = Date.now()): Promise<UsSnapshot | null> {
+export function fetchUsSnapshotShared(contract: Pick<ContractBase, 'code' | 'exchange'>, nowMs = Date.now(), opts?: { force?: boolean }): Promise<UsSnapshot | null> {
     const key = `${baseKey(getApiBase())}|${contract.exchange}|${contract.code.trim().toUpperCase()}`;
     const hit = snapshotCache.get(key);
-    if (hit && nowMs - hit.at < SNAPSHOT_TTL_MS) return hit.promise;
+    // force（美東時段界線後重抓）：不用快取，但抓到的結果照樣給其他面板共用
+    if (hit && !opts?.force && nowMs - hit.at < SNAPSHOT_TTL_MS) return hit.promise;
     const promise = fetchUsSnapshots([contract]).then(rows => rows[0] ?? null);
     snapshotCache.set(key, { at: nowMs, promise });
     promise.catch(() => { if (snapshotCache.get(key)?.promise === promise) snapshotCache.delete(key); });

@@ -87,6 +87,39 @@ export const usReference = style({
     fontSize: '0.74rem',
 });
 
+// 美股盤前／盤後副行：第三列跨全寬、靠右。美股列一律保留這一列（沒有延長時段
+// 價時是空白），盤前盤後出現、清掉時列高不變；台股列沒有這一列
+export const usExt = style({
+    gridColumn: '1 / -1',
+    gridRow: 3,
+    display: 'flex',
+    justifyContent: 'flex-end',
+    alignItems: 'baseline',
+    gap: 5,
+    height: 14,
+    lineHeight: '14px',
+    overflow: 'hidden',
+    whiteSpace: 'nowrap',
+    fontFamily: vars.font.mono,
+    fontSize: '0.62rem',
+    fontVariantNumeric: 'tabular-nums',
+    opacity: 0.85,
+});
+
+// 主行是前一日收盤、當天漲跌沒有意義：漲跌格改標「昨收」
+export const usPrevClose = style({ color: vars.color.mutedForeground });
+
+// 盤後已結束（20:00–04:00 ET、週末）：保留最後的盤後價、整行轉灰
+export const usExtClosed = style({
+    color: vars.color.mutedForeground,
+    opacity: 0.7,
+});
+
+// 時段圖示（日出／日落／月亮）：淡色，不跟漲跌顏色
+export const usExtIcon = style({ color: vars.color.mutedForeground, alignSelf: 'center' });
+
+export const usExtPrice = style({ fontWeight: 600 });
+
 // 右側數字區（價格＋漲跌兩行）— 最後一欄、跨兩列；代碼／名稱固定第一欄
 export const numCell = style({
     gridColumn: '-2 / -1',

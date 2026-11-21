@@ -2,12 +2,14 @@
 
 import { Fragment, useCallback, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { Settings2 } from 'lucide-react';
-import { pickUsReference, usLiveChange, useUsSnapshot } from '../hooks/use-us-snapshot';
-import type { UsSnapshot } from '../lib/us/us-history';
+import { pickUsReference, usSessionViewFor, useUsSnapshot } from '../hooks/use-us-snapshot';
+import { useUsMarketClock } from '../hooks/use-us-market-clock';
 import { contractLinkKey } from '../lib/contract-key';
 import { usPriceDecimals } from '../lib/us/decimal';
 import { usHaltLabel, useUsHalt } from '../lib/us/us-halts';
-import { getUsTickMeta, US_SESSION_LABEL } from '../lib/us/us-quotes';
+import { getUsTickMeta } from '../lib/us/us-quotes';
+import { usExtTitle as usExtTitleOf, usTickTradeDate } from '../lib/us/us-session-view';
+import { UsSessionIcon } from './us-session-icon';
 import { useBoardTier } from '../hooks/use-board-tier';
 import { useSnapshotBaseline } from '../hooks/use-display-book';
 import { useQuote } from '../hooks/use-stream';
@@ -145,17 +147,11 @@ const wallDate = (t: number) => new Date(t * 1000).toISOString().slice(0, 10);
 
 // 美股（region US）走同一個報價板：行情 key 是 US:CODE、快照由
 // useSnapshotBaseline 轉接美股快照；漲跌基準是美股參考價（快照 reference →
-// 適用的合約檔參考價，見 pickUsReference），不從成交回推。盤前／盤後只更新
-// 現價（成交價），開高低維持一般盤值。沒有漲跌停、試撮、產業分類，那幾格
-// 自然隱藏；時段（盤前／盤後）與停牌放在狀態徽章，版面與台股同一套階梯，
-// 欄位不會隨數值寬度換行跳動。
-/** 快照的延長時段成交相對參考價的漲跌；沒有參考價時用快照自己的基準（一般盤收盤 − 漲跌） */
-function usExtSnapChange(snap: UsSnapshot, ref: string | number | null | undefined): number | undefined {
-    const last = snap.lastPrice;
-    if (last === null || !(last > 0)) return undefined;
-    const base = Number(ref) > 0 ? Number(ref) : snap.close > 0 ? snap.close - snap.changePrice : NaN;
-    return Number.isFinite(base) && base > 0 ? last - base : undefined;
-}
+// 適用的合約檔參考價，見 pickUsReference），不從成交回推。大字是一般盤價
+// （和自選清單同一個 usSessionViewFor；盤前是前一日收盤），盤前／盤後價放在
+// 漲跌旁的副區塊（美股一律保留位置，出現、清掉時看板不跳）。開高低是一般盤值。
+// 沒有漲跌停、試撮、產業分類，那幾格自然隱藏；停牌放在狀態徽章，版面與台股
+// 同一套階梯，欄位不會隨數值寬度換行跳動。
 
 export function QuoteBoard({
     contract,
@@ -207,18 +203,17 @@ export function QuoteBoard({
     const snapOnly = isIndex ? !index && !!snapshot : !tick && !!snapshot;
     // 指數與個股看板都依面板大小自動降級（標題列加看板不超過面板高度 1/5）
 
-    // 美股沒有即時成交、快照停在延長時段（盤前／盤後）：大字是延長時段的最新成交、旁邊掛時段徽章
-    //（和即時成交同一套）；快照的 close 是一般盤收盤，放進價格提示。沒有延長時段成交就照顯示一般盤收盤、不掛徽章
-    const usExtSnap =
-        isUs && !tick && usSnap?.session && usSnap.session !== 'Regular' && US_SESSION_LABEL[usSnap.session]
-        && usSnap.lastPrice !== null && usSnap.lastPrice > 0
-            ? usSnap
-            : null;
-    const close = tick
+    // 美股：大字是一般盤價（盤前是前一日收盤），盤前／盤後價在副區塊（自選清單同一套）
+    const usClock = useUsMarketClock();
+    const usView = isUs ? usSessionViewFor(contract, tick, usSnap, usClock) : null;
+    const usExt = usView?.ext ?? null;
+    const close = isUs
+        ? usView?.main?.price
+        : tick
         ? Number(tick.close)
         : index
           ? Number(index.close)
-          : usExtSnap ? usExtSnap.lastPrice! : isUs && !(Number(snapshot?.close) > 0) ? undefined : snapshot?.close;
+          : snapshot?.close;
     // 參考價跟著報價自己推（現價減漲跌）：盤前開 App 或 App 跨夜開著時，合約已換成新交易日的參考價與漲跌停，
     // 快照或即時成交卻還是前一天的，拿新的參考價算漲跌幅、畫區間軌會對不上
     const derivedRef = tick
@@ -232,14 +227,9 @@ export function QuoteBoard({
     // 漲跌停跟著合約走：報價推出的參考價和合約差超過半個跳動時，兩者不是同一個交易日，不判停板、不畫區間軌
     const sameDay = isUs || quoteRef === undefined
         || Math.abs(quoteRef - contract.reference) < tickSizeFor(contract, contract.reference) / 2;
-    const usChg = isUs && tick ? usLiveChange(tick, usRef).priceChg : undefined;
     const chg = isUs
         // 沒有成交價（剛上市還沒成交）就沒有漲跌
-        ? tick
-            ? (usChg !== undefined ? Number(usChg) : undefined)
-            : usExtSnap
-              ? usExtSnapChange(usExtSnap, usRef)
-              : close !== undefined ? snapshot?.change_price : undefined
+        ? usView?.main?.chg
         : tick?.price_chg
         ? Number(tick.price_chg)
         : index
@@ -247,24 +237,29 @@ export function QuoteBoard({
         : snapshot?.change_price;
     // NEVER use tick.pct_chg — its unit differs between stk (％×100) and
     // fop (％) streams; derive from the price change and reference instead
-    // 美股沒有參考價時，用同一組的現價減漲跌當基準（延長時段快照的漲跌是延長價減基準，不能沿用一般盤的 change_rate）
-    const usBase = isUs && !ref && chg !== undefined && close !== undefined && close - chg > 0 ? close - chg : undefined;
-    const pct =
-        chg !== undefined && ref
+    // 美股的幅度由 usSessionViewFor 算好（對參考價；盤前快照是前一日的幅度）
+    const pct = isUs
+        ? usView?.main?.pct
+        : chg !== undefined && ref
             ? (chg / ref) * 100
-            : usBase !== undefined
-              ? (chg! / usBase) * 100
-              : isUs && chg === undefined ? undefined : snapshot?.change_rate;
+            : snapshot?.change_rate;
     // 盤前試撮還沒有成交，即時成交的開高低是 0：當成沒有值，畫面顯示空值符號而不是 0.00。
     // 只限試撮：組合商品（價差）真成交的 0 是合法價格
     const tickOhl = (v: string) => (tick?.simtrade && Number(v) === 0 ? undefined : Number(v));
     // 美股：一般盤還沒開（盤前）時 SDK 送空值 — 用同一個美東交易日的快照一般盤值，
     // 都沒有就空著（隔天盤前不可顯示前一天的開高低）
-    const usSameDaySnap = isUs && usSnap && tick && usSnap.tradeDate && usSnap.tradeDate === tick.date ? usSnap : null;
+    // 比交易日（夜盤 20:00 後的 tick 屬下一個交易日，不可拿前一天快照的開高低補）
+    const usSameDaySnap = isUs && usSnap && tick && usSnap.tradeDate && usSnap.tradeDate === usTickTradeDate(tick) ? usSnap : null;
     const usOhl = (live: string | undefined, snap: number | undefined) =>
         Number(live) > 0 ? Number(live) : snap !== undefined && snap > 0 ? snap : undefined;
+    // 快照比 tick 新（時段界線重抓到新交易日的快照、或斷線後的舊 tick）：開高低跟主行一樣取快照
+    const usTickDate = isUs && tick ? usTickTradeDate(tick) : '';
+    const usSnapNewer = !!(isUs && tick && usSnap?.tradeDate && (usSnap.tradeDate > usTickDate
+        || (usSnap.tradeDate === usTickDate && usSnap.ts && tick.us?.ts && usSnap.ts > tick.us.ts)));
     const dayOhl = isUs
-        ? tick
+        ? usSnapNewer
+            ? { open: usOhl(undefined, usSnap!.open), high: usOhl(undefined, usSnap!.high), low: usOhl(undefined, usSnap!.low) }
+            : tick
             ? { open: usOhl(tick.open, usSameDaySnap?.open), high: usOhl(tick.high, usSameDaySnap?.high), low: usOhl(tick.low, usSameDaySnap?.low) }
             : { open: usOhl(undefined, snapshot?.open), high: usOhl(undefined, snapshot?.high), low: usOhl(undefined, snapshot?.low) }
         : {
@@ -499,13 +494,13 @@ export function QuoteBoard({
             : undefined;
     const sector = sectorName === '其他' ? undefined : sectorName;
     const sim = tick?.simtrade === true;
-    // 美股狀態徽章：停牌優先，其次延長時段（盤前／盤後）；放在試撮／快照同一個位置
+    // 美股狀態徽章：停牌、暫停交易（盤前／盤後改放在副區塊）；放在試撮／快照同一個位置
     const usMeta = isUs && tick ? getUsTickMeta(quoteKey) : undefined;
-    const usSession = usMeta && usMeta.session !== 'Regular' ? US_SESSION_LABEL[usMeta.session] || undefined
-        : usExtSnap ? US_SESSION_LABEL[usExtSnap.session!] || undefined : undefined;
-    // 行情不是即時（延遲／過時）：另一個徽章，和時段、停牌並列
+    // 行情不是即時（延遲／過時）：另一個徽章，和停牌並列
     const usFreshness = usMeta?.freshness === 'Delayed' ? '延遲' : usMeta?.freshness === 'Stale' ? '過時' : undefined;
-    const usStatus = isUs ? (usHalt ? usHaltLabel(usHalt) : contract.trading_suspended ? '暫停交易' : usSession) : undefined;
+    const usStatus = isUs ? (usHalt ? usHaltLabel(usHalt) : contract.trading_suspended ? '暫停交易' : undefined) : undefined;
+    const usExtDir = usExt?.chg === undefined || usExt.chg === 0 ? 'flat' : usExt.chg > 0 ? 'up' : 'down';
+    const usExtTitle = usExt ? usExtTitleOf(usExt, boardPrice) : undefined;
     // 指數與個股各自記收合偏好
     const { tier, toggle } = useBoardTier(
         boardRef,
@@ -516,8 +511,8 @@ export function QuoteBoard({
     // 參考價、更新時間收進漲跌與現價的滑過提示
     const timeText = (isIndex ? index?.time : tick?.time)?.slice(0, 8);
     const priceTitle = [
-        usStatus && usSession && usStatus === usSession ? `${usSession}成交價；開高低為一般盤` : undefined,
-        usExtSnap && usExtSnap.close > 0 ? `一般盤收盤 ${boardPrice(usExtSnap.close)}` : undefined,
+        usView?.main?.prevClose ? '前一交易日一般盤收盤' : undefined,
+        usExt ? `一般盤價；${usExt.label} ${boardPrice(usExt.price)} ${fmtSigned(usExt.chg, changeDigits)} ${fmtPct(usExt.pct)}` : undefined,
         usFreshness ? `行情${usFreshness}` : undefined,
         isUs && timeText ? '時間為美東時間' : undefined,
         sim ? '試撮揭示價，非成交價' : snapOnly ? `快照 ${snapshot?.datetime?.replace('T', ' ').slice(0, 19) ?? '時間未提供'}，尚未收到即時${isIndex ? '報價' : '成交'}` : undefined,
@@ -799,10 +794,40 @@ export function QuoteBoard({
                 }
                 title={ref ? `參考 ${boardPrice(ref)}` : undefined}
             >
-                <span>{fmtSigned(chg, changeDigits)}</span>
-                <span className={ref ? styles.tipLabel : undefined}>{fmtPct(pct)}</span>
+                {usView?.main?.prevClose ? (
+                    // 美股大字是前一日收盤、當天漲跌沒有意義：標「昨收」，第二行佔位不顯示（看板不跳）
+                    <>
+                        <span className={styles.usPrevClose} data-testid='us-board-prev-close'>昨收</span>
+                        <span className={styles.usExtEmpty} aria-hidden='true'>{fmtPct(0)}</span>
+                    </>
+                ) : (
+                    <>
+                        <span>{fmtSigned(chg, changeDigits)}</span>
+                        <span className={ref ? styles.tipLabel : undefined}>{fmtPct(pct)}</span>
+                    </>
+                )}
                 <span className={styles.srOnly} data-board-details>{details}</span>
             </div>
+
+            {/* 美股盤前／盤後：一律保留這一塊（沒有延長時段價時用主行的字當佔位、不顯示），
+                出現或清掉時寬度與量測簽章不變，看板不跳；窄階梯收起，改看價格提示 */}
+            {isUs && (
+                <div
+                    className={`${styles.usExtBlock} ${usExt ? (usExt.closed ? styles.usExtClosed : panel.dirText[usExtDir]) : styles.usExtEmpty}${usExtTitle ? ` ${styles.tipCell}` : ''}`}
+                    title={usExtTitle}
+                    aria-hidden={usExt ? undefined : true}
+                    data-testid='us-board-ext'
+                    data-us-ext={usExt ? (usExt.closed ? 'closed' : usExt.session) : 'none'}
+                >
+                    <span>
+                        <UsSessionIcon session={usExt?.session} placeholder={!usExt} size={12} title={usExtTitle} className={styles.usExtIcon} />
+                        {boardPrice(usExt ? usExt.price : close)}
+                    </span>
+                    <span>
+                        {usExt ? `${fmtSigned(usExt.chg, changeDigits)} ${fmtPct(usExt.pct)}` : `${fmtSigned(chg, changeDigits)} ${fmtPct(pct)}`}
+                    </span>
+                </div>
+            )}
 
             {isIndex ? (
                 <>

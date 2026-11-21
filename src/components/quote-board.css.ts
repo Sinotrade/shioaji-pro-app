@@ -580,3 +580,29 @@ export const limitWide = style({});
 globalStyle(sTiers(STOCK_NARROW, statusKeep), { display: 'inline' });
 globalStyle(sTiers(STOCK_NARROW, limitWide), { display: 'none' });
 globalStyle(tiers(['inline', 'lean', 'compact', 'strip'], statusBadge), { display: 'none' });
+
+// 美股盤前／盤後副區塊：漲跌旁兩行小字（時段＋延長時段價／漲跌與幅度），同一套漲跌顏色。
+// 美股一律保留（沒有延長時段價時佔位不顯示），出現或清掉時看板不跳；單行的窄階梯收起
+export const usExtBlock = style({
+    display: 'flex',
+    flexDirection: 'column',
+    flexShrink: 0,
+    fontFamily: vars.font.mono,
+    fontSize: '0.7rem',
+    lineHeight: 1.25,
+    fontVariantNumeric: 'tabular-nums',
+    whiteSpace: 'nowrap',
+    opacity: 0.85,
+    // 固定寬度（圖示＋價格、漲跌＋幅度都放得下，例如 +1,000.00 +10.00%）：有值、沒值、
+    // 換時段時寬度都一樣，看板不跳；極端長的數字截掉，完整值在提示
+    width: '18ch',
+    overflow: 'hidden',
+});
+export const usExtEmpty = style({ visibility: 'hidden' });
+// 大字是前一日收盤：漲跌格改標「昨收」
+export const usPrevClose = style({ fontFamily: vars.font.body, color: vars.color.mutedForeground });
+// 盤後已結束（20:00–04:00 ET、週末）：保留最後的盤後價，轉灰
+export const usExtClosed = style({ color: vars.color.mutedForeground, opacity: 0.7 });
+// 時段圖示（日出／日落／月亮）：淡色，不跟漲跌顏色；和價格間留一點距離
+export const usExtIcon = style({ color: vars.color.mutedForeground, marginRight: 4 });
+globalStyle(sTiers(STOCK_NARROW, usExtBlock), { display: 'none' });
