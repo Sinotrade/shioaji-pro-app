@@ -2,7 +2,7 @@
 // 點價＝H 帳戶整股 LMT DAY（不帶台股欄位）；Kill Switch 擋單；點自己的委託＝刪單。
 import { createElement } from 'react';
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer';
-import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import type { Account } from '../lib/types/portfolio';
 import type { ContractInfo } from '../lib/types/contract';
 import type { AccountedUsTrade } from '../lib/types/us';
@@ -58,10 +58,12 @@ const text = (n: ReactTestInstance): string => n.children.map(c => (typeof c ===
 let view!: ReactTestRenderer;
 const render = async (contract: ContractInfo = aapl, props: Record<string, unknown> = {}) => {
     await act(async () => { view = create(createElement(FlashOrder, { contract, ...props } as never)); });
-    // 美股分支是 lazy 載入：等它換掉 Suspense fallback
-    for (let i = 0; i < 20 && !view.root.findAll(n => n.props['data-testid'] === 'flash-us').length; i++) {
-        await act(async () => { await new Promise(r => setTimeout(r, 5)); });
-    }
+    // 美股分支是 lazy 載入：等它換掉 Suspense fallback。模組已在 beforeAll 預載，
+    // 這裡只等 React 解開 lazy；給足時間讓慢的 CI runner 也不會在半途放棄。
+    await vi.waitFor(async () => {
+        await act(async () => { await new Promise(r => setTimeout(r, 0)); });
+        if (!view.root.findAll(n => n.props['data-testid'] === 'flash-us').length) throw new Error('美股閃電 lazy 分支尚未載入');
+    }, { timeout: 5000, interval: 10 });
 };
 const rowPrices = () => view.root.findAll(n => typeof n.type === 'string' && n.props['data-price'] !== undefined).map(n => n.props['data-price'] as string);
 const row = (price: string) => view.root.find(n => typeof n.type === 'string' && n.props['data-price'] === price);
@@ -76,8 +78,12 @@ const working = (id: string, action: 'Buy' | 'Sell', price: string, qty = '5', a
     status: { id, status: 'Submitted', status_code: '', order_quantity: qty, deal_quantity: '0', cancel_quantity: '0', msg: '', deals: [] },
 }) as AccountedUsTrade;
 
+// 預載 lazy 模組，避免第一個測試承擔冷啟動的 import 時間
+beforeAll(async () => { await import('./flash-order-us'); });
+
 beforeEach(() => {
     vi.clearAllMocks();
+    mocks.snap = null;
     mocks.quote = undefined;
     mocks.live = true;
     mocks.locked = null;
@@ -89,14 +95,19 @@ beforeEach(() => {
     vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn() });
     vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} });
 });
-afterEach(async () => { await act(async () => view?.unmount()); vi.unstubAllGlobals(); });
+afterEach(async () => {
+    // 前一個測試失敗也要清乾淨，避免殘留的畫面或 stub 連帶弄壞下一個測試
+    try { if (view) await act(async () => view.unmount()); } finally {
+        view = undefined as unknown as ReactTestRenderer;
+        vi.unstubAllGlobals();
+    }
+});
 
 it('uses the snapshot reference over a stale contract reference, like the quote board', async () => {
     mocks.snap = { reference: 188, tradeDate: '2026-11-19' };
     await render();
     expect(middle()).toBe('188');
     expect(text(view.root.find(n => n.props['data-testid'] === 'flash-us-ref'))).toBe('參考 188.00・尚無即時報價');
-    mocks.snap = null;
 });
 
 it('before the first quote the ladder centers on the reference price and says so', async () => {
