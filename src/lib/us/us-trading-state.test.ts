@@ -302,6 +302,28 @@ describe('positions refresh after US deals', () => {
         expect(seen).toEqual([]);
     });
 
+    it('still tells the today-P&L panel on both delays after a server mode change; the old schedule does not re-read positions', async () => {
+        const seen: number[] = [];
+        const off = onUsDealSettled(() => seen.push(Date.now()));
+        const t0 = Date.now();
+        m.onEvent!(normalizeOrderEvent(fx.deal));
+        await vi.advanceTimersByTimeAsync(500);
+        const info = await import('../server-info-store');
+        const before = info.getServerModeVersion();
+        // 模式版本前進（/info 失敗後恢復、sidecar 換模式）
+        info.observeServerInfo(info.beginServerInfoRequest(), { simulation: info.knownServerInfo()?.simulation !== true } as never);
+        expect(info.getServerModeVersion()).not.toBe(before);
+        await vi.advanceTimersByTimeAsync(400); // 模式切換自己 300 ms 後的重查
+        await flush();
+        const byModeSwitch = m.positions.mock.calls.length;
+        expect(byModeSwitch).toBe(1);
+        await vi.advanceTimersByTimeAsync(10_000);
+        off();
+        expect(seen.map(t => t - t0)).toEqual([1500, 5000]);
+        // 舊環境排的庫存重查不跑
+        expect(m.positions).toHaveBeenCalledTimes(byModeSwitch);
+    });
+
     it('does not re-read positions for order reports (new／cancel／reduce)', async () => {
         m.onEvent!(normalizeOrderEvent(fx.orderUpdateQty));
         await vi.advanceTimersByTimeAsync(10_000);
