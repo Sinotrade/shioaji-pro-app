@@ -308,10 +308,12 @@ const SETTINGS_KEY = 'sj-pro-chart-drawing-settings';
 const FUT_CODE = /^([A-Z]{2,4})(?:R[12]|[A-X]\d)$/;
 
 export function drawingSymbolKey(
-    contract: Pick<ContractBase, 'code' | 'security_type'>,
+    contract: Pick<ContractBase, 'code' | 'security_type'> & Pick<Partial<ContractBase>, 'region'>,
     share: boolean,
 ): string {
     const code = contract.code.toUpperCase();
+    // 美股與台股代碼分開存（連動 key 同樣加 US: 前綴）
+    if (contract.region === 'US') return `US:${code}`;
     if (!share || contract.security_type !== 'FUT') return code;
     const m = FUT_CODE.exec(code);
     return m ? m[1]! : code;

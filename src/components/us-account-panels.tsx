@@ -13,7 +13,7 @@ import { Fragment, useCallback, useEffect, useState } from 'react';
 import { useQuery } from '../hooks/use-query';
 import { maskAccountId, maskMoney, usePrivacyMode, usePrivacyMoney } from '../lib/privacy';
 import type { Account } from '../lib/types/portfolio';
-import { decAdd, decRound, fmtDec, fmtUsPrice } from '../lib/us/decimal';
+import { decAdd, decRound, fmtDec, fmtUsAvgPrice } from '../lib/us/decimal';
 import {
     fetchUsBalance,
     fetchUsDividends,
@@ -265,7 +265,7 @@ function UsPnlRow({ row, account, priv, stale }: { row: IntlProfitLoss; account:
                 <td className={dock.td}>{row.date}{stale ? STALE_MARK : ''}</td>
                 <td className={dock.td}>{row.code}<UsTag /></td>
                 <td className={dock.td}>{maskMoney(`${fmtDec(row.quantity)} 股`, priv)}</td>
-                <td className={dock.td}>{fmtUsPrice(row.price)}</td>
+                <td className={dock.td}>{fmtUsAvgPrice(row.price)}</td>
                 <td className={`${dock.td} ${panel.dirText[dir]}`}>{signedUsd(row.pnl, priv)}</td>
                 {/* pnl_pct 已是百分比 */}
                 <td className={`${dock.td} ${panel.dirText[dir]}`}>{`${fmtUsPnl(row.pnl_pct)}%`}</td>
@@ -306,7 +306,7 @@ function UsPnlDetail({ account, detailId, priv }: { account: Account; detailId: 
                         <tr key={`${d.acquired_date ?? 'x'}:${i}`}>
                             <td className={dock.td}>{d.acquired_date ?? '—'}</td>
                             <td className={dock.td}>{maskMoney(`${fmtDec(d.quantity)} 股`, priv)}</td>
-                            <td className={dock.td}>{fmtUsPrice(d.price)}</td>
+                            <td className={dock.td}>{fmtUsAvgPrice(d.price)}</td>
                             <td className={dock.td}>{usd(d.cost, priv)}</td>
                             <td className={dock.td}>{usd(d.fee, priv)}</td>
                             <td className={dock.td}>{usd(d.tax, priv)}</td>
@@ -357,7 +357,7 @@ export function UsPositionDetail({ account, detailId, code, version }: { account
                             <td className={dock.td}>{d.acquired_date}</td>
                             <td className={dock.td}>{d.acquisition_type === 'NonTrade' ? '非交易' : '買進'}</td>
                             <td className={dock.td}>{maskMoney(`${fmtDec(d.quantity)}（${fmtDec(d.original_quantity)}）股`, priv)}</td>
-                            <td className={dock.td}>{fmtUsPrice(d.price)}</td>
+                            <td className={dock.td}>{fmtUsAvgPrice(d.price)}</td>
                             <td className={dock.td}>{usd(d.cost, priv)}</td>
                             <td className={`${dock.td} ${panel.dirText[dir]}`}>{signedUsd(d.pnl, priv)}</td>
                         </tr>

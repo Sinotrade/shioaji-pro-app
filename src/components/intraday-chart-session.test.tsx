@@ -561,3 +561,36 @@ describe('IntradayChart session toggle', () => {
         expect(iso((price().last as any[])[0].time)).toBe('2026-09-25T15:01');
     });
 });
+
+describe('IntradayChart trades buffered during a load', () => {
+    it('keeps a buffered trade that triggers a session switch and draws it after the reload (TXF day → night)', async () => {
+        setNow('2026-09-25T15:00:40');
+        const day = kbars([['2026-09-25T08:45:00', '2026-09-25T13:45:00', () => 22500]]);
+        let resolveFirst!: (v: unknown) => void;
+        fetchMock.mockReturnValueOnce(new Promise((r) => { resolveFirst = r; }));
+        fetchMock.mockResolvedValue(day);
+        mount({ contract: fut });
+        await flush();
+        pushTick('2026-09-25', '13:44:30.000000', 22999); // 日盤 13:45 那根：歷史已含
+        pushTick('2026-09-25', '15:00:20.500000', 22610); // 夜盤第一筆
+        resolveFirst(day);
+        await flush();
+        // 補畫到夜盤那筆時排了重載；重載後（夜盤框架）照畫，不能丟
+        expect(fetchMock.mock.calls.length).toBeGreaterThan(1);
+        const u = price().update.mock.calls.map((c) => c[0] as { time: number; value: number });
+        expect(u.some((x) => x.value === 22999)).toBe(false);
+        expect(u.at(-1)).toEqual({ time: T('2026-09-25T15:01:00'), value: 22610 });
+    });
+
+    it('TW keeps main: a trade stamped exactly at the session start is not drawn', async () => {
+        setNow('2026-09-25T08:46:00');
+        fetchMock.mockResolvedValue(kbars([]));
+        mount({ contract: fut });
+        await flush();
+        const n = price().update.mock.calls.length;
+        pushTick('2026-09-25', '08:45:00', 22500);
+        expect(price().update.mock.calls.length).toBe(n);
+        pushTick('2026-09-25', '08:45:00.200000', 22501);
+        expect(price().update.mock.calls.at(-1)![0]).toEqual({ time: T('2026-09-25T08:46:00'), value: 22501 });
+    });
+});

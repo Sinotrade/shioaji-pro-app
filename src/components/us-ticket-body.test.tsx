@@ -114,7 +114,9 @@ it('shows the live price, best bid/ask and session after a quote', async () => {
     m.quote = { tick: { close: '231.2345' }, bidask: { bid_price: ['231.2'], ask_price: ['231.25'] } };
     await mount();
     const t = all();
-    expect(t).toContain('231.2345');
+    // sub-penny 成交價顯示時捨到 2 位（1 美元以上固定 2 位）
+    expect(t).toContain('231.23');
+    expect(t).not.toContain('231.2345');
     expect(t).toContain('買 231.20 / 賣 231.25');
     expect(t).toContain('盤中');
     expect(t).not.toContain('參考 230.10');

@@ -440,6 +440,25 @@ describe('buildWorkspaceFromSpec', () => {
         expect('chartInterval' in chart).toBe(false);
         expect('chartOhlc' in chart).toBe(false);
     });
+
+    it('keeps the US extended-hours session through export, validation and rebuild', () => {
+        const ws = base();
+        ws.blocks.push({ id: 'intra', type: 'intraday', pin: null, intradaySession: 'ext' });
+        ws.layout.push({ i: 'intra', x: 0, y: 16, w: 120, h: 14 });
+        const chart = ws.blocks.find((b) => b.id === 'chart')!;
+        chart.chartSession = 'ext';
+        const spec = workspaceToSpec(ws);
+        expect(spec.panels.find((p) => p.id === 'chart')!.settings).toMatchObject({ session: 'ext' });
+        expect(spec.panels.find((p) => p.id === 'intra')!.settings).toEqual({ session: 'ext' });
+        // 改面板大小後重套同一份 spec：美股選的盤前盤後不能被洗回一般盤
+        spec.panels.find((p) => p.id === 'chart')!.h = 15;
+        const next = buildWorkspaceFromSpec(ws, valid(spec, ws).normalized);
+        expect(next.blocks.find((b) => b.id === 'chart')!.chartSession).toBe('ext');
+        expect(next.blocks.find((b) => b.id === 'intra')!.intradaySession).toBe('ext');
+        // 台股的 all 仍是預設值：輸出照舊省略
+        chart.chartSession = 'all';
+        expect(workspaceToSpec(ws).panels.find((p) => p.id === 'chart')!.settings).not.toHaveProperty('session');
+    });
 });
 
 describe('resolveWorkspaceSpecContracts', () => {
@@ -489,6 +508,9 @@ describe('workspace spec JSON schema', () => {
         expect(Object.keys(specSchema.$defs.holdingmapSettings.properties)).toEqual(
             Object.keys(WORKSPACE_SPEC_SETTINGS.holdingmap!),
         );
+        // 時段值（含美股 ext）也要和驗證器一致
+        expect(specSchema.$defs.chartSettings.properties.session.enum).toEqual([...WORKSPACE_SPEC_SETTINGS.chart!.session!.values]);
+        expect(specSchema.$defs.intradaySettings.properties.session.enum).toEqual([...WORKSPACE_SPEC_SETTINGS.intraday!.session!.values]);
         for (const [type, defs] of [['chainmap', specSchema.$defs.chainmapSettings], ['holdingmap', specSchema.$defs.holdingmapSettings]] as const) {
             for (const [key, def] of Object.entries(WORKSPACE_SPEC_SETTINGS[type]!)) {
                 expect((defs.properties as Record<string, { enum: unknown[] }>)[key]!.enum, `${type}.${key}`).toEqual([...def.values]);

@@ -130,8 +130,11 @@ whole visible layout as one JSON document, described by
   288 is the stored precision), `panels[]` with `id`, `type`, `x`, `y`, `w`,
   `h`, optional `pin` (contract code), `link_group` (flash panels only) and
   `settings`, plus optional `link_groups`. Rows are 30 px. Settings in v1:
-  chart `interval` (`1m`/`5m`/`15m`/`60m`/`1D`), `session`, `ohlc`,
-  `high_low`; intraday `session`; chainmap `view` (`rank`/`rotation`/`heat`)
+  chart `interval` (`1m`/`5m`/`15m`/`60m`/`1D`), `session`
+  (`all`/`day`/`ext`), `ohlc`, `high_low`; intraday `session`
+  (`auto`/`day`/`night`/`ext`). `day` and `night` apply to TAIFEX futures and
+  options; `ext` adds US pre-market and after-hours (live trades only; US
+  history is regular-session only) and is ignored for Taiwan contracts; chainmap `view` (`rank`/`rotation`/`heat`)
   and `kind` (`all`/`chain`/`theme`/`industry`); holdingmap `form` (`bubble`/`lanes`)
   and `grouping` (`sector`/`chain`/`theme`). An absent chart or intraday
   setting means the default; an absent chainmap or holdingmap setting follows

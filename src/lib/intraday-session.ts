@@ -4,7 +4,49 @@
 // so a session's bar labels run (start, end] — e.g. TXF day session
 // 08:45–13:45 yields labels 08:46 … 13:45.
 
-import type { SecurityType } from './types/contract';
+import type { Region, SecurityType } from './types/contract';
+import { isUsRegularTrade, nyWallClockSec } from './us/us-quotes';
+import { nowWallClockUtc } from './utils/kbars';
+
+// 時段框架的種類：台股依商品類別；美股（region US）預設 'US' — 紐約牆鐘
+// 一般盤 09:30–16:00（時間編碼同台股，只是牆鐘換成美東）。圖表選「含盤前
+// 盤後」時用 'US_EXT'：04:00–20:00（盤前盤後沒有歷史，只有即時，見
+// us-quotes 的 getUsExtendedBars）。
+export type SessionKind = SecurityType | 'US' | 'US_EXT';
+
+export function isUsSessionKind(kind: SessionKind): kind is 'US' | 'US_EXT' {
+    return kind === 'US' || kind === 'US_EXT';
+}
+
+export function sessionKindOf(c: { security_type: SecurityType; region?: Region | string }): SessionKind {
+    return c.region === 'US' ? 'US' : c.security_type;
+}
+
+/** 紐約牆鐘當 UTC 編碼的整數秒（美股圖表時間軸的「現在」） */
+export function nyWallClockNow(nowMs = Date.now()): number {
+    return Math.floor(nyWallClockSec(nowMs));
+}
+
+/** 這種時段框架的「現在」（牆鐘編碼）：台股台北、美股紐約 */
+export function sessionNow(kind: SessionKind): number {
+    return isUsSessionKind(kind) ? nyWallClockNow() : nowWallClockUtc();
+}
+
+/** 收盤競價的成交標 AfterHours、時間在 16:00:01 左右；這段秒數內的 AfterHours 才算一般盤 */
+export const US_CLOSING_CROSS_SEC = 15;
+
+/**
+ * 美股一筆成交是否畫進一般盤的走勢／K 線（session 欄位為準）：
+ * - Regular：是
+ * - AfterHours：只有收盤競價那幾秒（16:00:00–16:00:15）— SDK 把收盤競價
+ *   （官方收盤價，量很大）標成 AfterHours，而歷史 1 分 K 的 16:00 那根有
+ *   包含它；之後的盤後成交一律不畫
+ * - PreMarket／Unknown：否（歷史 1 分 K 只有一般盤）
+ * wallSec 是紐約牆鐘編碼秒數（nyWallClockSec）。
+ */
+export function isUsChartTrade(session: string | null | undefined, wallSec: number): boolean {
+    return isUsRegularTrade(session, wallSec);
+}
 
 export interface SessionWindow {
     start: number; // session open — exclusive in bar-label space
@@ -19,11 +61,19 @@ const DAY = 86400;
 // bar/tick timestamp. Futures & options: day 08:45–13:45, night 15:00 to
 // next-day 05:00. Everything else (stocks, warrants, indices): 09:00–13:30.
 export function sessionWindowFor(
-    secType: SecurityType,
+    secType: SessionKind,
     t: number,
 ): SessionWindow {
     const d0 = Math.floor(t / DAY) * DAY;
     const tod = t - d0;
+    // 美股：當天（紐約）一般盤 09:30–16:00
+    if (secType === 'US') {
+        return { start: d0 + 9.5 * H, end: d0 + 16 * H, night: false };
+    }
+    // 美股含盤前盤後：04:00–20:00
+    if (secType === 'US_EXT') {
+        return { start: d0 + 4 * H, end: d0 + 20 * H, night: false };
+    }
     if (secType === 'FUT' || secType === 'OPT') {
         if (tod <= 5 * H) {
             return { start: d0 - DAY + 15 * H, end: d0 + 5 * H, night: true };
@@ -42,7 +92,7 @@ export function sessionWindowFor(
 export const CLOSE_GRACE = 240;
 
 // 有夜盤的商品（期貨/選擇權）才有「日盤/夜盤」與「全盤/僅日盤」之分
-export function hasNightSession(secType: SecurityType): boolean {
+export function hasNightSession(secType: SessionKind): boolean {
     return secType === 'FUT' || secType === 'OPT';
 }
 
@@ -75,7 +125,7 @@ export function supportsSessionSplit(c: SessionContractLike): boolean {
 
 // 1 分 K label（minute-end）是否屬於日盤：期/選 08:45–13:45、其他
 // 09:00–13:30，label 區間 (start, end + CLOSE_GRACE]（收盤定盤併入）
-export function isDaySessionLabel(secType: SecurityType, label: number): boolean {
+export function isDaySessionLabel(secType: SessionKind, label: number): boolean {
     const w = sessionWindowFor(secType, label);
     if (!w.night && label > w.start && label <= w.end) return true;
     // 期貨 13:45 後的 label 在 sessionWindowFor 已歸夜盤框架 — 退回
@@ -87,36 +137,39 @@ export function isDaySessionLabel(secType: SecurityType, label: number): boolean
 // 即時成交時間 τ 是否屬於日盤 — 先換成 close-label-right 的 1 分 K
 // label（08:45:00 的開盤撮合 → 08:46），再用 K 棒同一套判斷，
 // 歷史與 live 才不會一邊收、一邊丟
-export function isDaySessionTick(secType: SecurityType, t: number): boolean {
+export function isDaySessionTick(secType: SessionKind, t: number): boolean {
     return isDaySessionLabel(secType, Math.floor(t / 60) * 60 + 60);
 }
 
 // K 線「僅日盤」：aggregate 前把夜盤與盤外的 1 分 K 濾掉
 export function filterDaySession<T extends { time: number }>(
-    secType: SecurityType,
+    secType: SessionKind,
     bars: T[],
 ): T[] {
     return bars.filter((b) => isDaySessionLabel(secType, b.time));
 }
 
 // 當日走勢的時段選擇：auto = 依資料所在（原行為）；day/night =
-// 使用者手動鎖定，取「有資料的最近一段」該種時段（晚上複盤今天日盤）
-export type IntradaySessionMode = 'auto' | 'day' | 'night';
-export type ChartSessionMode = 'all' | 'day';
+// 使用者手動鎖定，取「有資料的最近一段」該種時段（晚上複盤今天日盤）；
+// ext = 美股含盤前盤後（美股其餘值都是一般盤；台股不認 ext）。
+// 用獨立的 ext 而不沿用 all：K 線的 all 是台股省略的預設值，
+// spec 匯出會剝掉，美股的盤前盤後選擇就會在套版時被洗回一般盤
+export type IntradaySessionMode = 'auto' | 'day' | 'night' | 'ext';
+export type ChartSessionMode = 'all' | 'day' | 'ext';
 
 // 存檔讀回的時段值只接受已知值，其餘（舊版/手改/壞檔）退回預設
 export function parseIntradaySessionMode(
     v: unknown,
 ): IntradaySessionMode | undefined {
-    return v === 'auto' || v === 'day' || v === 'night' ? v : undefined;
+    return v === 'auto' || v === 'day' || v === 'night' || v === 'ext' ? v : undefined;
 }
 
 export function parseChartSessionMode(v: unknown): ChartSessionMode | undefined {
-    return v === 'all' || v === 'day' ? v : undefined;
+    return v === 'all' || v === 'day' || v === 'ext' ? v : undefined;
 }
 
 // 商品日盤時間字串（按鈕說明用，不寫死）
-export function daySessionLabel(secType: SecurityType): string {
+export function daySessionLabel(secType: SessionKind): string {
     // 取任一交易日 10:00 的日盤框架
     const w = sessionWindowFor(secType, 10 * H);
     const hm = (t: number) => {
@@ -131,7 +184,7 @@ export function daySessionLabel(secType: SecurityType): string {
 // 最近一段（含進行中/即將開始）指定種類的時段框架 — 手動模式下
 // 完全沒有該種時段資料時，用它開空框架
 function latestWindowOfKind(
-    secType: SecurityType,
+    secType: SessionKind,
     night: boolean,
     now: number,
 ): SessionWindow {
@@ -165,7 +218,7 @@ function isWeekendStart(win: SessionWindow): boolean {
 // 依模式挑出要畫的時段。times = 已排序的 1 分 K label；pendStart =
 // 換時段重載帶來的目標時段起點（試搓/開盤，新時段 kbar 還沒出，0 = 無）
 export function pickIntradayWindow(
-    secType: SecurityType,
+    secType: SessionKind,
     times: number[],
     mode: IntradaySessionMode,
     now: number,
@@ -215,7 +268,7 @@ export function followsSession(
 // 的結算價」— 以已抓歷史中 win.start 之前最後一根日盤 K 的收盤近似；
 // 找不到回 null（呼叫端退回合約參考價）
 export function pastSessionReference(
-    secType: SecurityType,
+    secType: SessionKind,
     bars: { time: number; close: number }[],
     win: SessionWindow,
 ): number | null {
@@ -229,7 +282,7 @@ export function pastSessionReference(
 
 // 顯示的時段是否不是「現在（或即將開始）的時段」
 export function isPastSession(
-    secType: SecurityType,
+    secType: SessionKind,
     win: SessionWindow,
     now: number,
 ): boolean {
@@ -253,7 +306,7 @@ export function isPastSession(
 // 與「自動」會選的時段相同時（例如假日：自動與鎖夜盤都顯示昨晚那段）
 // 合約參考價/停板就是屬於它的 — 照自動用官方值，不改近似
 export function isReviewingPastSession(
-    secType: SecurityType,
+    secType: SessionKind,
     mode: IntradaySessionMode,
     win: SessionWindow,
     times: number[],
@@ -290,7 +343,7 @@ export function tickBucket(win: SessionWindow, t: number): number {
 // 假日/週末「整段夜盤不存在」與正常收盤間隔都是跨時段 gap，不誤判。
 export function findKbarGap(
     times: number[],
-    secType: SecurityType,
+    secType: SessionKind,
     now: number,
 ): string | null {
     if (secType !== 'FUT' && secType !== 'OPT' && secType !== 'IND') {

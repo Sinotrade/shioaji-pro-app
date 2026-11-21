@@ -14,6 +14,8 @@ export interface FakeSeries {
 export const created: FakeSeries[] = [];
 // 圖表訂閱的 crosshair 回呼（測試用來模擬游標移動／離開）
 export const crosshairHandlers: ((param: any) => void)[] = [];
+// 圖表訂閱的可視範圍回呼（測試用來模擬捲到最左邊觸發往前翻頁）
+export const rangeHandlers: ((range: { from: number; to: number } | null) => void)[] = [];
 
 function chain(): any {
     const f: any = function () {
@@ -75,6 +77,16 @@ export function makeChart(): any {
                     return (fn: (param: any) => void) => {
                         crosshairHandlers.push(fn);
                     };
+                if (p === 'timeScale')
+                    return () =>
+                        new Proxy(chain(), {
+                            get: (t, q) =>
+                                q === 'subscribeVisibleLogicalRangeChange'
+                                    ? (fn: (range: any) => void) => {
+                                          rangeHandlers.push(fn);
+                                      }
+                                    : t[q],
+                        });
                 if (p === 'then') return undefined;
                 return chain();
             },

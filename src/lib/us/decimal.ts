@@ -145,7 +145,32 @@ export function fmtDec(v: UsAmount | null | undefined, opts: { minFraction?: num
     return `${neg ? '-' : ''}${int}${frac ? `.${frac}` : ''}`;
 }
 
-/** 美股價格顯示：至少 2 位、最多 4 位小數；不合法回 — */
+/**
+ * 美股價格的顯示小數位：1 美元以上固定 2 位、未滿 1 美元固定 4 位（與下單
+ * 跳動 0.01／0.0001 一致）。成交價可能帶 sub-penny（例如 98.083 的中價成交），
+ * 顯示時一律四捨五入到這個位數，寬度才不會跳動。
+ */
+export function usPriceDecimals(v: string | number | null | undefined): number {
+    const n = Math.abs(Number(v));
+    return Number.isFinite(n) && n > 0 && n < 1 ? 4 : 2;
+}
+
+/** 美股價格顯示：1 美元以上 2 位、未滿 1 美元 4 位（固定位數）；不合法回 — */
 export function fmtUsPrice(v: string | number | null | undefined): string {
+    const d = usPriceDecimals(v);
+    return fmtDec(v === null || v === undefined ? v : String(v), { minFraction: d, maxFraction: d });
+}
+
+/**
+ * 漲跌（價差）顯示：位數跟著所屬的價格走（98.08 的漲跌 +0.50，而不是
+ * 依漲跌本身變成 +0.5000）；沒有給價格時用漲跌本身判斷。
+ */
+export function fmtUsChange(v: string | number | null | undefined, price?: string | number | null): string {
+    const d = usPriceDecimals(price ?? v);
+    return fmtDec(v === null || v === undefined ? v : String(v), { minFraction: d, maxFraction: d });
+}
+
+/** 成交均價、持股成本：至少 2 位、最多 4 位（均價可能是 sub-penny，不硬捨成 2 位） */
+export function fmtUsAvgPrice(v: string | number | null | undefined): string {
     return fmtDec(v === null || v === undefined ? v : String(v), { minFraction: 2, maxFraction: 4 });
 }

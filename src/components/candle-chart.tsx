@@ -79,7 +79,8 @@ import { IndicatorInstanceContext } from '../lib/indicator-instance-context';
 import {
     daySessionLabel,
     filterDaySession,
-    isDaySessionTick,
+    isDaySessionLabel,
+    sessionKindOf,
     parseChartSessionMode,
     type ChartSessionMode,
     supportsSessionSplit,
@@ -151,7 +152,6 @@ import {
     aggregate,
     dateStrOffset,
     kbarsToCandles,
-    wallClockToUtc
 } from '../lib/utils/kbars';
 import { roundToTick, tickDecimals, tickSizeFor } from '../lib/utils/ticksize';
 import { createOhlcStore } from '../lib/ohlc-legend';
@@ -166,6 +166,11 @@ import * as panel from './panel.css';
 import { contractMarket, isWarrantContract } from '../lib/contract-market';
 import { WARRANT_FLASH_TEXT, warrantMarketOrderBlock } from '../lib/warrant-rules';
 import { orderStatusWithNumber } from '../lib/order-status-label';
+import { contractLinkKey } from '../lib/contract-key';
+import { getUsExtendedBars, getUsTickMeta, isUsRegularLabel, subscribeUsSessionTicks } from '../lib/us/us-quotes';
+import { createPriceFormatSync } from '../lib/chart-price-format';
+import { emptyPending, mergePendingTrades, mergeTradeIntoBars, pushPending } from '../lib/chart-live-bars';
+import { candleBarTime, candleMinuteLabel, twChartTrade, usChartTrade, type ChartTrade } from '../lib/chart-trade';
 
 // NOTE: the kbars API only serves 1-minute bars, so 1D aggregates a huge
 // payload (a year of TXF ≈ 280k bars / 18MB) — keep the range tight enough
@@ -176,6 +181,15 @@ const TIMEFRAMES: readonly { label: ChartInterval; minutes: number; days: number
     { label: '15m', minutes: 15, days: 20 },
     { label: '60m', minutes: 60, days: 60 },
     { label: '1D', minutes: 1440, days: 240 },
+];
+// 美股：同一組週期（index 與台股一致），只有天數不同 — 週末連假多一天的
+// 1 分 K，日 K 由 1 分 K 聚合、kbars 一次 30 天要分段，抓約半年
+const US_TIMEFRAMES: typeof TIMEFRAMES = [
+    { label: '1m', minutes: 1, days: 4 },
+    { label: '5m', minutes: 5, days: 10 },
+    { label: '15m', minutes: 15, days: 20 },
+    { label: '60m', minutes: 60, days: 60 },
+    { label: '1D', minutes: 1440, days: 120 },
 ];
 const DEFAULT_TF_IDX = TIMEFRAMES.findIndex((t) => t.label === DEFAULT_CHART_INTERVAL);
 function timeframeIndex(interval: unknown): number | null {
@@ -199,6 +213,15 @@ const TRADE_MODES: { key: TradeMode; label: string }[] = [
 
 // keep paging until this floor — one page per fetch, spans widen with tf
 const MAX_HISTORY_DAYS = 1095; // ~3 years
+
+// 依時間合併兩組 K 棒（同一時間以 b 為準）
+function mergeCandlesByTime(a: Candle[], b: Candle[]): Candle[] {
+    if (b.length === 0) return a;
+    const m = new Map<number, Candle>();
+    for (const x of a) m.set(x.time, x);
+    for (const x of b) m.set(x.time, x);
+    return [...m.values()].sort((x, y) => x.time - y.time);
+}
 
 export type { ChartSessionMode };
 
@@ -248,6 +271,12 @@ export function CandleChart({
     const candleSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
     const volSeriesRef = useRef<ISeriesApi<'Histogram'> | null>(null);
     const lastBarRef = useRef<Candle | null>(null);
+    // 價格軸小數位：每次載入與每筆成交依「目前商品＋價格」決定（美股未滿
+    // 1 美元 4 位；換回台股恢復 2 位）
+    const priceFmtRef = useRef(createPriceFormatSync((priceFormat) => candleSeriesRef.current?.applyOptions({ priceFormat })));
+    // 歷史載入中收到的成交（key＝這次載入的 loadKey）：歷史回來後併進
+    // 歷史沒涵蓋的部分，空結果或載入失敗時整批補上；暫存滿了改重抓歷史
+    const pendingTradesRef = useRef(emptyPending());
     const [localTfIdx, setLocalTfIdx] = useState(
         () => timeframeIndex(intervalProp) ?? DEFAULT_TF_IDX,
     );
@@ -261,15 +290,21 @@ export function CandleChart({
     };
     // 僅日盤：aggregate 前濾掉夜盤 1 分 K、live 夜盤 tick 不入圖，指標
     // 也就只吃日盤 K 棒。只開給日盤 08:45–13:45 的期/選，其他商品一律全盤
-    // 存檔值只認 all|day，其餘退回全盤
+    // 存檔值只認 all|day|ext，其餘退回全盤
+    // 美股：ext＝含盤前盤後，其餘（含預設 all）＝只看一般盤 09:30–16:00。
+    // 用獨立的 ext，台股的 all 仍是 spec 省略的預設值，美股的選擇才能套版保留
     const propMode = parseChartSessionMode(sessionModeProp);
     const [localSessionMode, setLocalSessionMode] =
-        useState<ChartSessionMode>(propMode ?? 'all');
+        useState<ChartSessionMode | undefined>(propMode);
+    const usContract = contract.region === 'US';
+    const sessionPick =
+        (onSessionModeChange ? propMode : localSessionMode) ?? 'all';
     const canDayOnly = supportsSessionSplit(contract as SessionContractLike);
-    const dayOnly =
-        canDayOnly &&
-        (onSessionModeChange ? (propMode ?? 'all') : localSessionMode) ===
-            'day';
+    const dayOnly = canDayOnly && sessionPick === 'day';
+    // 美股含盤前盤後：盤前盤後沒有歷史，只畫 App 開著時收到的成交
+    const usExtended = usContract && sessionPick === 'ext';
+    // 載入／即時判斷用的時段鍵（全盤、僅日盤、美股含盤前盤後）
+    const sessionKey = dayOnly ? 'day' : usExtended ? 'ext' : 'all';
     const pickSessionMode = (m: ChartSessionMode) => {
         setLocalSessionMode(m);
         onSessionModeChange?.(m);
@@ -307,8 +342,32 @@ export function CandleChart({
     const loadedKeyRef = useRef('');
     // 圖上目前畫的是哪一組（商品|週期|僅日盤）— 換組時同步清圖
     const drawnKeyRef = useRef('');
-    const quote = useQuote(contract.code);
-    const tf = TIMEFRAMES[tfIdx] ?? TIMEFRAMES[DEFAULT_TF_IDX]!;
+    // 美股（region US）走同一張圖：行情 key 是 US:CODE、歷史由 chart-history
+    // 轉接美股 kbars、即時成交逐筆併入（見下方美股 effect）；圖上下單、委託線、
+    // 觸價警示是台股功能，美股不顯示
+    const isUs = contract.region === 'US';
+    // 時段切換鈕：台股期選與美股共用同一顆，只差文案與切換的值
+    const sessionBtn: { active: boolean; label: string; title: string; next: ChartSessionMode } = isUs
+        ? {
+              active: !usExtended,
+              label: '一般盤',
+              title: usExtended
+                  ? '美東時間・含盤前盤後 04:00–20:00：盤前盤後沒有歷史資料，只畫 App 開著時收到的成交 — 點擊改回只看一般盤'
+                  : '美東時間・只看一般盤 09:30–16:00 — 點擊改為含盤前盤後（盤前盤後只有 App 開著時收到的成交）',
+              next: usExtended ? 'all' : 'ext',
+          }
+        : {
+              active: dayOnly,
+              label: '日盤',
+              title: dayOnly
+                  ? `僅日盤（${daySessionLabel(contract.security_type)}），指標也只用日盤計算 — 點擊切回全盤`
+                  : `全盤（日盤＋夜盤）— 點擊改為僅日盤 ${daySessionLabel(contract.security_type)}`,
+              next: dayOnly ? 'all' : 'day',
+          };
+    const kind = usExtended ? 'US_EXT' : sessionKindOf(contract);
+    const quoteKey = contractLinkKey(contract);
+    const quote = useQuote(quoteKey);
+    const tf = (isUs ? US_TIMEFRAMES : TIMEFRAMES)[tfIdx] ?? TIMEFRAMES[DEFAULT_TF_IDX]!;
     const themeSettings = useThemeSettings();
     // 只取這個布林：別的風控欄位變動時不必重繪整張圖
     const orderLineLock = useSyncExternalStore(subscribeRiskSettings, () => getRiskSettings().orderLineLock);
@@ -332,7 +391,7 @@ export function CandleChart({
     const themeKey = themeKeyOf(themeSettings);
     const [mode, setMode] = useState<TradeMode>('observe');
     // 圖表下單設定（#204）：每張圖自己一組（每市場一份），缺省取「設為預設」
-    const orderMarket: ChartOrderMarket | null = contractMarket(contract.security_type);
+    const orderMarket: ChartOrderMarket | null = isUs ? null : contractMarket(contract.security_type);
     const warrant = isWarrantContract(contract);
     // 外國標的權證：K 線圖停損／停利觸發後是市價，交易所不收 → 按鈕停用並寫原因
     const warrantExitBlock = warrantMarketOrderBlock(contract) ? WARRANT_FLASH_TEXT.chartForeign : null;
@@ -540,19 +599,24 @@ export function CandleChart({
     // raw 1-min candles backing the current view — history pages merge here
     // and re-aggregate so buckets spanning a page seam stay correct
     const rawRef = useRef<Candle[]>([]);
+    // 往前翻頁的界線＝已載入「一般盤歷史」最早一根的時間。不能用 rawRef
+    // 第一根：美股含盤前盤後會併入記憶體裡的盤前盤後 K 棒，它可能比已載入
+    // 的歷史更早（例如上週五盤前），拿它當界線會把中間的一般盤歷史濾掉
+    const historyBoundaryRef = useRef(Infinity);
     const loadMoreRef = useRef<(() => void) | null>(null);
     const indSeriesRef = useRef<ISeriesApi<'Line' | 'Histogram'>[]>([]);
-    const triggers = useTriggers().filter((t) => t.code === contract.code);
+    // 觸價警示與委託線只有台股（美股委託走下單／閃電面板與委託分頁）
+    const triggers = useTriggers().filter((t) => !isUs && t.code === contract.code);
     const workingOrders = useMemo(
         () =>
-            trades.filter(
+            isUs ? [] : trades.filter(
                 (t) =>
                     (t.contract.code === contract.code ||
                         (contract.target_code &&
                             t.contract.code === contract.target_code)) &&
                     remainingWorkingOrderQuantity(t) > 0,
             ),
-        [trades, contract],
+        [trades, contract, isUs],
     );
     const workingOrdersRef = useRef(workingOrders);
     workingOrdersRef.current = workingOrders;
@@ -574,13 +638,15 @@ export function CandleChart({
         armedDrawingSequenceRef.current = next === 'observe' ? null : drawingsRef.current?.interactionSequence() ?? null;
         setMode(next);
     };
-    if (mode !== 'observe' && mode !== 'alert' && armedTradeKeyRef.current !== tradeKey) {
+    // 美股圖沒有交易工具：從台股切過來時連警示模式也一併解除
+    const disarm = mode !== 'observe' && (isUs || (mode !== 'alert' && armedTradeKeyRef.current !== tradeKey));
+    if (disarm) {
         modeRef.current = 'observe';
         armedDrawingSequenceRef.current = null;
         setMode('observe');
     }
     // 這次 render 的模式（解除的那次 render 不再顯示提示）
-    const shownMode: TradeMode = mode !== 'observe' && mode !== 'alert' && armedTradeKeyRef.current !== tradeKey ? 'observe' : mode;
+    const shownMode: TradeMode = disarm ? 'observe' : mode;
     const contractRef = useRef(contract);
     contractRef.current = contract;
     const lastPriceRef = useRef<number | null>(null);
@@ -687,6 +753,7 @@ export function CandleChart({
         chartRef.current = chart;
         candleSeriesRef.current = candles;
         volSeriesRef.current = vol;
+        priceFmtRef.current.reset(); // 新 series：下一次 sync 一定套用
         // 可見範圍最高／最低標記（#240）：樣式與顯示由下方 effect 套用
         const highLow = new HighLowLayer({ ...highLowColors(c), visible: false, format: (p) => String(p) });
         candles.attachPrimitive(highLow);
@@ -920,8 +987,9 @@ export function CandleChart({
     // pulled on demand by the visible-range subscription (loadMoreRef)
     useEffect(() => {
         let cancelled = false;
-        const loadKey = `${contract.code}|${tf.minutes}|${dayOnly}`;
-        loadedKeyRef.current = ''; // freeze tick updates while loading
+        const loadKey = `${contractLinkKey(contract)}|${tf.minutes}|${sessionKey}`;
+        loadedKeyRef.current = ''; // freeze tick updates while loading — 期間的成交先暫存
+        pendingTradesRef.current = emptyPending(loadKey);
         const toRaw = (k: Parameters<typeof kbarsToCandles>[0]) => {
             const raw = kbarsToCandles(k);
             return dayOnly
@@ -940,6 +1008,7 @@ export function CandleChart({
             barsRef.current = [];
             rawRef.current = [];
             gapReloadAtRef.current = 0;
+            historyBoundaryRef.current = Infinity;
             setDataVersion((v) => v + 1); // 指標跟著清
         }
         setEmpty(false);
@@ -954,7 +1023,37 @@ export function CandleChart({
             barsRef.current = [];
             rawRef.current = [];
             setDataVersion((v) => v + 1);
+            lastBarRef.current = null;
+            historyBoundaryRef.current = Infinity;
+            priceFmtRef.current.sync(contract, lastPriceRef.current);
             loadedKeyRef.current = loadKey; // live bars may build from here
+        };
+        // 載入期間暫存的成交：1 分 K 標籤比歷史最後一根新的才補（之前的已在
+        // 歷史裡），先在記憶體併成 K 棒，回傳整組讓呼叫端一次畫出。暫存滿過
+        //（中間有成交沒記到）→ 排一次歷史重抓，不讓缺的量就這樣掉了
+        const takePending = (bars: Candle[], coveredLabel: number): Candle | null => {
+            const pend = pendingTradesRef.current;
+            pendingTradesRef.current = emptyPending();
+            if (pend.key !== loadKey) return bars[bars.length - 1] ?? null;
+            if (pend.overflow) setHistorySeq(nextChartHistoryRevision());
+            return mergePendingTrades(
+                bars,
+                pend.trades,
+                coveredLabel,
+                (t) => candleMinuteLabel(kind, t),
+                (label, t) => (dayOnly && !isDaySessionLabel(kind, label) ? null : candleBarTime(kind, t, tf.minutes)),
+            );
+        };
+        // 沒有歷史（空結果／失敗）：載入期間的成交全部補上，有就清掉空狀態
+        const drawPendingOnly = () => {
+            const bars: Candle[] = [];
+            const tail = takePending(bars, -Infinity);
+            if (!tail) return;
+            priceFmtRef.current.sync(contract, tail.close);
+            applyBars(bars);
+            lastBarRef.current = tail;
+            setEmpty(false);
+            setHistoryError(false);
         };
         const applyBars = (bars: Candle[]) => {
             candleSeriesRef.current?.setData(
@@ -998,7 +1097,7 @@ export function CandleChart({
                 .then((k) => {
                     if (cancelled || loadedKeyRef.current !== loadKey) return;
                     oldestDay = from;
-                    const boundary = rawRef.current[0]?.time ?? Infinity;
+                    const boundary = historyBoundaryRef.current;
                     const older = toRaw(k).filter(
                         (b) => b.time < boundary,
                     );
@@ -1007,7 +1106,13 @@ export function CandleChart({
                         return;
                     }
                     dryPages = 0;
-                    rawRef.current = [...older, ...rawRef.current];
+                    historyBoundaryRef.current = older[0]!.time;
+                    // 併入的盤前盤後可能比這頁還早 → 依時間合併，否則直接接在前面
+                    const cur = rawRef.current;
+                    rawRef.current =
+                        cur.length > 0 && older[older.length - 1]!.time >= cur[0]!.time
+                            ? mergeCandlesByTime(older, cur)
+                            : [...older, ...cur];
                     const bars = aggregate(rawRef.current, tf.minutes);
                     // re-attach the live tail built from ticks since load —
                     // raw history doesn't contain those bars
@@ -1036,17 +1141,25 @@ export function CandleChart({
         })
             .then((k) => {
                 if (cancelled || !candleSeriesRef.current) return;
-                const raw = toRaw(k);
+                // 美股含盤前盤後：一般盤歷史接上記憶體裡的盤前盤後 1 分 K
+                //（兩者的分鐘標籤不重疊：一般盤 09:31–16:00）
+                const regular = toRaw(k);
+                const raw = usExtended ? mergeCandlesByTime(regular, getUsExtendedBars(quoteKey)) : regular;
                 const bars = aggregate(raw, tf.minutes);
                 if (bars.length === 0) {
                     clearSeries();
                     setEmpty(true);
                     loadMoreRef.current = loadMore; // history may still exist
+                    drawPendingOnly();
                     return;
                 }
                 rawRef.current = raw;
+                historyBoundaryRef.current = regular[0]?.time ?? Infinity;
+                // 1 分 K 標籤是結束時間：標籤 ≤ 歷史最後一根的成交都已在歷史裡
+                const tail = takePending(bars, raw[raw.length - 1]!.time);
+                priceFmtRef.current.sync(contract, tail?.close ?? null);
                 applyBars(bars);
-                lastBarRef.current = bars[bars.length - 1] ?? null;
+                lastBarRef.current = tail;
                 loadedKeyRef.current = loadKey;
                 loadMoreRef.current = loadMore;
                 chartRef.current?.timeScale().scrollToRealTime();
@@ -1064,6 +1177,8 @@ export function CandleChart({
                 clearSeries();
                 setEmpty(true);
                 setHistoryError(true);
+                // 失敗也照畫即時：載入期間的成交全部補上（有成交就會清掉空狀態）
+                drawPendingOnly();
             })
             .finally(() => {
                 if (!cancelled) setLoading(false);
@@ -1071,77 +1186,61 @@ export function CandleChart({
         return () => {
             cancelled = true;
         };
-    }, [contract, tf, historySeq, dayOnly]);
+    }, [contract, tf, historySeq, dayOnly, usExtended]);
 
     // Live trade/index quote -> update the current bar. Index products use
     // quote_idx rather than the regular tick stream in Shioaji 1.7.
     const liveQuote = quote?.tick ?? quote?.index;
-    if (liveQuote && liveQuote.code === contract.code) {
+    if (liveQuote && liveQuote.code === quoteKey) {
         const p = Number(liveQuote.close);
         if (Number.isFinite(p)) lastPriceRef.current = p;
     }
-    useEffect(() => {
-        if (!liveQuote || liveQuote.code !== contract.code) return;
-        // 試撮 (simtrade) 揭示價可以是漲跌停天地價 — 畫進 K 棒會把
-        // Y 軸尺度撐爆（issue #5），一律排除
-        if ('simtrade' in liveQuote && liveQuote.simtrade) return;
-        // history for this (symbol, timeframe) not in place yet
-        if (
-            loadedKeyRef.current !== `${contract.code}|${tf.minutes}|${dayOnly}`
-        ) {
+    // 一筆成交併進目前的 K 棒（台股從行情 store、美股從逐筆通知進來）。
+    // 時間、時段與分桶都由 chart-trade 決定（與走勢圖同一套）
+    const applyTradeRef = useRef<(trade: ChartTrade) => void>(() => {});
+    applyTradeRef.current = (trade) => {
+        const { time: tickTime, price, volume } = trade;
+        if (!Number.isFinite(price) || !Number.isFinite(tickTime)) return;
+        const liveKey = `${quoteKey}|${tf.minutes}|${sessionKey}`;
+        // history for this (symbol, timeframe) not in place yet — 暫存，
+        // 載入完成後補（見 takePending）；滿了會標 overflow 並重抓歷史
+        if (loadedKeyRef.current !== liveKey) {
+            const pend = pendingTradesRef.current;
+            if (pend.key === liveKey) pushPending(pend, trade);
             return;
         }
         const series = candleSeriesRef.current;
         if (!series) return;
-        const price = Number(liveQuote.close);
-        if (!Number.isFinite(price)) return;
-        const tickTime = wallClockToUtc(
-            `${liveQuote.date}T${liveQuote.time}`,
-        );
+        priceFmtRef.current.sync(contract, price);
+        const label = candleMinuteLabel(kind, tickTime);
         // 僅日盤：夜盤/盤外成交不入圖（與歷史濾法同一套 label 判斷）
-        if (dayOnly && !isDaySessionTick(contract.security_type, tickTime)) {
-            return;
-        }
+        if (dayOnly && !isDaySessionLabel(kind, label)) return;
         const bucketSec = tf.minutes * 60;
-        // close-label-right（與 aggregate/1 分 K 歷史同慣例）：成交 τ 屬
-        // 於哪個「收盤 label」桶 — floor 會把 live 桶標早一格，1 分 K
-        // 時甚至會併進前一分鐘的歷史 bar
-        const bucket =
-            tf.minutes >= 1440
-                ? Math.floor(tickTime / 86400) * 86400
-                : Math.floor(tickTime / bucketSec) * bucketSec + bucketSec;
-        let bar = lastBarRef.current;
+        // 分桶見 chart-trade：台股照 main（[m, m+60) → m+60），美股 close-label-
+        // right＋收盤競價歸 16:00
+        const bucket = candleBarTime(kind, tickTime, tf.minutes);
+        const tail = lastBarRef.current;
         // live 桶與歷史尾端出現 3 個桶以上的斷層（換時段/上游資料晚發布）
         // → 排程一次歷史補抓把洞補起來；live 桶照常先畫，補抓完成後
         // 整段重建。120s 節流避免上游持續缺料時反覆打
+        // 美股含盤前盤後：盤前盤後本來就沒有歷史、成交稀疏，隔很久才一筆是常態，不補抓
+        const usExtendedOnly =
+            kind === 'US_EXT' && !isUsRegularLabel(label);
         if (
-            bar &&
-            bucket - bar.time > bucketSec * 3 &&
+            tail &&
+            !usExtendedOnly &&
+            bucket - tail.time > bucketSec * 3 &&
             Date.now() - gapReloadAtRef.current > 120_000
         ) {
             gapReloadAtRef.current = Date.now();
             setHistorySeq(nextChartHistoryRevision());
         }
-        if (!bar || bucket > bar.time) {
-            bar = {
-                time: bucket,
-                open: price,
-                high: price,
-                low: price,
-                close: price,
-                volume: quote?.tick?.volume ?? 0,
-            };
-            // a fresh bucket = the previous bar closed — keep barsRef in
-            // sync (history paging re-attaches this tail) and recompute
-            // indicators once per bar close
-            barsRef.current.push(bar);
-            setDataVersion((v) => v + 1);
-        } else {
-            bar.high = Math.max(bar.high, price);
-            bar.low = Math.min(bar.low, price);
-            bar.close = price;
-            bar.volume += quote?.tick?.volume ?? 0;
-        }
+        // 比尾端舊的桶（亂序或晚到的成交）丟掉：舊 K 棒已含在歷史裡，
+        // 尾端也不能動
+        const merged = mergeTradeIntoBars(barsRef.current, tail, bucket, price, volume);
+        if (!merged) return;
+        const bar = merged.bar;
+        if (merged.kind === 'new') setDataVersion((v) => v + 1);
         lastBarRef.current = bar;
         try {
             series.update({
@@ -1165,7 +1264,29 @@ export function CandleChart({
         // 「無 K 線資料」（同值 setState React 會 bail out）
         setEmpty(false);
         setHistoryError(false);
-    }, [liveQuote, quote?.tick?.volume, contract.code, tf.minutes, dayOnly]);
+    };
+    useEffect(() => {
+        // 美股不走這裡：行情 store 會把相近的多筆合併成最後一筆（量會漏），
+        // 改用下方的逐筆通知
+        if (isUs) return;
+        if (!liveQuote || liveQuote.code !== quoteKey) return;
+        // 試撮 (simtrade) 揭示價可以是漲跌停天地價 — 畫進 K 棒會把
+        // Y 軸尺度撐爆（issue #5），一律排除
+        if ('simtrade' in liveQuote && liveQuote.simtrade) return;
+        const trade = twChartTrade(liveQuote.date, liveQuote.time, Number(liveQuote.close), quote?.tick?.volume ?? 0);
+        if (trade) applyTradeRef.current(trade);
+    }, [liveQuote, quote?.tick?.volume, quoteKey, isUs, tf.minutes, dayOnly]);
+    // 美股：每筆成交（recordUsTick 的通知，帶 session 與單筆量）只併一般盤
+    // ＋收盤競價 — 歷史 1 分 K 只有這段，盤前／盤後的零星成交混進來會畫出
+    // 孤立的 K 棒
+    useEffect(() => {
+        if (!isUs) return;
+        return subscribeUsSessionTicks(quoteKey, () => {
+            const meta = getUsTickMeta(quoteKey);
+            const trade = meta ? usChartTrade(meta, usExtended) : null;
+            if (trade) applyTradeRef.current(trade);
+        });
+    }, [isUs, quoteKey, usExtended]);
 
     // 自訂指標增刪改 → 重算指標 effect；被刪掉的型別把殘留實例一併清掉
     const [customVer, setCustomVer] = useState(0);
@@ -1673,7 +1794,7 @@ export function CandleChart({
     const drawingArmedRef = useRef(false);
     const drawingsRef = useRef<ChartDrawingsApi | null>(null);
     const cancelOrderDragRef = useRef<() => boolean>(() => false);
-    const orderDragContext = `${contract.security_type}:${contract.code}:${tf.minutes}:${dayOnly}:${historySeq}`;
+    const orderDragContext = `${contract.security_type}:${contract.code}:${tf.minutes}:${sessionKey}:${historySeq}`;
     const orderDragContextRef = useRef(orderDragContext);
     orderDragContextRef.current = orderDragContext;
     // 舊委託線被重建前也要還原／解除拖曳；render 後、effect 前的事件由 context 核對阻擋。
@@ -1891,7 +2012,7 @@ export function CandleChart({
     }, [dataVersion]);
     const drawings = useChartDrawings({
         contract,
-        contextKey: `${tf.minutes}:${dayOnly}:${historySeq}`,
+        contextKey: `${tf.minutes}:${sessionKey}:${historySeq}`,
         hostRef,
         chartRef,
         seriesRef: candleSeriesRef,
@@ -2211,21 +2332,30 @@ export function CandleChart({
                         {t.label}
                     </button>
                 ))}
-                {canDayOnly && (
-                    // 單一切換鈕（亮＝僅日盤）— 工具列寬度吃緊，不另開
-                    // 「全盤」鈕與分隔線，窄面板才不會提早折行
+                {(canDayOnly || isUs) && (
+                    // 單一切換鈕 — 工具列寬度吃緊，不另開「全盤」鈕與分隔線，
+                    // 窄面板才不會提早折行。台股期選：亮＝僅日盤；美股沿用同一
+                    // 顆：亮＝只看一般盤（預設），熄＝含盤前盤後
                     <button
-                        className={styles.tfBtn[dayOnly ? 'active' : 'normal']}
-                        title={
-                            dayOnly
-                                ? `僅日盤（${daySessionLabel(contract.security_type)}），指標也只用日盤計算 — 點擊切回全盤`
-                                : `全盤（日盤＋夜盤）— 點擊改為僅日盤 ${daySessionLabel(contract.security_type)}`
-                        }
-                        aria-pressed={dayOnly}
-                        onClick={() => pickSessionMode(dayOnly ? 'all' : 'day')}
+                        className={styles.tfBtn[sessionBtn.active ? 'active' : 'normal']}
+                        title={sessionBtn.title}
+                        aria-pressed={sessionBtn.active}
+                        data-testid={isUs ? 'us-session-toggle' : undefined}
+                        onClick={() => pickSessionMode(sessionBtn.next)}
                     >
-                        日盤
+                        {sessionBtn.label}
                     </button>
+                )}
+                {usExtended && (
+                    // 盤前盤後沒有歷史：明白標出來，不讓人以為圖上就是完整的盤前盤後
+                    <span
+                        className={styles.tfBtn.normal}
+                        style={{ cursor: 'default' }}
+                        data-testid='us-extended-note'
+                        title='SDK 的歷史只有一般盤；盤前盤後只畫 App 開著時收到的成交，之前的不會出現'
+                    >
+                        盤前盤後僅即時
+                    </span>
                 )}
                 <button
                     className={styles.iconBtn}
@@ -2253,6 +2383,7 @@ export function CandleChart({
                 >
                     <ArrowUpDown size={12} />
                 </button>
+                {!isUs && (<>
                 <span className={styles.toolbarDivider} />
                 <button
                     type='button'
@@ -2297,6 +2428,7 @@ export function CandleChart({
                     </button>
                     );
                 })}
+                </>)}
                 {orderMarket && !isCombo && !warrant && (
                     <ChartOrderButton
                         market={orderMarket}

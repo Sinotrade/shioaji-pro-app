@@ -21,7 +21,8 @@
 
 import { usLinkKey } from '../contract-key';
 import { decIsPositive, decNormalize, decSub } from './decimal';
-import type { SseBidAsk, SseTick } from '../types/market';
+import type { Candle, SseBidAsk, SseTick } from '../types/market';
+import { wallClockToUtc } from '../utils/kbars';
 
 /** SSE 事件名稱與獨立串流路徑 */
 export const US_TICK_EVENT = 'us_tick';
@@ -87,6 +88,8 @@ export interface UsTickMeta {
     /** epoch µs（原值，成交明細顯示用） */
     tsUs?: number;
     volume: number;
+    /** SDK 的累計量（含哪些時段由 SDK 決定）；只拿前後兩筆的差判斷有沒有漏收 */
+    totalVolume?: number;
     /** 1 外盤／2 內盤／0 不明 */
     tickType?: number;
 }
@@ -104,6 +107,19 @@ export function nyDateTime(epochUs: number): { date: string; time: string } {
     const parts = Object.fromEntries(NY_PARTS.formatToParts(new Date(ms)).map(p => [p.type, p.value]));
     const hour = parts.hour === '24' ? '00' : parts.hour;
     return { date: `${parts.year}-${parts.month}-${parts.day}`, time: `${hour}:${parts.minute}:${parts.second}` };
+}
+
+/**
+ * epoch ms（UTC）→ 紐約牆鐘當 UTC 的秒數（圖表時間軸用，與台股的台北牆鐘
+ * 同一套編碼），保留小數秒；無效時間回 NaN。美股圖表與時段框架的「現在」
+ * 都用這一個轉換。
+ */
+export function nyWallClockSec(ms: number): number {
+    if (!Number.isFinite(ms)) return NaN;
+    const whole = Math.floor(ms / 1000) * 1000;
+    const { date, time } = nyDateTime(whole * 1000);
+    if (!date) return NaN;
+    return wallClockToUtc(`${date}T${time}`) + (ms - whole) / 1000;
 }
 
 const str = (v: string | null | undefined) => (v === null || v === undefined ? '' : String(v));
@@ -224,6 +240,7 @@ export function normalizeUsTick(raw: RawUsTick): { tick: SseTick; meta: UsTickMe
             ts: Math.floor(raw.datetime / 1000),
             tsUs: raw.datetime,
             volume: tick.volume,
+            totalVolume: tick.total_volume,
             tickType: tick.tick_type,
         },
     };
@@ -259,53 +276,137 @@ export function usSubscriptionBody(
     };
 }
 
-// ---- 當日 session 的逐筆（給走勢圖；只有訂閱後收到的，沒有歷史） ----
+// ---- 逐筆通知（K 線、走勢、成交明細逐筆接收；store 會合併 tick，量會少算） ----
 
-const SESSION_TICK_LIMIT = 20_000;
-const sessionTicks = new Map<string, UsTickMeta[]>();
 const lastMeta = new Map<string, UsTickMeta>();
 const sessionListeners = new Map<string, Set<() => void>>();
 
+/** 記下最新一筆並同步通知；監聽者在 callback 裡用 getUsTickMeta 讀這一筆 */
 export function recordUsTick(meta: UsTickMeta) {
-    const prev = lastMeta.get(meta.key);
     lastMeta.set(meta.key, meta);
-    let list = sessionTicks.get(meta.key);
-    // 換 session（盤前→盤中→盤後）或換日就重新開始
-    if (!list || (prev && (prev.session !== meta.session || nyDateTime(prev.ts * 1000).date !== nyDateTime(meta.ts * 1000).date))) {
-        list = [];
-        sessionTicks.set(meta.key, list);
-    }
-    list.push(meta);
-    if (list.length > SESSION_TICK_LIMIT) list.splice(0, list.length - SESSION_TICK_LIMIT);
-    if (meta.session === 'Regular') recordRegularMinute(meta);
+    recordUsExtendedTrade(meta);
     sessionListeners.get(meta.key)?.forEach(l => l());
 }
 
-// 一般盤走勢線：每分鐘只留最後一筆（一天最多約 390 點），換日才清；進入盤後
-// 不清，走勢面板才能在盤後繼續畫完整的一般盤。
-const regularLines = new Map<string, { date: string; points: UsTickMeta[] }>();
+// ---- 美股盤前／盤後成交（圖表「含盤前盤後」用） ----
+//
+// SDK 1.8.0b1 的歷史只有一般盤：kbars 只有 09:31–16:00，ticks 只有一般盤＋
+// 收盤競價（16:00:00–16:00:01，session=AfterHours）。盤前、盤後沒有歷史，
+// 只能用 App 開著時收到的即時逐筆。這裡把它們併成 1 分 K 留在記憶體（每個
+// 商品最多留 US_EXTENDED_KEEP_DAYS 個有成交的美東日期，最多記
+// US_EXTENDED_MAX_SYMBOLS 個商品，超過時丟最久沒更新的），圖表切到「含盤前盤後」
+// 時和一般盤歷史接在一起畫。App 重開前的盤前盤後成交就沒有。
+//
+// 時間全部是紐約牆鐘當 UTC 編碼的秒數（nyWallClockSec）。
 
-function recordRegularMinute(meta: UsTickMeta) {
-    const date = nyDateTime(meta.ts * 1000).date;
-    let line = regularLines.get(meta.key);
-    if (!line || line.date !== date) {
-        line = { date, points: [] };
-        regularLines.set(meta.key, line);
+const US_H = 3600;
+const US_DAY = 86400;
+/** 一般盤 09:30–16:00；收盤競價（session=AfterHours）在 16:00:00–16:00:15 */
+const US_OPEN = 9.5 * US_H;
+const US_CLOSE = 16 * US_H;
+const US_CROSS_SEC = 15;
+/** 盤前 04:00 起、盤後到 20:00 */
+export const US_EXTENDED_START = 4 * US_H;
+export const US_EXTENDED_END = 20 * US_H;
+/** 收盤後的成交（台股定盤、美股收盤競價）併進最後一根的寬限，與 intraday-session 的 CLOSE_GRACE 相同 */
+const US_CLOSE_GRACE = 240;
+/** 依「有成交的美東日期」計，週末、假日不佔名額 */
+export const US_EXTENDED_KEEP_DAYS = 5;
+/** 全域上限：超過時丟最久沒有新成交的商品（Map 依插入順序，更新時移到最後） */
+export const US_EXTENDED_MAX_SYMBOLS = 100;
+
+/** 這筆是不是一般盤 K 線的成交（Regular，或收盤競價那幾秒的 AfterHours） */
+export function isUsRegularTrade(session: string | null | undefined, wallSec: number): boolean {
+    if (session === 'Regular') return true;
+    if (session !== 'AfterHours' || !Number.isFinite(wallSec)) return false;
+    const close = Math.floor(wallSec / US_DAY) * US_DAY + US_CLOSE;
+    return wallSec >= close && wallSec < close + US_CROSS_SEC;
+}
+
+/** 盤前／盤後（不含收盤競價）的成交，時間在 04:00–20:00（含收盤寬限） */
+export function isUsExtendedTrade(session: string | null | undefined, wallSec: number): boolean {
+    if (session !== 'PreMarket' && session !== 'AfterHours') return false;
+    if (!Number.isFinite(wallSec) || isUsRegularTrade(session, wallSec)) return false;
+    const tod = wallSec - Math.floor(wallSec / US_DAY) * US_DAY;
+    return tod >= US_EXTENDED_START && tod <= US_EXTENDED_END + US_CLOSE_GRACE;
+}
+
+/**
+ * 美股成交的 1 分 K 標籤（K 棒結束時間，close-label-right）：
+ * - 一般盤 09:30–16:00：ceil，09:30:00 整的開盤成交歸 09:31（與歷史 1 分 K 相同）
+ * - 收盤後：一般盤模式 CLOSE_GRACE 內都歸 16:00；含盤前盤後時只有收盤競價那
+ *   幾秒歸 16:00，之後的盤後成交照 ceil
+ * - 含盤前盤後：04:00:00 整歸 04:01，20:00 之後的寬限內歸 20:00
+ */
+export function usMinuteLabel(wallSec: number, extended = false): number {
+    const d0 = Math.floor(wallSec / US_DAY) * US_DAY;
+    const tod = wallSec - d0;
+    const ceil = Math.ceil(wallSec / 60) * 60;
+    if (tod >= US_OPEN && tod <= US_CLOSE) return Math.max(d0 + US_OPEN + 60, ceil);
+    if (tod > US_CLOSE && tod <= US_CLOSE + (extended ? US_CROSS_SEC : US_CLOSE_GRACE)) {
+        if (!extended || tod < US_CLOSE + US_CROSS_SEC) return d0 + US_CLOSE;
     }
-    const last = line.points[line.points.length - 1];
-    if (last && Math.floor(last.ts / 60_000) === Math.floor(meta.ts / 60_000)) line.points[line.points.length - 1] = meta;
-    else line.points.push(meta);
+    if (extended) {
+        if (tod >= US_EXTENDED_START && tod <= US_EXTENDED_END) return Math.max(d0 + US_EXTENDED_START + 60, ceil);
+        if (tod > US_EXTENDED_END && tod <= US_EXTENDED_END + US_CLOSE_GRACE) return d0 + US_EXTENDED_END;
+    }
+    return ceil;
 }
 
-/** 當日（紐約日期）一般盤的逐分鐘最後成交 */
-export function getUsRegularLine(key: string): readonly UsTickMeta[] {
-    return regularLines.get(key)?.points ?? EMPTY;
+/** 1 分 K 標籤是否落在一般盤（09:31–16:00） */
+export function isUsRegularLabel(label: number): boolean {
+    const tod = label - Math.floor(label / US_DAY) * US_DAY;
+    return tod > US_OPEN && tod <= US_CLOSE;
 }
 
-export function getUsSessionTicks(key: string): readonly UsTickMeta[] {
-    return sessionTicks.get(key) ?? EMPTY;
+type ExtendedBook = { bars: Map<number, Candle>; days: number[] /* 由舊到新 */ };
+const extendedBars = new Map<string, ExtendedBook>();
+
+function recordUsExtendedTrade(meta: UsTickMeta) {
+    if (!(meta.volume > 0)) return;
+    const price = Number(meta.price);
+    if (!Number.isFinite(price) || price <= 0) return;
+    const t = nyWallClockSec(meta.tsUs !== undefined ? meta.tsUs / 1000 : meta.ts);
+    if (!isUsExtendedTrade(meta.session, t)) return;
+    const label = usMinuteLabel(t, true);
+    let book = extendedBars.get(meta.key);
+    if (book) extendedBars.delete(meta.key);
+    else book = { bars: new Map(), days: [] };
+    extendedBars.set(meta.key, book); // 移到最新
+    if (extendedBars.size > US_EXTENDED_MAX_SYMBOLS) {
+        const oldest = extendedBars.keys().next().value;
+        if (oldest !== undefined) extendedBars.delete(oldest);
+    }
+    const bars = book.bars;
+    const bar = bars.get(label);
+    if (bar) {
+        // 收盤取最後抵達的那筆（與即時 K 棒相同）
+        bar.high = Math.max(bar.high, price);
+        bar.low = Math.min(bar.low, price);
+        bar.close = price;
+        bar.volume += meta.volume;
+    } else {
+        bars.set(label, { time: label, open: price, high: price, low: price, close: price, volume: meta.volume });
+        // 只留最近 US_EXTENDED_KEEP_DAYS 個有成交的日期（週末、假日不算）
+        const day = Math.floor(label / US_DAY);
+        if (!book.days.includes(day)) {
+            book.days.push(day);
+            book.days.sort((a, b) => a - b);
+            if (book.days.length > US_EXTENDED_KEEP_DAYS) {
+                book.days.splice(0, book.days.length - US_EXTENDED_KEEP_DAYS);
+                const cutoff = book.days[0]! * US_DAY;
+                for (const k of bars.keys()) if (k < cutoff) bars.delete(k);
+            }
+        }
+    }
 }
-const EMPTY: readonly UsTickMeta[] = [];
+
+/** 這個商品記到的盤前／盤後 1 分 K（依時間排序的複本） */
+export function getUsExtendedBars(key: string): Candle[] {
+    const book = extendedBars.get(key);
+    if (!book) return [];
+    return [...book.bars.values()].map(b => ({ ...b })).sort((a, b) => a.time - b.time);
+}
 
 export function getUsTickMeta(key: string): UsTickMeta | undefined {
     return lastMeta.get(key);
@@ -326,9 +427,8 @@ export const US_SESSION_LABEL: Record<UsTradingSession, string> = {
 };
 
 export function resetUsQuotesForTest() {
-    sessionTicks.clear();
-    regularLines.clear();
     knownReferences.clear();
     lastMeta.clear();
     sessionListeners.clear();
+    extendedBars.clear();
 }

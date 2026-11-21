@@ -11,12 +11,11 @@ describe('usBlockRoute', () => {
     it('blocks every unsupported panel for US contracts', () => {
         for (const t of US_UNSUPPORTED) expect(usBlockRoute(t, US)).toEqual({ kind: 'unsupported' });
     });
-    it('routes chart, intraday, tape and depth to the US components', () => {
-        expect(usBlockRoute('chart', US)).toEqual({ kind: 'chart' });
-        expect(usBlockRoute('intraday', US)).toEqual({ kind: 'intraday' });
-        expect(usBlockRoute('tape', US)).toEqual({ kind: 'tape' });
-        expect(usBlockRoute('depth', US)).toEqual({ kind: 'depth' });
-        for (const t of ['chart', 'intraday', 'tape', 'depth'] as const) expect(US_UNSUPPORTED.has(t)).toBe(false);
+    it('lets chart, intraday, tape and depth fall through to the shared TW components', () => {
+        for (const t of ['chart', 'intraday', 'tape', 'depth'] as const) {
+            expect(usBlockRoute(t, US)).toBeNull();
+            expect(US_UNSUPPORTED.has(t)).toBe(false);
+        }
     });
     it('keeps panels without US data unsupported', () => {
         for (const t of ['depthmap', 'volprofile', 'replay', 'chips', 'optchain', 'conditional', 'backtest'] as const) {
@@ -47,12 +46,14 @@ describe('App wiring', () => {
             expect(guard).toBeLessThan(popout.indexOf(branch));
         }
         expect(popout).toContain("usRoute?.kind === 'unsupported'");
-        for (const kind of ['chart', 'intraday', 'tape', 'depth']) expect(popout).toContain(`usRoute?.kind === '${kind}'`);
     });
 
     it('main window BlockBody uses the same route', () => {
         const main = body('BlockBody');
         expect(main.indexOf('usBlockRoute(block.type, contract)')).toBeLessThan(main.indexOf('switch (block.type)'));
-        for (const kind of ['chart', 'intraday', 'tape', 'depth']) expect(main).toContain(`usRoute?.kind === '${kind}'`);
+    });
+
+    it('no longer mounts separate US chart/intraday/tape/depth/quote-board components', () => {
+        for (const name of ['UsCandleChart', 'UsIntraday', 'UsTickTape', 'UsDepth', 'UsQuoteBoard']) expect(src).not.toContain(name);
     });
 });
