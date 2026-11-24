@@ -8,7 +8,8 @@
 // 外接 sidecar 可能還是 b1：b1 的 TickFull 會被 400 拒絕（parse http data failed），
 // 而 b1 的 Tick 本來就是全部成交。判斷順序：
 //   1. /info 版本已知 → ≥ 1.8.0-beta.2 用 TickFull，更舊用 Tick（不先送一次失敗請求）
-//   2. 版本不明 → 先試 TickFull；被 4xx 拒絕就記下這個 sidecar 不支援，改用 Tick
+//   2. 版本不明 → 先試 TickFull；被 400 拒絕就記下這個 sidecar 不支援，改用 Tick。
+//      這個記錄在 /info 被清掉（斷線、換位址，sidecar 可能換了版本重啟）時作廢。
 //
 // 台股不受影響：台股 sidecar 拒收 TickFull，這裡只處理美股。
 //
@@ -16,7 +17,7 @@
 // 本 App 的美股漏收判斷用 total_volume 前後差（intraday-chart），不看 serial_num。
 
 import { getApiBase, serverVersionAtLeast180b2 } from '../runtime';
-import { knownServerInfo } from '../server-info-store';
+import { knownServerInfo, subscribeServerInfo } from '../server-info-store';
 
 export type UsTickWire = 'TickFull' | 'Tick';
 
@@ -25,30 +26,78 @@ export function sdkSupportsUsTickFull(version: string | undefined | null): boole
     return serverVersionAtLeast180b2(version);
 }
 
-/** 版本不明時實際被拒絕過的 sidecar（base＋當時的版本字串） */
+/** 版本不明時實際拒絕過 TickFull 的 sidecar（base） */
 const rejected = new Set<string>();
-const rejectKey = (base: string) => `${base}|${knownServerInfo()?.version ?? ''}`;
+
+// /info 被清掉＝sidecar 可能重啟成別的版本：拒絕記錄作廢，下一次重新試
+// （測試若整個 mock 掉 server-info-store 可能沒有 subscribeServerInfo：略過即可）
+try {
+    subscribeServerInfo(() => {
+        if (!knownServerInfo()) rejected.clear();
+    });
+} catch {
+    // no server-info store in this context
+}
 
 /** 現在對目前 sidecar 訂美股逐筆要送的 quote_type */
 export function usTickWire(): UsTickWire {
     const supported = sdkSupportsUsTickFull(knownServerInfo()?.version);
     if (supported !== null) return supported ? 'TickFull' : 'Tick';
-    return rejected.has(rejectKey(getApiBase())) ? 'Tick' : 'TickFull';
+    return rejected.has(getApiBase()) ? 'Tick' : 'TickFull';
 }
 
-/** TickFull 被目前 sidecar 拒絕：之後（版本仍不明時）改用 Tick */
-export function noteUsTickFullRejected(base = getApiBase()) {
-    rejected.add(rejectKey(base));
+/** TickFull 被 base 這個 sidecar 拒絕：之後（版本仍不明時）改用 Tick */
+export function noteUsTickFullRejected(base: string) {
+    rejected.add(base);
 }
 
-/** 被拒絕是請求本身的問題（4xx）：舊 sidecar 不認得 TickFull 時回 400 */
+/**
+ * 這個失敗是不是「sidecar 不認得 TickFull」：只認 400（b1 回 parse http data failed），
+ * 而且 /info 不能已知是支援的版本。401／403／429 等其他錯誤照原樣丟出，不降級。
+ */
 export function isUsTickFullRejection(reason: unknown): boolean {
-    return reason instanceof Error && /^4\d\d\b/.test(reason.message);
+    if (!(reason instanceof Error) || !/^400\b/.test(reason.message)) return false;
+    return sdkSupportsUsTickFull(knownServerInfo()?.version) !== true;
 }
 
 /** registry key（US:CODE:Tick）是不是美股逐筆訂閱 */
 export function isUsTickRegistryKey(key: string): boolean {
     return /^US:[^:]+:Tick$/.test(key);
+}
+
+// ---- 上一次載入實際送出的 quote_type（重新整理後退訂／換種類用） ----
+//
+// 頁面重新整理後 sidecar 上的訂閱還在，但本頁 registry 是空的。記在 sessionStorage
+// （與 quote-ownership 的 ledger 同一個生命週期），退訂時用當初的種類，訂閱時發現
+// 種類不同就先退掉舊的，避免同一商品同時有 Tick 與 TickFull。
+
+const wireStoreKey = (base: string) => `sj-us-tick-wire:${base}`;
+
+function readWires(base: string): Record<string, UsTickWire> {
+    try {
+        const raw = JSON.parse(sessionStorage.getItem(wireStoreKey(base)) ?? '{}') as Record<string, unknown>;
+        const out: Record<string, UsTickWire> = {};
+        for (const [k, v] of Object.entries(raw ?? {})) if (v === 'Tick' || v === 'TickFull') out[k] = v;
+        return out;
+    } catch {
+        return {};
+    }
+}
+
+/** 上一次（含本頁）在 base 對 key 實際訂閱成功的種類 */
+export function rememberedUsTickWire(base: string, key: string): UsTickWire | undefined {
+    return readWires(base)[key];
+}
+
+export function rememberUsTickWire(base: string, key: string, wire: UsTickWire | null) {
+    try {
+        const wires = readWires(base);
+        if (wire) wires[key] = wire;
+        else delete wires[key];
+        sessionStorage.setItem(wireStoreKey(base), JSON.stringify(wires));
+    } catch {
+        // 無法寫入時只是少了重新整理後的對照
+    }
 }
 
 export function resetUsTickWireForTest() {

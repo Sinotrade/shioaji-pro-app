@@ -67,7 +67,7 @@ import { todayStr } from './utils/date';
 import { profitLossCacheKey, withProfitLossCache } from './profit-loss-cache-lock';
 import { usLinkKey } from './contract-key';
 import { US_QUOTE_TYPES, usSubscriptionBody } from './us/us-quotes';
-import { isUsTickFullRejection, noteUsTickFullRejected, usTickWire } from './us/us-tick-wire';
+import { isUsTickFullRejection, noteUsTickFullRejected, rememberedUsTickWire, rememberUsTickWire, usTickWire } from './us/us-tick-wire';
 
 export interface ServerInfo {
     name: string;
@@ -496,40 +496,74 @@ async function postUsSubscription(path: 'subscribe' | 'unsubscribe', body: Retur
     return response;
 }
 
-/** 美股訂閱：Tick 依 sidecar 能力送 TickFull 或 Tick；registry 記實際送出的 body（重連照它重播） */
+const usBaseChanged = () => Object.assign(new Error('伺服器位址已變更，美股行情訂閱未完成'), { subscriptionNotStarted: true as const });
+
+/**
+ * 美股訂閱：Tick 依 sidecar 能力送 TickFull 或 Tick；registry 記實際送出的 body（重連照它重播），
+ * sessionStorage 也記一份（重新整理後退訂／換種類用）。同一商品已經用另一種訂著（本頁或上一次
+ * 載入）時先退掉舊的；退不掉就不訂新的，避免 Tick 與 TickFull 同時在。
+ */
 async function subscribeUsQuote(contract: ContractBase, quoteType: UsQuoteType): Promise<SubscriptionResponse> {
     const key = usLinkKey(contract.code);
     const holdKey = `${key}:${quoteType}`;
-    let body = usSubscriptionBody(contract, quoteType === 'Tick' ? usTickWire() : quoteType);
+    if (quoteType !== 'Tick') {
+        const body = usSubscriptionBody(contract, quoteType);
+        const response = await postUsSubscription('subscribe', body, '美股行情訂閱失敗');
+        registerSubscriptionRaw(key, quoteType, body);
+        if (!usStreamHolds.has(holdKey)) usStreamHolds.set(holdKey, retainUsQuoteStreams());
+        return response;
+    }
+    const base = getApiBase();
+    const registered = getRegisteredSubscription(key, 'Tick')?.quote_type;
+    const previous = registered === 'Tick' || registered === 'TickFull' ? registered : rememberedUsTickWire(base, key);
+    let wire = usTickWire();
+    if (previous && previous !== wire) {
+        await postUsSubscription('unsubscribe', usSubscriptionBody(contract, previous), '取消行情訂閱失敗');
+        rememberUsTickWire(base, key, null);
+        if (getApiBase() !== base) throw usBaseChanged();
+    }
     let response: SubscriptionResponse;
     try {
-        response = await postUsSubscription('subscribe', body, '美股行情訂閱失敗');
+        response = await postUsSubscription('subscribe', usSubscriptionBody(contract, wire), '美股行情訂閱失敗');
     } catch (e) {
-        // 舊 sidecar（1.8.0b1）不認得 TickFull → 記下並改訂 Tick（b1 的 Tick 就是全部成交）
-        if (body.quote_type !== 'TickFull' || !isUsTickFullRejection(e)) throw e;
-        noteUsTickFullRejected();
-        body = usSubscriptionBody(contract, 'Tick');
-        response = await postUsSubscription('subscribe', body, '美股行情訂閱失敗');
+        // 舊 sidecar（1.8.0b1）不認得 TickFull → 記下並改訂 Tick（b1 的 Tick 就是全部成交）。
+        // 回應晚到、位址已經換了：不記、不改訂（新的 sidecar 要自己判斷）
+        if (wire !== 'TickFull' || !isUsTickFullRejection(e)) throw e;
+        if (getApiBase() !== base) throw usBaseChanged();
+        noteUsTickFullRejected(base);
+        wire = 'Tick';
+        response = await postUsSubscription('subscribe', usSubscriptionBody(contract, wire), '美股行情訂閱失敗');
     }
-    registerSubscriptionRaw(key, quoteType, body);
+    registerSubscriptionRaw(key, quoteType, usSubscriptionBody(contract, wire));
+    rememberUsTickWire(base, key, wire);
     if (!usStreamHolds.has(holdKey)) usStreamHolds.set(holdKey, retainUsQuoteStreams());
     return response;
 }
 
-/** 美股退訂：用訂閱時實際送出的 quote_type；沒有記錄（上次載入留下的）就用目前的判斷，被拒再試 Tick */
+/**
+ * 美股退訂：用實際訂閱的種類（本頁 registry，其次是上一次載入記下的）；都沒有才用目前的判斷，
+ * 這時 TickFull 被拒（舊 sidecar）再試 Tick。
+ */
 async function unsubscribeUsQuote(contract: ContractBase, quoteType: UsQuoteType): Promise<SubscriptionResponse> {
     const key = usLinkKey(contract.code);
     const holdKey = `${key}:${quoteType}`;
-    const registered = getRegisteredSubscription(key, quoteType)?.quote_type;
-    const wire = quoteType !== 'Tick' ? quoteType
-        : registered === 'TickFull' || registered === 'Tick' ? registered : usTickWire();
+    const base = getApiBase();
     let response: SubscriptionResponse;
-    try {
-        response = await postUsSubscription('unsubscribe', usSubscriptionBody(contract, wire), '取消行情訂閱失敗');
-    } catch (e) {
-        if (wire !== 'TickFull' || registered === 'TickFull' || !isUsTickFullRejection(e)) throw e;
-        noteUsTickFullRejected();
-        response = await postUsSubscription('unsubscribe', usSubscriptionBody(contract, 'Tick'), '取消行情訂閱失敗');
+    if (quoteType !== 'Tick') {
+        response = await postUsSubscription('unsubscribe', usSubscriptionBody(contract, quoteType), '取消行情訂閱失敗');
+    } else {
+        const registered = getRegisteredSubscription(key, 'Tick')?.quote_type;
+        const known = registered === 'Tick' || registered === 'TickFull' ? registered : rememberedUsTickWire(base, key);
+        const wire = known ?? usTickWire();
+        try {
+            response = await postUsSubscription('unsubscribe', usSubscriptionBody(contract, wire), '取消行情訂閱失敗');
+        } catch (e) {
+            if (known || wire !== 'TickFull' || !isUsTickFullRejection(e)) throw e;
+            if (getApiBase() !== base) throw usBaseChanged();
+            noteUsTickFullRejected(base);
+            response = await postUsSubscription('unsubscribe', usSubscriptionBody(contract, 'Tick'), '取消行情訂閱失敗');
+        }
+        rememberUsTickWire(base, key, null);
     }
     unregisterSubscription(key, quoteType);
     usStreamHolds.get(holdKey)?.();

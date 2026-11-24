@@ -508,22 +508,32 @@ async function replayUsTick(
     registered: Record<string, unknown>,
     post: (path: 'subscribe' | 'unsubscribe', body: Record<string, unknown>) => Promise<void>,
 ) {
+    const base = getApiBase();
     const wanted = usTickWire();
     let body = registered.quote_type === wanted ? registered : { ...registered, quote_type: wanted };
     if (body !== registered) {
-        // sidecar 重啟過時舊訂閱本來就不在，退訂失敗不影響
-        try { await post('unsubscribe', registered); } catch { /* best effort */ }
+        // 舊的那種一定要先退掉（sidecar 對沒訂的退訂回 200）；只有 TickFull 被舊 sidecar
+        // 以 400 拒絕時可確定它不在。其他失敗就整筆留到下一輪重試，不先訂新的
+        try {
+            await post('unsubscribe', registered);
+        } catch (e) {
+            if (registered.quote_type !== 'TickFull' || !isUsTickFullRejection(e)) throw e;
+        }
     }
     try {
         await post('subscribe', body);
     } catch (e) {
-        if (body.quote_type !== 'TickFull' || !isUsTickFullRejection(e)) throw e;
-        noteUsTickFullRejected();
+        if (body.quote_type !== 'TickFull' || !isUsTickFullRejection(e) || getApiBase() !== base) throw e;
+        noteUsTickFullRejected(base);
         body = { ...registered, quote_type: 'Tick' };
         await post('subscribe', body);
     }
-    // 重播期間被退訂了就不要再登記回去
-    if (subscriptionRegistry.get(key) === registered) subscriptionRegistry.set(key, body);
+    if (subscriptionRegistry.get(key) === registered) {
+        subscriptionRegistry.set(key, body);
+    } else if (!subscriptionRegistry.has(key)) {
+        // 重播期間已經被退訂：剛訂上的要退掉，否則沒人管
+        try { await post('unsubscribe', body); } catch { /* 下次載入的孤兒清理再試 */ }
+    }
 }
 
 let resubscribeRetryTimer: ReturnType<typeof setTimeout> | null = null;
