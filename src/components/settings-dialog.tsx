@@ -642,7 +642,7 @@ export function QuotesSection() {
                 ))}
             </div>
             <span className={hud.emptyHint}>
-                切換後立即套用到目前訂閱中的美股，不必重新啟動；成交明細面板標題列的「完整」鈕是同一個設定。
+                切換後立即套用到目前訂閱中的美股，不必重新啟動；成交明細面板標題列的圖層圖示鈕是同一個設定。
             </span>
         </>
     );

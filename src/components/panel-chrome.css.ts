@@ -198,22 +198,29 @@ export const pinBtn = styleVariants({
     ],
 });
 
-// 面板自己的開關鈕（成交明細「完整」）：與連動鈕同一個膠囊樣式，按下＝accent
-export const toggleBtn = styleVariants({
+// 面板自己的圖示開關鈕（成交明細「完整成交」）：與彈出／關閉同尺寸的圖示鈕，按下＝accent 底
+const iconToggleBase = style({
+    ...compactControl,
+    width: '18px',
+    height: '18px',
+    cursor: 'pointer',
+    border: 'none',
+    borderRadius: vars.radius.sm,
+    flexShrink: 0,
+});
+export const iconToggleBtn = styleVariants({
     off: [
-        pinBase,
+        iconToggleBase,
         {
             color: vars.color.mutedForeground,
-            borderColor: vars.color.border,
             background: 'transparent',
-            ':hover': { color: vars.color.foreground, borderColor: vars.color.borderBright },
+            ':hover': { color: vars.color.foreground, background: vars.color.muted },
         },
     ],
     on: [
-        pinBase,
+        iconToggleBase,
         {
             color: vars.color.accent,
-            borderColor: vars.color.accent,
             background: vars.color.accentDim,
         },
     ],
