@@ -587,7 +587,15 @@ async function unsubscribeUsQuote(contract: ContractBase, quoteType: UsQuoteType
         const first = known ?? usTickWire();
         const post = (path: 'unsubscribe', kind: 'Tick' | 'TickFull') =>
             postUsSubscription(path, usSubscriptionBody(contract, kind), '取消行情訂閱失敗');
-        for (const kind of [first, otherUsTickKind(first)]) await dropUsTickKind(kind, base, post);
+        try {
+            for (const kind of [first, otherUsTickKind(first)]) await dropUsTickKind(kind, base, post);
+        } catch (e) {
+            // 只退掉一部分（例如 Tick 已退、TickFull 429）：登記還在但實際可能沒有逐筆。
+            // 標記對帳，重新開啟的消費者（ownership 仍視為訂著）或 5 秒後的對帳會補訂要的種類
+            setUsTickReconcile(holdKey, true, base);
+            scheduleUsTickReconcile();
+            throw e;
+        }
         setUsTickReconcile(holdKey, false, base);
         rememberUsTickWire(base, key, null);
         unregisterSubscription(key, quoteType);

@@ -641,4 +641,32 @@ describe('uncertain outcomes, stalled requests and reconcile (Codex rounds 3-4)'
         await vi.advanceTimersByTimeAsync(10_000);
         expect(m.post.mock.calls.length).toBe(before);
     });
+
+    it('round 5: a partial close (Tick 2xx, TickFull 429) marks reconcile, so quotes come back for a reopened consumer', async () => {
+        m.version = '1.8.0';
+        vi.stubGlobal('BroadcastChannel', undefined);
+        const { retainQuote, RELEASE_GRACE_MS } = await import('../quote-ownership');
+        const stream = await import('../stream');
+        m.post.mockImplementation((path: string, body: Record<string, unknown>) =>
+            path.endsWith('/unsubscribe') && body.quote_type === 'TickFull'
+                ? Promise.reject(Object.assign(new Error('429 Too Many Requests'), { status: 429 }))
+                : Promise.resolve(ok));
+        const release = retainQuote(aapl, 'Tick');
+        await vi.waitFor(() => expect(kinds()).toEqual([['subscribe', 'AAPL', 'Tick']]));
+        release();
+        await vi.advanceTimersByTimeAsync(RELEASE_GRACE_MS);
+        await vi.waitFor(() => expect(kinds().slice(1)).toEqual([['unsubscribe', 'AAPL', 'Tick'], ['unsubscribe', 'AAPL', 'TickFull']]));
+        // Tick 已退、TickFull 沒退成：登記還在，且標記要對帳
+        expect(stream.getRegisteredSubscription('US:AAPL', 'Tick')).toEqual(usBody('AAPL', 'Tick'));
+        expect(stream.needsUsTickReconcile('US:AAPL:Tick')).toBe(true);
+        // 消費者重新開啟：ownership 仍視為訂著、不送訂閱 — 靠對帳補訂
+        m.post.mockClear();
+        m.post.mockResolvedValue(ok);
+        const reopen = retainQuote(aapl, 'Tick');
+        await vi.advanceTimersByTimeAsync(5000);
+        await vi.waitFor(() => expect(kinds()).toEqual([['unsubscribe', 'AAPL', 'TickFull'], ['subscribe', 'AAPL', 'Tick']]));
+        expect(activeOf('AAPL').active).toEqual(['Tick']);
+        expect(stream.needsUsTickReconcile('US:AAPL:Tick')).toBe(false);
+        reopen();
+    });
 });
