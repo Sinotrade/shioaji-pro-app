@@ -8,7 +8,7 @@ import { retainQuote } from '../lib/quote-ownership';
 // 一般盤），即時逐筆含盤前／盤後；時間是美東時間，跨日標日期分隔。資料
 // 轉接見 lib/us/us-tape.ts。
 
-import { Layers } from 'lucide-react';
+import { Funnel } from 'lucide-react';
 import { memo, useEffect, useMemo, useState } from 'react';
 import { contractLinkKey } from '../lib/contract-key';
 import { fetchLastTicks } from '../lib/shioaji';
@@ -100,23 +100,23 @@ const TapeRowView = memo(function TapeRowView({
 });
 
 /**
- * 美股成交明細標題列的「完整成交」圖示鈕（lucide Layers）：與 設定 → 行情「美股成交資料」同一個設定。
- * 按下＝完整成交（TickFull，含碎股與特殊條件成交）；放開＝一般成交（Tick，預設）。
+ * 美股成交明細標題列的過濾鈕（lucide Funnel）：與 設定 → 行情「美股成交資料」同一個設定。
+ * 亮著（預設）＝一般成交（Tick，有過濾）；點掉＝完整成交（TickFull，含碎股與特殊條件成交）。
  */
 export function UsTickDetailToggle() {
-    const full = useUsTickDetail() === 'TickFull';
+    const filtered = useUsTickDetail() !== 'TickFull';
     return (
         <button
             type='button'
-            className={chrome.iconToggleBtn[full ? 'on' : 'off']}
-            aria-label='完整成交'
-            aria-pressed={full}
-            title={full
-                ? '完整成交：含碎股與特殊條件成交的每一筆（點擊改回一般成交）'
-                : '一般成交：正規盤會更新最新價的成交，加上盤前、盤後、夜盤的整股成交（點擊改看完整成交）'}
-            onClick={() => setUsTickDetail(full ? 'Tick' : 'TickFull')}
+            className={chrome.iconToggleBtn[filtered ? 'on' : 'off']}
+            aria-label='只看一般成交'
+            aria-pressed={filtered}
+            title={filtered
+                ? '一般成交：正規盤會更新最新價的成交，加上盤前、盤後、夜盤的整股成交（點擊取消過濾，看完整成交）'
+                : '完整成交：含碎股與特殊條件成交的每一筆（點擊改回一般成交）'}
+            onClick={() => setUsTickDetail(filtered ? 'TickFull' : 'Tick')}
         >
-            <Layers size={11} aria-hidden />
+            <Funnel size={11} aria-hidden />
         </button>
     );
 }

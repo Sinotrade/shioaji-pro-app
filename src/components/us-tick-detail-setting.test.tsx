@@ -1,4 +1,4 @@
-// 美股成交資料設定：設定 → 行情 的兩個選項，與成交明細標題列圖層圖示鈕共用同一個設定
+// 美股成交資料設定：設定 → 行情 的兩個選項，與成交明細標題列漏斗過濾鈕共用同一個設定
 import { createElement } from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
@@ -49,18 +49,18 @@ it('settings 行情: two radio options, 一般成交 checked by default; choosin
     expect(after.map(r => r.props['aria-checked'])).toEqual([false, true]);
 });
 
-it('trade list full-trades icon button toggles the same setting and shows the pressed state', async () => {
+it('trade list funnel button: lit (pressed) by default = 一般成交; un-pressing switches to 完整成交', async () => {
     await act(async () => { view = create(createElement(UsTickDetailToggle)); });
     const button = () => view!.root.findByType('button');
-    expect(button().props['aria-pressed']).toBe(false);
-    expect(button().props['aria-label']).toBe('完整成交');
+    expect(button().props['aria-pressed']).toBe(true);
+    expect(button().props['aria-label']).toBe('只看一般成交');
     await act(async () => button().props.onClick());
     expect(getUsTickDetail()).toBe('TickFull');
-    expect(button().props['aria-pressed']).toBe(true);
+    expect(button().props['aria-pressed']).toBe(false);
     await act(async () => button().props.onClick());
     expect(getUsTickDetail()).toBe('Tick');
-    expect(button().props['aria-pressed']).toBe(false);
+    expect(button().props['aria-pressed']).toBe(true);
     // 從設定切換也會反映在按鈕上
     await act(async () => setUsTickDetail('TickFull'));
-    expect(button().props['aria-pressed']).toBe(true);
+    expect(button().props['aria-pressed']).toBe(false);
 });

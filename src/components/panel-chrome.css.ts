@@ -198,7 +198,7 @@ export const pinBtn = styleVariants({
     ],
 });
 
-// 面板自己的圖示開關鈕（成交明細「完整成交」）：與彈出／關閉同尺寸的圖示鈕，按下＝accent 底
+// 面板自己的圖示開關鈕（成交明細漏斗＝一般成交過濾）：與彈出／關閉同尺寸的圖示鈕，按下＝accent 底
 const iconToggleBase = style({
     ...compactControl,
     display: 'inline-flex',
