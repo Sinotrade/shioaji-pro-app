@@ -251,6 +251,7 @@ describe('apply guide review round 2', () => {
     it('will not launch a profile that was switched to production', async () => {
         await importWith({ ...EMPTY_DESKTOP_SETTINGS, activeProfileId: 'p1', profiles: [{ ...profile, environment: 'production' }] });
         expect(json()).toContain('已改成正式環境');
+        expect(json()).not.toContain('開始使用');
         expect(button('啟動模擬環境')!.props.disabled).toBe(true);
     });
 

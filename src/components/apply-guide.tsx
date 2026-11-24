@@ -210,7 +210,7 @@ export function ApplyGuide({ guide, settings, busy, agentAvailable, onToggleAgen
                         {profile?.apiKeyMasked && <p className={g.doneMeta}>API Key {profile.apiKeyMasked}</p>}
                     </div>
                 </div>
-                <p className={g.lead}>{plaintext ? '' : '金鑰已存進這台電腦的系統憑證庫。'}{copy.lead}</p>
+                <p className={g.lead}>{plaintext ? '' : '金鑰已存進這台電腦的系統憑證庫。'}{production ? '' : copy.lead}</p>
                 {plaintext && <Callout tone="warn" icon={<ShieldAlert size={16} />} title="金鑰以檔案保存">
                     這台電腦沒有可用的系統憑證庫，金鑰與憑證密碼存在 {settings.fallbackPath}（只有你的帳號能讀寫，0600）。同一使用者執行的程式（含 Agent）仍可能讀到這個檔案。
                 </Callout>}
