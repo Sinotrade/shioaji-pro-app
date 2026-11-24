@@ -59,7 +59,7 @@ import { ReplayPanel } from './components/replay-panel';
 import { ScannerPanel } from './components/scanner-panel';
 import { SectorHeatmap } from './components/sector-heatmap';
 import { StockFuturesPanel } from './components/stock-futures-panel';
-import { TickTape } from './components/tick-tape';
+import { TickTape, UsTickDetailToggle } from './components/tick-tape';
 import { TrayPanel } from './components/tray-panel';
 import { VolProfile } from './components/vol-profile';
 import { WarrantPanel } from './components/warrant-panel';
@@ -733,6 +733,7 @@ function BlockView(props: BlockViewProps) {
                 pin={block.pin}
                 currentCode={selected ? contractLinkKey(selected) : null}
                 onPinChange={(pin) => onPinChange(block.id, pin)}
+                actions={block.type === 'tape' && contract?.region === 'US' ? <UsTickDetailToggle /> : undefined}
                 link={block.type !== 'flash' ? undefined : {
                     mode: linkMode,
                     groups: linkGroups,
@@ -991,6 +992,7 @@ function PopoutView({
                     title={meta.label}
                     symbolCode={contract?.code}
                     symbolName={type === 'flash' || type === 'oddspread' ? undefined : contract?.name}
+                    actions={type === 'tape' && contract?.region === 'US' ? <UsTickDetailToggle /> : undefined}
                 />
                 <PanelErrorBoundary label={meta.label}>
                     {body}

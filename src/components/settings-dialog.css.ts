@@ -142,3 +142,61 @@ export const errorText = style({
     color: vars.color.danger,
     whiteSpace: 'pre-wrap',
 });
+
+// ---- 單選清單（每個選項帶一行說明）：行情 → 美股成交資料 ----
+export const radioList = style({
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '4px',
+});
+
+const radioItemBase = style({
+    display: 'grid',
+    gridTemplateColumns: '14px 1fr',
+    columnGap: '8px',
+    rowGap: '2px',
+    alignItems: 'start',
+    textAlign: 'left',
+    fontFamily: vars.font.body,
+    padding: '7px 9px',
+    cursor: 'pointer',
+    background: 'transparent',
+    border: `1px solid ${vars.color.border}`,
+    borderRadius: vars.radius.sm,
+    color: vars.color.foreground,
+    transition: 'all 0.12s',
+});
+
+export const radioItem = styleVariants({
+    off: [radioItemBase, { ':hover': { borderColor: vars.color.borderBright } }],
+    on: [radioItemBase, { borderColor: vars.color.accent, background: vars.color.accentDim }],
+});
+
+export const radioDot = styleVariants({
+    off: {
+        width: '12px',
+        height: '12px',
+        marginTop: '1px',
+        borderRadius: '999px',
+        border: `1px solid ${vars.color.mutedForeground}`,
+    },
+    on: {
+        width: '12px',
+        height: '12px',
+        marginTop: '1px',
+        borderRadius: '999px',
+        border: `4px solid ${vars.color.accent}`,
+    },
+});
+
+export const radioTitle = style({
+    fontSize: '0.72rem',
+    fontWeight: 600,
+});
+
+export const radioDesc = style({
+    gridColumn: '2',
+    fontSize: '0.66rem',
+    color: vars.color.mutedForeground,
+    lineHeight: 1.5,
+});

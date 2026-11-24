@@ -1,5 +1,6 @@
-// 美股逐筆訂閱：1.8.0b2／1.8.0 起訂 TickFull（每一筆成交），舊 sidecar（b1）拒收時退回 Tick；
-// 同一個商品不可同時有 Tick 與 TickFull；台股不受影響。
+// 美股逐筆訂閱：預設 Tick（TICL）；設定選「完整成交」時 1.8.0b2／1.8.0 起訂 TickFull，
+// 舊 sidecar（b1）拒收時退回 Tick；切換設定即時改訂；同一個商品不可同時有 Tick 與 TickFull；
+// 台股不受影響。
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const m = vi.hoisted(() => ({
@@ -26,8 +27,19 @@ const calls = (path: string) => m.post.mock.calls.filter(c => c[0] === `/api/v1/
 const b1Reject = (_path: string, body: Record<string, unknown>) =>
     body.quote_type === 'TickFull' ? Promise.reject(Object.assign(new Error('400 parse http data failed'), { status: 400 })) : Promise.resolve({ success: true, message: '' });
 
+const DETAIL_KEY = 'sj-pro-us-tick-detail';
+const storage = new Map<string, string>();
+/** 使用者在設定選了「完整成交」（模組載入時讀 localStorage） */
+const chooseFull = () => storage.set(DETAIL_KEY, 'TickFull');
+
 beforeEach(() => {
     vi.resetModules();
+    storage.clear();
+    vi.stubGlobal('localStorage', {
+        getItem: (k: string) => storage.get(k) ?? null,
+        setItem: (k: string, v: string) => void storage.set(k, v),
+        removeItem: (k: string) => void storage.delete(k),
+    });
     m.post.mockReset();
     m.post.mockResolvedValue({ success: true, message: '' });
     m.version = undefined;
@@ -44,7 +56,43 @@ describe('sdkSupportsUsTickFull', () => {
     });
 });
 
-describe('US Tick subscription wire', () => {
+describe('default: 一般成交 (Tick / TICL)', () => {
+    it('subscribes US Tick as Tick on a 1.8.0 sidecar by default, never TickFull', async () => {
+        m.version = '1.8.0';
+        const { subscribeQuote, unsubscribeQuote } = await import('../shioaji');
+        const { getUsTickDetail } = await import('./us-tick-prefs');
+        expect(getUsTickDetail()).toBe('Tick');
+        await subscribeQuote(aapl, 'Tick');
+        await subscribeQuote(aapl, 'BidAsk');
+        await unsubscribeQuote(aapl, 'Tick');
+        expect(calls('subscribe')).toEqual([usBody('AAPL', 'Tick'), usBody('AAPL', 'BidAsk')]);
+        expect(calls('unsubscribe')).toEqual([usBody('AAPL', 'Tick')]);
+    });
+
+    it('unknown version: Tick directly, no TickFull probe', async () => {
+        const { subscribeQuote } = await import('../shioaji');
+        await subscribeQuote(aapl, 'Tick');
+        expect(calls('subscribe')).toEqual([usBody('AAPL', 'Tick')]);
+    });
+
+    it('an extended-session TICL tick feeds the same SseTick.us fields the session view reads', async () => {
+        const { normalizeUsTick } = await import('./us-quotes');
+        const out = normalizeUsTick({
+            exchange: 'NASDAQ', code: 'AAPL', datetime: Date.UTC(2026, 10, 24, 22, 5) * 1000,
+            price: '231.5', volume: 100, close: '230', high: '232', low: '228',
+            updates_last: false, session: 3, ext_close: '231.5', ext_high: '231.9', ext_low: '229.8',
+            total_volume: 1000,
+        });
+        expect(out?.tick.close).toBe('231.5');
+        expect(out?.tick.us).toMatchObject({
+            session: 'AfterHours', regular: '230', extClose: '231.5', extHigh: '231.9', extLow: '229.8', updatesLast: false,
+        });
+    });
+});
+
+describe('US Tick subscription wire (完整成交 chosen)', () => {
+    beforeEach(chooseFull);
+
     it('subscribes US Tick as TickFull (BidAsk unchanged) on a 1.8.0 sidecar; Taiwan stays Tick', async () => {
         m.version = '1.8.0';
         const { subscribeQuote } = await import('../shioaji');
@@ -118,6 +166,7 @@ describe('US Tick subscription wire', () => {
 });
 
 describe('shared quote ownership: watchlist, chart and popout consumers share one feed', () => {
+    beforeEach(chooseFull);
     it('several retains of the same US Tick send one TickFull subscribe and one unsubscribe', async () => {
         m.version = '1.8.0';
         vi.stubGlobal('BroadcastChannel', undefined);
@@ -138,6 +187,7 @@ describe('shared quote ownership: watchlist, chart and popout consumers share on
 });
 
 describe('reconnect replay', () => {
+    beforeEach(chooseFull);
     class FakeEventSource {
         static last: FakeEventSource | null = null;
         onopen: (() => void) | null = null;
@@ -200,5 +250,93 @@ describe('reconnect replay', () => {
         await stream.replayRegisteredSubscriptionsForTest();
         expect(calls('subscribe')).toEqual([tw]);
         expect(calls('unsubscribe')).toEqual([]);
+    });
+});
+
+describe('switching 美股成交資料 re-subscribes live', () => {
+    const kinds = () => m.post.mock.calls.map(c => [String(c[0]).replace('/api/v1/stream/', ''), (c[1] as { code: string }).code, (c[1] as { quote_type: string }).quote_type]);
+
+    it('Tick → TickFull: each subscribed US symbol drops Tick then subscribes TickFull; BidAsk and Taiwan untouched', async () => {
+        m.version = '1.8.0';
+        const { subscribeQuote, unsubscribeQuote } = await import('../shioaji');
+        const stream = await import('../stream');
+        const prefs = await import('./us-tick-prefs');
+        await subscribeQuote(aapl, 'Tick');
+        await subscribeQuote(aapl, 'BidAsk');
+        await subscribeQuote(msft, 'Tick');
+        await subscribeQuote(tsmc, 'Tick');
+        m.post.mockClear();
+        prefs.setUsTickDetail('TickFull');
+        expect(storage.get(DETAIL_KEY)).toBe('TickFull');
+        await stream.resubscribeUsTicks();
+        expect(kinds()).toEqual([
+            ['unsubscribe', 'AAPL', 'Tick'], ['subscribe', 'AAPL', 'TickFull'],
+            ['unsubscribe', 'MSFT', 'Tick'], ['subscribe', 'MSFT', 'TickFull'],
+        ]);
+        expect(stream.getRegisteredSubscription('US:AAPL', 'Tick')).toEqual(usBody('AAPL', 'TickFull'));
+        // unsubscribe after the switch uses the new kind
+        m.post.mockClear();
+        await unsubscribeQuote(aapl, 'Tick');
+        expect(kinds()).toEqual([['unsubscribe', 'AAPL', 'TickFull']]);
+        // and back: TickFull → Tick
+        m.post.mockClear();
+        prefs.setUsTickDetail('Tick');
+        await stream.resubscribeUsTicks();
+        expect(kinds()).toEqual([['unsubscribe', 'MSFT', 'TickFull'], ['subscribe', 'MSFT', 'Tick']]);
+        expect(stream.getRegisteredSubscription('US:MSFT', 'Tick')).toEqual(usBody('MSFT', 'Tick'));
+    });
+
+    it('a failed unsubscribe of the old kind keeps it and does not subscribe the new one (retried later)', async () => {
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+        m.version = '1.8.0';
+        const { subscribeQuote } = await import('../shioaji');
+        const stream = await import('../stream');
+        const prefs = await import('./us-tick-prefs');
+        await subscribeQuote(aapl, 'Tick');
+        m.post.mockClear();
+        m.post.mockRejectedValueOnce(new Error('503 Service Unavailable'));
+        prefs.setUsTickDetail('TickFull');
+        await stream.resubscribeUsTicks();
+        expect(kinds()).toEqual([['unsubscribe', 'AAPL', 'Tick']]);
+        expect(stream.getRegisteredSubscription('US:AAPL', 'Tick')).toEqual(usBody('AAPL', 'Tick'));
+        // 5 秒後重試：這次退掉 Tick 再訂 TickFull
+        m.post.mockClear();
+        await vi.advanceTimersByTimeAsync(5000);
+        await stream.resubscribeUsTicks();
+        vi.useRealTimers();
+        expect(kinds()).toEqual([['unsubscribe', 'AAPL', 'Tick'], ['subscribe', 'AAPL', 'TickFull']]);
+        expect(stream.getRegisteredSubscription('US:AAPL', 'Tick')).toEqual(usBody('AAPL', 'TickFull'));
+    });
+
+    it('known b1 sidecar: choosing TickFull sends nothing (stays on Tick)', async () => {
+        m.version = '1.8.0-beta.1';
+        const { subscribeQuote } = await import('../shioaji');
+        const stream = await import('../stream');
+        const prefs = await import('./us-tick-prefs');
+        await subscribeQuote(aapl, 'Tick');
+        m.post.mockClear();
+        prefs.setUsTickDetail('TickFull');
+        await stream.resubscribeUsTicks();
+        expect(m.post).not.toHaveBeenCalled();
+        expect(stream.getRegisteredSubscription('US:AAPL', 'Tick')).toEqual(usBody('AAPL', 'Tick'));
+    });
+
+    it('unknown version that rejects TickFull: falls back to Tick, never both kinds at once', async () => {
+        m.post.mockImplementation(b1Reject);
+        const { subscribeQuote } = await import('../shioaji');
+        const stream = await import('../stream');
+        const prefs = await import('./us-tick-prefs');
+        await subscribeQuote(aapl, 'Tick');
+        m.post.mockClear();
+        prefs.setUsTickDetail('TickFull');
+        await stream.resubscribeUsTicks();
+        expect(kinds()).toEqual([
+            ['unsubscribe', 'AAPL', 'Tick'], ['subscribe', 'AAPL', 'TickFull'], ['subscribe', 'AAPL', 'Tick'],
+        ]);
+        expect(stream.getRegisteredSubscription('US:AAPL', 'Tick')).toEqual(usBody('AAPL', 'Tick'));
+        // remembered: the next switch pass is a no-op
+        m.post.mockClear();
+        await stream.resubscribeUsTicks();
+        expect(m.post).not.toHaveBeenCalled();
     });
 });

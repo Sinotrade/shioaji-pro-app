@@ -19,7 +19,8 @@ import { createSharedStream, type StreamWire } from './shared-stream';
 import { invalidateTradingMirror } from './trading-mirror-lease';
 import { invalidateProductCatalog } from './product-catalog-version';
 import { normalizeUsBidAsk, normalizeUsTick, recordUsTick, US_BIDASK_EVENT, US_STREAM_PATHS, US_TICK_EVENT, type RawUsBidAsk, type RawUsTick } from './us/us-quotes';
-import { isUsTickFullRejection, isUsTickRegistryKey, noteUsTickFullRejected, usTickWire } from './us/us-tick-wire';
+import { isUsTickFullRejection, isUsTickRegistryKey, noteUsTickFullRejected, rememberUsTickWire, usTickWire, type UsTickWire } from './us/us-tick-wire';
+import { subscribeUsTickDetail } from './us/us-tick-prefs';
 
 /** `stale`: the EventSource still looks open but no heartbeat or event
  *  arrived within the watchdog window (e.g. the sidecar behind a proxy was
@@ -498,15 +499,28 @@ export function getRegisteredSubscription(code: string, quoteType: string): Reco
     return subscriptionRegistry.get(`${code}:${quoteType}`);
 }
 
+type StreamPost = (path: 'subscribe' | 'unsubscribe', body: Record<string, unknown>) => Promise<void>;
+
+const postStream: StreamPost = async (path, body) => {
+    const response = await apiPost<{ success?: boolean; message?: string }>(
+        `/api/v1/stream/${path}`,
+        body,
+    );
+    if (response.success === false) {
+        throw new Error(response.message || '行情重新訂閱失敗');
+    }
+};
+
 /**
- * 重播美股逐筆：依目前 sidecar 重新決定 TickFull／Tick（sidecar 可能換了版本）。
+ * 重播美股逐筆：依目前設定與 sidecar 重新決定 TickFull／Tick（使用者可能換了設定、
+ * sidecar 可能換了版本）。
  * 跟登記的不同時先退掉舊的那種（同一個 sidecar 沒重啟時才不會 Tick＋TickFull
  * 同時在），TickFull 被拒就改 Tick；registry 改記實際成功的 body。
  */
 async function replayUsTick(
     key: string,
     registered: Record<string, unknown>,
-    post: (path: 'subscribe' | 'unsubscribe', body: Record<string, unknown>) => Promise<void>,
+    post: StreamPost,
 ) {
     const base = getApiBase();
     const wanted = usTickWire();
@@ -530,10 +544,62 @@ async function replayUsTick(
     }
     if (subscriptionRegistry.get(key) === registered) {
         subscriptionRegistry.set(key, body);
+        // 重新整理後退訂／換種類要用實際訂著的種類（key＝US:CODE:Tick）
+        if (getApiBase() === base) rememberUsTickWire(base, key.slice(0, -':Tick'.length), body.quote_type as UsTickWire);
     } else if (!subscriptionRegistry.has(key)) {
         // 重播期間已經被退訂：剛訂上的要退掉，否則沒人管
         try { await post('unsubscribe', body); } catch { /* 下次載入的孤兒清理再試 */ }
     }
+}
+
+// ---- 美股成交資料設定切換（Tick ⇄ TickFull）：即時改訂目前訂閱中的美股逐筆 ----
+//
+// 只動登記的種類跟現在該用的不同的商品（先退舊的再訂新的，見 replayUsTick），
+// 一次一輪、與重連重播錯開；同樣照 50 筆／5 秒的節奏。失敗的留到 5 秒後再試。
+let usTickSwitching: Promise<void> = Promise.resolve();
+/** 已排隊、還沒開始的那一輪：連續觸發只跑一輪 */
+let usTickSwitchQueued: Promise<void> | null = null;
+let usTickSwitchRetry: ReturnType<typeof setTimeout> | null = null;
+
+async function switchUsTicksOnce() {
+    if (replaying) await replaying.catch(() => undefined);
+    const pace = makePacer();
+    const post: StreamPost = async (path, body) => { await pace(); await postStream(path, body); };
+    let failed = false;
+    for (const [key, body] of [...subscriptionRegistry.entries()]) {
+        if (!isUsTickRegistryKey(key) || subscriptionRegistry.get(key) !== body) continue;
+        if (body.quote_type === usTickWire()) continue;
+        try {
+            await replayUsTick(key, body, post);
+        } catch {
+            failed = true;
+        }
+    }
+    if (failed && !usTickSwitchRetry) {
+        usTickSwitchRetry = setTimeout(() => {
+            usTickSwitchRetry = null;
+            void resubscribeUsTicks();
+        }, 5000);
+    }
+}
+
+/** 美股逐筆依目前設定改訂（設定切換時自動呼叫；回傳下一輪完成的 promise） */
+export function resubscribeUsTicks(): Promise<void> {
+    if (usTickSwitchQueued) return usTickSwitchQueued;
+    const run = () => {
+        usTickSwitchQueued = null;
+        return switchUsTicksOnce();
+    };
+    const next = usTickSwitching.then(run, run);
+    usTickSwitchQueued = next;
+    usTickSwitching = next;
+    return next;
+}
+
+try {
+    subscribeUsTickDetail(() => { void resubscribeUsTicks(); });
+} catch {
+    // 測試整個 mock 掉 us-tick-prefs 時略過
 }
 
 let resubscribeRetryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -544,6 +610,19 @@ let resubscribeRetryTimer: ReturnType<typeof setTimeout> | null = null;
 export const REPLAY_BATCH = 40;
 export const REPLAY_WINDOW_MS = 5000;
 let replaying: Promise<void> | null = null;
+/** 每 REPLAY_BATCH 筆等滿一個 REPLAY_WINDOW_MS 視窗 */
+function makePacer() {
+    let sent = 0;
+    let windowStart = Date.now();
+    return async () => {
+        if (sent > 0 && sent % REPLAY_BATCH === 0) {
+            const wait = windowStart + REPLAY_WINDOW_MS - Date.now();
+            if (wait > 0) await new Promise(r => setTimeout(r, wait));
+            windowStart = Date.now();
+        }
+        sent++;
+    };
+}
 let replayAgain = false;
 function replay(onlyCapabilities: boolean): Promise<void> {
     if (replaying) { replayAgain = true; return replaying; }
@@ -561,25 +640,8 @@ function resubscribeCapabilities(): Promise<void> {
 }
 async function replayOnce(onlyCapabilities = false) {
     let failed = false;
-    let sent = 0;
-    let windowStart = Date.now();
-    const pace = async () => {
-        if (sent > 0 && sent % REPLAY_BATCH === 0) {
-            const wait = windowStart + REPLAY_WINDOW_MS - Date.now();
-            if (wait > 0) await new Promise(r => setTimeout(r, wait));
-            windowStart = Date.now();
-        }
-        sent++;
-    };
-    const post = async (path: 'subscribe' | 'unsubscribe', body: Record<string, unknown>) => {
-        const response = await apiPost<{ success?: boolean; message?: string }>(
-            `/api/v1/stream/${path}`,
-            body,
-        );
-        if (response.success === false) {
-            throw new Error(response.message || '行情重新訂閱失敗');
-        }
-    };
+    const pace = makePacer();
+    const post = postStream;
     for (const [key, body] of onlyCapabilities ? [] : [...subscriptionRegistry.entries()]) {
         await pace();
         try {

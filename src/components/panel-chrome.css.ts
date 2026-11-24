@@ -198,6 +198,27 @@ export const pinBtn = styleVariants({
     ],
 });
 
+// 面板自己的開關鈕（成交明細「完整」）：與連動鈕同一個膠囊樣式，按下＝accent
+export const toggleBtn = styleVariants({
+    off: [
+        pinBase,
+        {
+            color: vars.color.mutedForeground,
+            borderColor: vars.color.border,
+            background: 'transparent',
+            ':hover': { color: vars.color.foreground, borderColor: vars.color.borderBright },
+        },
+    ],
+    on: [
+        pinBase,
+        {
+            color: vars.color.accent,
+            borderColor: vars.color.accent,
+            background: vars.color.accentDim,
+        },
+    ],
+});
+
 export const pinInput = style({
     width: '4.2rem',
     '@container': {

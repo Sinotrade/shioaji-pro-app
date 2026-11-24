@@ -17,6 +17,7 @@ import type { HistoryTicks } from '../lib/types/tick';
 import { fmtUsPrice } from '../lib/us/decimal';
 import { isUsHistoryUnavailable, nyDateStr } from '../lib/us/us-history';
 import { getUsTickMeta, subscribeUsSessionTicks } from '../lib/us/us-quotes';
+import { setUsTickDetail, useUsTickDetail } from '../lib/us/us-tick-prefs';
 import {
     loadUsTapeHistory,
     mergeUsTape,
@@ -30,6 +31,7 @@ import { fmtInt, fmtPrice } from '../lib/utils/format';
 import { dateStrOffset } from '../lib/utils/kbars';
 import { AsyncStatus } from './async-status';
 import * as panel from './panel.css';
+import * as chrome from './panel-chrome.css';
 import * as styles from './tick-tape.css';
 
 const MAX_ROWS = 120;
@@ -95,6 +97,27 @@ const TapeRowView = memo(function TapeRowView({
         </div>
     );
 });
+
+/**
+ * 美股成交明細標題列的「完整」鈕：與 設定 → 行情「美股成交資料」同一個設定。
+ * 按下＝完整成交（TickFull，含碎股與特殊條件成交）；放開＝一般成交（Tick，預設）。
+ */
+export function UsTickDetailToggle() {
+    const full = useUsTickDetail() === 'TickFull';
+    return (
+        <button
+            type='button'
+            className={chrome.toggleBtn[full ? 'on' : 'off']}
+            aria-pressed={full}
+            title={full
+                ? '完整成交：含碎股與特殊條件成交的每一筆（點擊改回一般成交）'
+                : '一般成交：正規盤會更新最新價的成交，加上盤前、盤後、夜盤的整股成交（點擊改看完整成交）'}
+            onClick={() => setUsTickDetail(full ? 'Tick' : 'TickFull')}
+        >
+            完整
+        </button>
+    );
+}
 
 export function TickTape({ contract }: { contract: ContractBase }) {
     const isUs = contract.region === 'US';

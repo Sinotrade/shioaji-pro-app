@@ -24,6 +24,7 @@ import {
     registerSubscription,
     registerSubscriptionRaw,
     getRegisteredSubscription,
+    resubscribeUsTicks,
     retainUsQuoteStreams,
     unregisterCapabilitySubscription,
     unregisterSubscription,
@@ -499,7 +500,7 @@ async function postUsSubscription(path: 'subscribe' | 'unsubscribe', body: Retur
 const usBaseChanged = () => Object.assign(new Error('伺服器位址已變更，美股行情訂閱未完成'), { subscriptionNotStarted: true as const });
 
 /**
- * 美股訂閱：Tick 依 sidecar 能力送 TickFull 或 Tick；registry 記實際送出的 body（重連照它重播），
+ * 美股訂閱：Tick 依設定（us-tick-prefs）與 sidecar 能力送 Tick 或 TickFull；registry 記實際送出的 body（重連照它重播），
  * sessionStorage 也記一份（重新整理後退訂／換種類用）。同一商品已經用另一種訂著（本頁或上一次
  * 載入）時先退掉舊的；退不掉就不訂新的，避免 Tick 與 TickFull 同時在。
  */
@@ -537,6 +538,8 @@ async function subscribeUsQuote(contract: ContractBase, quoteType: UsQuoteType):
     registerSubscriptionRaw(key, quoteType, usSubscriptionBody(contract, wire));
     rememberUsTickWire(base, key, wire);
     if (!usStreamHolds.has(holdKey)) usStreamHolds.set(holdKey, retainUsQuoteStreams());
+    // 訂閱途中使用者切換了美股成交資料設定：那一輪改訂看不到這筆，補跑一次
+    if (usTickWire() !== wire) void resubscribeUsTicks();
     return response;
 }
 
@@ -577,8 +580,8 @@ export function subscribeQuote(
     options?: QuoteSubscribeOptions,
 ) {
     const oddLot = options?.oddLot === true;
-    // 美股：只有 Tick／BidAsk，沒有零股分流。逐筆（Tick）在 1.8.0b2 起實際訂
-    // TickFull（每一筆成交）；舊 sidecar 拒收時退回 Tick（見 us/us-tick-wire.ts）
+    // 美股：只有 Tick／BidAsk，沒有零股分流。逐筆（Tick）預設訂 Tick（TICL）；使用者選
+    // 「完整成交」時訂 TickFull，舊 sidecar 拒收時退回 Tick（見 us/us-tick-wire.ts）
     if (isUsContract(contract)) {
         if (oddLot || quoteType === 'Quote') return Promise.reject(new Error(US_NO_QUOTES));
         return subscribeUsQuote(contract, quoteType);
