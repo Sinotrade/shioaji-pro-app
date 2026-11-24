@@ -98,7 +98,7 @@ export const GUIDE_COPY: Record<GuideStep, GuideStepCopy> = {
     start: {
         label: '開始',
         title: '申請你的 Shioaji API Key',
-        lead: '約 5 分鐘。App 會在旁邊開啟永豐金證券官網的 API 管理頁，這裡一步一步說明要按哪裡、每個選項是什麼意思；最後下載的 .env 會直接存進這台電腦的系統憑證庫。',
+        lead: '約 5 分鐘。App 會在旁邊開啟永豐金證券官網的 API 管理頁，這裡一步一步說明要按哪裡、每個選項是什麼意思；最後下載的 .env 會直接交給 App 保存。',
         points: [
             { title: '需要準備', body: '永豐金證券帳戶的網路登入帳號密碼，以及開戶時留的手機或 Email（用來收驗證碼）。' },
             { title: '先從模擬環境開始', body: '第一次建議申請只能用在模擬環境的金鑰：不會動用真實資金，所有功能都能先試。' },
@@ -154,7 +154,7 @@ export const GUIDE_COPY: Record<GuideStep, GuideStepCopy> = {
     success: {
         label: '下載 .env',
         title: '按「下載 .env」交給 App',
-        lead: '新增成功！按「快速設定」區塊的「下載 .env」，App 會直接接收並存進系統憑證庫，檔案不會留在下載資料夾。',
+        lead: '新增成功！按「快速設定」區塊的「下載 .env」，App 會直接接收並保存，檔案不會留在下載資料夾。',
         points: [
             { title: 'Secret Key 只會顯示這一次', body: '關掉這個視窗後，「明細」只看得到 API Key。請在 App 顯示「已載入」之前不要關閉。', target: 'secret-key', tone: 'caution' },
             { title: '下載 .env', body: '內容是金鑰名稱、API Key 與 Secret Key 三行；不含 CA 憑證。', target: 'download-env' },
@@ -164,7 +164,7 @@ export const GUIDE_COPY: Record<GuideStep, GuideStepCopy> = {
     imported: {
         label: '完成',
         title: '金鑰已載入',
-        lead: '已存進系統憑證庫並新增為模擬帳號。按「啟動模擬環境」開始使用。',
+        lead: '已新增為模擬帳號，按「啟動模擬環境」開始使用。',
         points: [],
     },
 };

@@ -239,3 +239,41 @@ describe('apply guide review fixes', () => {
         expect(json()).toContain('再按一次「下載 .env」');
     });
 });
+
+describe('apply guide review round 2', () => {
+    const importWith = async (settings: DesktopSettings) => {
+        await mount();
+        await act(async () => button('開始申請')!.props.onClick());
+        mocks.load.mockResolvedValue(settings);
+        await emit({ kind: 'imported', profileId: 'p1', name: 'ShioajiPro', duplicate: true });
+    };
+
+    it('will not launch a profile that was switched to production', async () => {
+        await importWith({ ...EMPTY_DESKTOP_SETTINGS, activeProfileId: 'p1', profiles: [{ ...profile, environment: 'production' }] });
+        expect(json()).toContain('已改成正式環境');
+        expect(button('啟動模擬環境')!.props.disabled).toBe(true);
+    });
+
+    it('re-checks the environment when 啟動模擬環境 is pressed', async () => {
+        await importWith({ ...EMPTY_DESKTOP_SETTINGS, activeProfileId: 'p1', profiles: [profile] });
+        mocks.load.mockResolvedValue({ ...EMPTY_DESKTOP_SETTINGS, activeProfileId: 'p1', configured: true, credentialRevision: 'native', production: true, profiles: [{ ...profile, environment: 'production' }] });
+        await act(async () => button('啟動模擬環境')!.props.onClick());
+        expect(mocks.start).not.toHaveBeenCalled();
+        expect(mocks.select).not.toHaveBeenCalled();
+        expect(mocks.stop).not.toHaveBeenCalled();
+        expect(json()).toContain('已改成正式環境');
+    });
+
+    it('says where the key is really stored', async () => {
+        await importWith({ ...EMPTY_DESKTOP_SETTINGS, activeProfileId: 'p1', credentialBackend: 'plaintext-fallback', fallbackPath: '/fake/app/credentials.json', profiles: [{ ...profile, credentialBackend: 'plaintext-fallback' }] });
+        expect(json()).toContain('金鑰以檔案保存');
+        expect(json()).toContain('/fake/app/credentials.json');
+        expect(json()).not.toContain('已存進這台電腦的系統憑證庫');
+    });
+
+    it('mentions the system credential store only when it is used', async () => {
+        await importWith({ ...EMPTY_DESKTOP_SETTINGS, activeProfileId: 'p1', profiles: [profile] });
+        expect(json()).toContain('已存進這台電腦的系統憑證庫');
+        expect(json()).not.toContain('金鑰以檔案保存');
+    });
+});

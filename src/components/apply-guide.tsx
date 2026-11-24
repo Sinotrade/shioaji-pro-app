@@ -5,7 +5,7 @@
 
 import {
     AlertTriangle, ArrowRight, Bot, CheckCircle2, ChevronLeft, ChevronRight, ClipboardList, Crosshair,
-    ExternalLink, FlaskConical, KeyRound, Loader2, Play, RotateCw, ShieldCheck, SquarePen,
+    ExternalLink, FlaskConical, KeyRound, Loader2, Play, RotateCw, ShieldAlert, ShieldCheck, SquarePen,
 } from 'lucide-react';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
@@ -195,6 +195,9 @@ export function ApplyGuide({ guide, settings, busy, agentAvailable, onToggleAgen
 
     if (step === 'imported' && guide.imported) {
         const profile = settings.profiles.find(p => p.id === guide.imported!.profileId);
+        // 匯入後使用者可能在帳號設定改成正式環境：導覽只啟動模擬環境
+        const production = profile?.environment === 'production';
+        const plaintext = (profile?.credentialBackend ?? settings.credentialBackend) === 'plaintext-fallback';
         return <section className={g.card} aria-label="申請 API Key 導覽">
             {header}
             <Progress step={step} imported={!!guide.imported} onSelect={guide.setStep} />
@@ -203,13 +206,20 @@ export function ApplyGuide({ guide, settings, busy, agentAvailable, onToggleAgen
                 <div className={g.doneBox}>
                     <span className={g.doneIcon}><CheckCircle2 size={26} /></span>
                     <div>
-                        <p className={g.doneName}>{profile?.name ?? guide.imported.name}<span className={g.simBadge}>模擬</span></p>
+                        <p className={g.doneName}>{profile?.name ?? guide.imported.name}{!production && <span className={g.simBadge}>模擬</span>}</p>
                         {profile?.apiKeyMasked && <p className={g.doneMeta}>API Key {profile.apiKeyMasked}</p>}
                     </div>
                 </div>
-                <p className={g.lead}>{copy.lead}</p>
+                <p className={g.lead}>{plaintext ? '' : '金鑰已存進這台電腦的系統憑證庫。'}{copy.lead}</p>
+                {plaintext && <Callout tone="warn" icon={<ShieldAlert size={16} />} title="金鑰以檔案保存">
+                    這台電腦沒有可用的系統憑證庫，金鑰與憑證密碼存在 {settings.fallbackPath}（只有你的帳號能讀寫，0600）。同一使用者執行的程式（含 Agent）仍可能讀到這個檔案。
+                </Callout>}
+                {production && <Callout tone="warn" icon={<AlertTriangle size={16} />} title="這個帳號已改成正式環境"
+                    actions={<button className={s.smallButton} onClick={onManual}><SquarePen size={14} />到帳號設定</button>}>
+                    導覽只會啟動模擬環境。請到帳號設定確認環境與 CA 憑證後再啟動。
+                </Callout>}
                 <div className={g.actions}>
-                    <button className={g.primaryLarge} disabled={busy} onClick={() => void onStart(guide.imported!.profileId)}>
+                    <button className={g.primaryLarge} disabled={busy || production} onClick={() => void onStart(guide.imported!.profileId)}>
                         {busy ? <Loader2 size={16} className={s.spinner} /> : <Play size={16} />}啟動模擬環境
                     </button>
                 </div>

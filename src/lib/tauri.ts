@@ -1838,10 +1838,15 @@ function updateInstallFailure(e: unknown): {
 }
 
 // 以系統預設瀏覽器開啟外部網址（WebView 內不導航）。
+/** 用系統瀏覽器開啟網址；失敗時丟出錯誤，由呼叫端決定怎麼顯示。 */
+export async function openExternalUrlOrThrow(url: string) {
+    const { open } = await import('@tauri-apps/plugin-shell');
+    await open(url);
+}
+
 export async function openExternalUrl(url: string, failTitle = '無法開啟連結') {
     try {
-        const { open } = await import('@tauri-apps/plugin-shell');
-        await open(url);
+        await openExternalUrlOrThrow(url);
     } catch (e) {
         notify({
             kind: 'err',

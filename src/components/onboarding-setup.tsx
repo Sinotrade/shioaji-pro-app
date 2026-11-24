@@ -111,6 +111,13 @@ export function OnboardingSetup() {
         let next: DesktopSettings;
         try {
             next = await loadDesktopSettings();
+            // 導覽只啟動模擬環境：匯入後被改成正式環境（或已刪除）就不啟動
+            const target = next.profiles.find(profile => profile.id === profileId);
+            if (!target) throw new Error('找不到剛載入的帳號，請到帳號設定確認。');
+            if (target.environment !== 'simulation') {
+                setSettings(next);
+                throw new Error(`「${target.name}」已改成正式環境，導覽只會啟動模擬環境。請到帳號設定確認環境與 CA 憑證後再啟動。`);
+            }
             if (next.activeProfileId !== profileId) {
                 await stopForChange();
                 next = await selectCredentialProfile(profileId);

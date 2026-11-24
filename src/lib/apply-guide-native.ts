@@ -7,7 +7,7 @@
 
 import { APPLY_PAGE_RULES, APPLY_URL, isApplyPageStep, type ApplyPageStep } from './apply-guide-config';
 import { isTauri } from './runtime';
-import { openExternalUrl } from './tauri';
+import { openExternalUrlOrThrow } from './tauri';
 
 export type ApplyGuideEvent =
     | { kind: 'step'; step: ApplyPageStep }
@@ -32,7 +32,13 @@ export async function openApplyWindow(): Promise<ApplyWindowOpenResult> {
             if (!isMissingCommand(error)) throw new Error(typeof error === 'string' ? error : '無法開啟申請視窗');
         }
     }
-    await openExternalUrl(APPLY_URL, '無法開啟申請頁');
+    // 開不了瀏覽器就交給呼叫端顯示原因與重試，不要當成已經開啟
+    try {
+        await openExternalUrlOrThrow(APPLY_URL);
+    } catch (error) {
+        const reason = error instanceof Error ? error.message : typeof error === 'string' ? error : '';
+        throw new Error(reason ? `無法用瀏覽器開啟申請頁：${reason}` : '無法用瀏覽器開啟申請頁');
+    }
     return 'browser';
 }
 
