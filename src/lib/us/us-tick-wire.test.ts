@@ -35,6 +35,12 @@ const chooseFull = () => storage.set(DETAIL_KEY, 'TickFull');
 beforeEach(() => {
     vi.resetModules();
     storage.clear();
+    const session = new Map<string, string>();
+    vi.stubGlobal('sessionStorage', {
+        getItem: (k: string) => session.get(k) ?? null,
+        setItem: (k: string, v: string) => void session.set(k, v),
+        removeItem: (k: string) => void session.delete(k),
+    });
     vi.stubGlobal('localStorage', {
         getItem: (k: string) => storage.get(k) ?? null,
         setItem: (k: string, v: string) => void storage.set(k, v),
@@ -300,12 +306,43 @@ describe('switching 美股成交資料 re-subscribes live', () => {
         expect(kinds()).toEqual([['unsubscribe', 'AAPL', 'Tick']]);
         expect(stream.getRegisteredSubscription('US:AAPL', 'Tick')).toEqual(usBody('AAPL', 'Tick'));
         // 5 秒後重試：這次退掉 Tick 再訂 TickFull
+        // （只靠重試計時器，不手動呼叫 resubscribeUsTicks）
+        m.post.mockClear();
+        await vi.advanceTimersByTimeAsync(4999);
+        expect(m.post).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(1);
+        await vi.waitFor(() => expect(kinds()).toEqual([['unsubscribe', 'AAPL', 'Tick'], ['subscribe', 'AAPL', 'TickFull']]));
+        expect(stream.getRegisteredSubscription('US:AAPL', 'Tick')).toEqual(usBody('AAPL', 'TickFull'));
+        vi.useRealTimers();
+    });
+
+    it('old kind dropped but new kind failed: switching back still re-subscribes (no silent gap)', async () => {
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+        m.version = '1.8.0';
+        const { subscribeQuote } = await import('../shioaji');
+        const stream = await import('../stream');
+        const prefs = await import('./us-tick-prefs');
+        await subscribeQuote(aapl, 'Tick');
+        m.post.mockClear();
+        m.post.mockImplementation((path: string, body: Record<string, unknown>) =>
+            path.endsWith('/subscribe') && body.quote_type === 'TickFull'
+                ? Promise.reject(new Error('503 Service Unavailable'))
+                : Promise.resolve({ success: true, message: '' }));
+        prefs.setUsTickDetail('TickFull');
+        await stream.resubscribeUsTicks();
+        expect(kinds()).toEqual([['unsubscribe', 'AAPL', 'Tick'], ['subscribe', 'AAPL', 'TickFull']]);
+        // 切回一般成交（在重試之前）：Tick 已經不在了，要補訂
+        m.post.mockClear();
+        prefs.setUsTickDetail('Tick');
+        await stream.resubscribeUsTicks();
+        expect(kinds()).toEqual([['subscribe', 'AAPL', 'Tick']]);
+        expect(stream.getRegisteredSubscription('US:AAPL', 'Tick')).toEqual(usBody('AAPL', 'Tick'));
+        // 補上之後重試計時器那一輪什麼都不用做
         m.post.mockClear();
         await vi.advanceTimersByTimeAsync(5000);
         await stream.resubscribeUsTicks();
+        expect(m.post).not.toHaveBeenCalled();
         vi.useRealTimers();
-        expect(kinds()).toEqual([['unsubscribe', 'AAPL', 'Tick'], ['subscribe', 'AAPL', 'TickFull']]);
-        expect(stream.getRegisteredSubscription('US:AAPL', 'Tick')).toEqual(usBody('AAPL', 'TickFull'));
     });
 
     it('known b1 sidecar: choosing TickFull sends nothing (stays on Tick)', async () => {
@@ -338,5 +375,81 @@ describe('switching 美股成交資料 re-subscribes live', () => {
         m.post.mockClear();
         await stream.resubscribeUsTicks();
         expect(m.post).not.toHaveBeenCalled();
+    });
+});
+
+describe('per-symbol serialization of US tick ops (deferred responses)', () => {
+    function deferred() {
+        let resolve!: (v: unknown) => void;
+        const promise = new Promise((r) => { resolve = r; });
+        return { promise, resolve };
+    }
+    const kinds = () => m.post.mock.calls.map(c => [String(c[0]).replace('/api/v1/stream/', ''), (c[1] as { quote_type: string }).quote_type]);
+    /** 依送出順序模擬 sidecar 上實際訂著的種類；回傳過程中最多同時幾種 */
+    const simulate = () => {
+        const active = new Set<string>();
+        let max = 0;
+        for (const [path, kind] of kinds()) {
+            if (path === 'subscribe') active.add(kind!); else active.delete(kind!);
+            max = Math.max(max, active.size);
+        }
+        return { active: [...active], max };
+    };
+    const ok = { success: true, message: '' };
+
+    it('toggle back + reconnect replay while the TickFull subscribe is in flight: never Tick and TickFull together', async () => {
+        m.version = '1.8.0';
+        const { subscribeQuote } = await import('../shioaji');
+        const stream = await import('../stream');
+        const prefs = await import('./us-tick-prefs');
+        await subscribeQuote(aapl, 'Tick');
+        m.post.mockClear();
+        const full = deferred();
+        m.post.mockImplementation((path: string, body: Record<string, unknown>) =>
+            path.endsWith('/subscribe') && body.quote_type === 'TickFull' ? full.promise : Promise.resolve(ok));
+        prefs.setUsTickDetail('TickFull');
+        await vi.waitFor(() => expect(kinds()).toEqual([['unsubscribe', 'Tick'], ['subscribe', 'TickFull']]));
+        // TickFull 還沒回應：切回一般成交，同時 SSE 重連重播
+        prefs.setUsTickDetail('Tick');
+        const replay = stream.replayRegisteredSubscriptionsForTest();
+        await new Promise(r => setTimeout(r, 10));
+        // 重播排在改訂之後，還沒送任何東西
+        expect(kinds()).toHaveLength(2);
+        full.resolve(ok);
+        await replay;
+        await stream.resubscribeUsTicks();
+        const { active, max } = simulate();
+        expect(max).toBe(1);
+        expect(active).toEqual(['Tick']);
+        expect(stream.getRegisteredSubscription('US:AAPL', 'Tick')).toEqual(usBody('AAPL', 'Tick'));
+    });
+
+    it('last consumer closes while the TickFull subscribe is in flight: unsubscribes TickFull afterwards, nothing orphaned', async () => {
+        m.version = '1.8.0';
+        const { subscribeQuote, unsubscribeQuote } = await import('../shioaji');
+        const stream = await import('../stream');
+        const prefs = await import('./us-tick-prefs');
+        const wire = await import('./us-tick-wire');
+        await subscribeQuote(aapl, 'Tick');
+        m.post.mockClear();
+        const full = deferred();
+        m.post.mockImplementation((path: string, body: Record<string, unknown>) =>
+            path.endsWith('/subscribe') && body.quote_type === 'TickFull' ? full.promise : Promise.resolve(ok));
+        prefs.setUsTickDetail('TickFull');
+        await vi.waitFor(() => expect(kinds()).toEqual([['unsubscribe', 'Tick'], ['subscribe', 'TickFull']]));
+        // 舊的已退：重新整理後要退的是在飛的 TickFull
+        expect(wire.rememberedUsTickWire(m.base, 'US:AAPL')).toBe('TickFull');
+        const closing = unsubscribeQuote(aapl, 'Tick');
+        await new Promise(r => setTimeout(r, 10));
+        // 退訂排在改訂之後：還沒送出（不會拿舊的 Tick 去退）
+        expect(kinds()).toHaveLength(2);
+        full.resolve(ok);
+        await closing;
+        await stream.resubscribeUsTicks();
+        expect(kinds()).toEqual([['unsubscribe', 'Tick'], ['subscribe', 'TickFull'], ['unsubscribe', 'TickFull']]);
+        expect(simulate().active).toEqual([]);
+        expect(stream.getRegisteredSubscription('US:AAPL', 'Tick')).toBeUndefined();
+        expect(wire.rememberedUsTickWire(m.base, 'US:AAPL')).toBeUndefined();
+        expect(sessionStorage.getItem(`sj-us-tick-wire:${m.base}`)).toBe('{}');
     });
 });

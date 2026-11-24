@@ -511,45 +511,72 @@ const postStream: StreamPost = async (path, body) => {
     }
 };
 
+// ---- 美股逐筆的每商品鎖 ----
+//
+// 同一個商品的美股逐筆操作（消費者訂閱／退訂、設定切換改訂、重連重播）一律排隊，
+// 一次只有一個在飛：registry 永遠是「目前實際訂著（或最後一次嘗試）」的種類，
+// 不會有改訂途中被重播或退訂用到舊種類、留下 Tick＋TickFull 或沒人管的 TickFull。
+// key＝registry key（US:CODE:Tick）。
+const usTickLocks = new Map<string, Promise<unknown>>();
+
+export function withUsTickLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
+    const prev = usTickLocks.get(key) ?? Promise.resolve();
+    const run = prev.then(fn, fn);
+    const tail = run.then(() => undefined, () => undefined);
+    usTickLocks.set(key, tail);
+    void tail.then(() => { if (usTickLocks.get(key) === tail) usTickLocks.delete(key); });
+    return run;
+}
+
+// 舊種類已退掉、新種類沒訂上的商品：registry 還記著舊種類（給退訂用，sidecar 對沒訂的
+// 退訂回 200），但 sidecar 上其實什麼都沒有 — 改訂與重播都要把它補訂回來
+const usTickDown = new Set<string>();
+
+export function setUsTickDown(key: string, down: boolean) {
+    if (down) usTickDown.add(key);
+    else usTickDown.delete(key);
+}
+
 /**
  * 重播美股逐筆：依目前設定與 sidecar 重新決定 TickFull／Tick（使用者可能換了設定、
- * sidecar 可能換了版本）。
- * 跟登記的不同時先退掉舊的那種（同一個 sidecar 沒重啟時才不會 Tick＋TickFull
- * 同時在），TickFull 被拒就改 Tick；registry 改記實際成功的 body。
+ * sidecar 可能換了版本）。在每商品鎖裡讀 registry，跟登記的不同時先退掉舊的那種
+ * （同一個 sidecar 沒重啟時才不會 Tick＋TickFull 同時在），TickFull 被拒就改 Tick；
+ * registry 改記實際成功的 body。onlyIfStale：設定切換用，種類已對而且有在訂就不動。
  */
-async function replayUsTick(
-    key: string,
-    registered: Record<string, unknown>,
-    post: StreamPost,
-) {
-    const base = getApiBase();
-    const wanted = usTickWire();
-    let body = registered.quote_type === wanted ? registered : { ...registered, quote_type: wanted };
-    if (body !== registered) {
-        // 舊的那種一定要先退掉（sidecar 對沒訂的退訂回 200）；只有 TickFull 被舊 sidecar
-        // 以 400 拒絕時可確定它不在。其他失敗就整筆留到下一輪重試，不先訂新的
-        try {
-            await post('unsubscribe', registered);
-        } catch (e) {
-            if (registered.quote_type !== 'TickFull' || !isUsTickFullRejection(e)) throw e;
+function replayUsTick(key: string, post: StreamPost, onlyIfStale = false): Promise<void> {
+    return withUsTickLock(key, async () => {
+        const registered = subscriptionRegistry.get(key);
+        if (!registered) return; // 排隊期間已經被退訂
+        const base = getApiBase();
+        const wanted = usTickWire();
+        const down = usTickDown.has(key);
+        if (onlyIfStale && registered.quote_type === wanted && !down) return;
+        let body = registered.quote_type === wanted ? registered : { ...registered, quote_type: wanted };
+        if (body !== registered && !down) {
+            // 舊的那種一定要先退掉（sidecar 對沒訂的退訂回 200）；只有 TickFull 被舊 sidecar
+            // 以 400 拒絕時可確定它不在。其他失敗就整筆留到下一輪重試，不先訂新的
+            try {
+                await post('unsubscribe', registered);
+            } catch (e) {
+                if (registered.quote_type !== 'TickFull' || !isUsTickFullRejection(e)) throw e;
+            }
+            usTickDown.add(key);
         }
-    }
-    try {
-        await post('subscribe', body);
-    } catch (e) {
-        if (body.quote_type !== 'TickFull' || !isUsTickFullRejection(e) || getApiBase() !== base) throw e;
-        noteUsTickFullRejected(base);
-        body = { ...registered, quote_type: 'Tick' };
-        await post('subscribe', body);
-    }
-    if (subscriptionRegistry.get(key) === registered) {
+        // 重新整理後要退的是「可能已經訂上」的新種類（回應遺失也算）；沒訂上時退訂回 200 無害
+        const code = key.slice(0, -':Tick'.length);
+        rememberUsTickWire(base, code, body.quote_type as UsTickWire);
+        try {
+            await post('subscribe', body);
+        } catch (e) {
+            if (body.quote_type !== 'TickFull' || !isUsTickFullRejection(e) || getApiBase() !== base) throw e;
+            noteUsTickFullRejected(base);
+            body = { ...registered, quote_type: 'Tick' };
+            rememberUsTickWire(base, code, 'Tick');
+            await post('subscribe', body);
+        }
+        usTickDown.delete(key);
         subscriptionRegistry.set(key, body);
-        // 重新整理後退訂／換種類要用實際訂著的種類（key＝US:CODE:Tick）
-        if (getApiBase() === base) rememberUsTickWire(base, key.slice(0, -':Tick'.length), body.quote_type as UsTickWire);
-    } else if (!subscriptionRegistry.has(key)) {
-        // 重播期間已經被退訂：剛訂上的要退掉，否則沒人管
-        try { await post('unsubscribe', body); } catch { /* 下次載入的孤兒清理再試 */ }
-    }
+    });
 }
 
 // ---- 美股成交資料設定切換（Tick ⇄ TickFull）：即時改訂目前訂閱中的美股逐筆 ----
@@ -567,10 +594,11 @@ async function switchUsTicksOnce() {
     const post: StreamPost = async (path, body) => { await pace(); await postStream(path, body); };
     let failed = false;
     for (const [key, body] of [...subscriptionRegistry.entries()]) {
-        if (!isUsTickRegistryKey(key) || subscriptionRegistry.get(key) !== body) continue;
-        if (body.quote_type === usTickWire()) continue;
+        if (!isUsTickRegistryKey(key)) continue;
+        // 正在改訂中（鎖住）的商品一定要排進來：完成後才知道是不是已經對了
+        if (body.quote_type === usTickWire() && !usTickDown.has(key) && !usTickLocks.has(key)) continue;
         try {
-            await replayUsTick(key, body, post);
+            await replayUsTick(key, post, true);
         } catch {
             failed = true;
         }
@@ -645,7 +673,7 @@ async function replayOnce(onlyCapabilities = false) {
     for (const [key, body] of onlyCapabilities ? [] : [...subscriptionRegistry.entries()]) {
         await pace();
         try {
-            if (isUsTickRegistryKey(key)) await replayUsTick(key, body, post);
+            if (isUsTickRegistryKey(key)) await replayUsTick(key, post);
             else await post('subscribe', body);
         } catch {
             failed = true;

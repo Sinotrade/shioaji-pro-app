@@ -26,6 +26,8 @@ import {
     getRegisteredSubscription,
     resubscribeUsTicks,
     retainUsQuoteStreams,
+    setUsTickDown,
+    withUsTickLock,
     unregisterCapabilitySubscription,
     unregisterSubscription,
 } from './stream';
@@ -514,13 +516,22 @@ async function subscribeUsQuote(contract: ContractBase, quoteType: UsQuoteType):
         if (!usStreamHolds.has(holdKey)) usStreamHolds.set(holdKey, retainUsQuoteStreams());
         return response;
     }
+    // 同一商品的逐筆操作排隊（見 stream.ts withUsTickLock），registry 才會是實際種類
+    return withUsTickLock(holdKey, () => subscribeUsTickLocked(contract, key, holdKey));
+}
+
+async function subscribeUsTickLocked(contract: ContractBase, key: string, holdKey: string): Promise<SubscriptionResponse> {
+    const quoteType = 'Tick';
     const base = getApiBase();
     const registered = getRegisteredSubscription(key, 'Tick')?.quote_type;
     const previous = registered === 'Tick' || registered === 'TickFull' ? registered : rememberedUsTickWire(base, key);
     let wire = usTickWire();
     if (previous && previous !== wire) {
         await postUsSubscription('unsubscribe', usSubscriptionBody(contract, previous), '取消行情訂閱失敗');
-        rememberUsTickWire(base, key, null);
+        // 重新整理後要退的是「可能已經訂上」的新種類；沒訂上時退訂回 200 無害
+        rememberUsTickWire(base, key, wire);
+        // 舊的已退掉：新的沒訂上之前，registry 裡的舊種類只是退訂用，改訂／重播要補訂
+        if (registered) setUsTickDown(holdKey, true);
         if (getApiBase() !== base) throw usBaseChanged();
     }
     let response: SubscriptionResponse;
@@ -533,9 +544,11 @@ async function subscribeUsQuote(contract: ContractBase, quoteType: UsQuoteType):
         if (getApiBase() !== base) throw usBaseChanged();
         noteUsTickFullRejected(base);
         wire = 'Tick';
+        rememberUsTickWire(base, key, wire);
         response = await postUsSubscription('subscribe', usSubscriptionBody(contract, wire), '美股行情訂閱失敗');
     }
     registerSubscriptionRaw(key, quoteType, usSubscriptionBody(contract, wire));
+    setUsTickDown(holdKey, false);
     rememberUsTickWire(base, key, wire);
     if (!usStreamHolds.has(holdKey)) usStreamHolds.set(holdKey, retainUsQuoteStreams());
     // 訂閱途中使用者切換了美股成交資料設定：那一輪改訂看不到這筆，補跑一次
@@ -550,11 +563,17 @@ async function subscribeUsQuote(contract: ContractBase, quoteType: UsQuoteType):
 async function unsubscribeUsQuote(contract: ContractBase, quoteType: UsQuoteType): Promise<SubscriptionResponse> {
     const key = usLinkKey(contract.code);
     const holdKey = `${key}:${quoteType}`;
-    const base = getApiBase();
-    let response: SubscriptionResponse;
     if (quoteType !== 'Tick') {
-        response = await postUsSubscription('unsubscribe', usSubscriptionBody(contract, quoteType), '取消行情訂閱失敗');
-    } else {
+        const response = await postUsSubscription('unsubscribe', usSubscriptionBody(contract, quoteType), '取消行情訂閱失敗');
+        unregisterSubscription(key, quoteType);
+        usStreamHolds.get(holdKey)?.();
+        usStreamHolds.delete(holdKey);
+        return response;
+    }
+    // 排在同一商品進行中的改訂／訂閱之後，才讀得到實際訂著的種類
+    return withUsTickLock(holdKey, async () => {
+        const base = getApiBase();
+        let response: SubscriptionResponse;
         const registered = getRegisteredSubscription(key, 'Tick')?.quote_type;
         const known = registered === 'Tick' || registered === 'TickFull' ? registered : rememberedUsTickWire(base, key);
         const wire = known ?? usTickWire();
@@ -567,11 +586,12 @@ async function unsubscribeUsQuote(contract: ContractBase, quoteType: UsQuoteType
             response = await postUsSubscription('unsubscribe', usSubscriptionBody(contract, 'Tick'), '取消行情訂閱失敗');
         }
         rememberUsTickWire(base, key, null);
-    }
-    unregisterSubscription(key, quoteType);
-    usStreamHolds.get(holdKey)?.();
-    usStreamHolds.delete(holdKey);
-    return response;
+        setUsTickDown(holdKey, false);
+        unregisterSubscription(key, quoteType);
+        usStreamHolds.get(holdKey)?.();
+        usStreamHolds.delete(holdKey);
+        return response;
+    });
 }
 
 export function subscribeQuote(
