@@ -101,6 +101,14 @@ export const agentCard = style({
     overflow: 'hidden',
 });
 
+// 申請視窗開著時，AI 助理放在導覽欄位（寬度與導覽卡相同）
+export const agentCardDocked = style([agentCard, {
+    width: 'min(28rem, 92vw)',
+    height: 'min(44rem, 92vh)',
+}]);
+
+export const agentHeaderSpacer = style({ flex: 1 });
+
 export const agentHeader = style({
     display: 'flex',
     alignItems: 'center',

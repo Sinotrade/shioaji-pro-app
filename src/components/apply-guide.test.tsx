@@ -110,13 +110,12 @@ describe('first-run apply guide', () => {
         expect(mocks.open).toHaveBeenCalledTimes(2);
     });
 
-    it('keeps the download fallback visible when the import fails', async () => {
+    it('keeps the manual fallback visible when the import fails', async () => {
         await mount();
         await act(async () => button('開始申請')!.props.onClick());
         await emit({ kind: 'step', step: 'success' });
-        await emit({ kind: 'import-failed', message: '無法存取系統憑證庫', savedToDownloads: true });
+        await emit({ kind: 'import-failed', message: '無法存取系統憑證庫' });
         expect(json()).toContain('無法存取系統憑證庫');
-        expect(json()).toContain('檔案已存到下載資料夾');
         await act(async () => button('改用手動設定')!.props.onClick());
         expect(view!.root.findAllByType(CredentialProfiles)).toHaveLength(1);
     });
@@ -164,5 +163,79 @@ describe('first-run apply guide', () => {
         await emit({ kind: 'imported', profileId: 'p1', name: 'ShioajiPro', duplicate: false });
         await act(async () => button('證券 API 約定書')!.props.onClick());
         expect(mocks.external).toHaveBeenCalledWith('https://www.sinotrade.com.tw/newweb/signCenter/S_openAPI/');
+    });
+});
+
+describe('apply guide review fixes', () => {
+    it('keeps the launch page reachable after going back from it', async () => {
+        await mount();
+        await act(async () => button('開始申請')!.props.onClick());
+        mocks.load.mockResolvedValue({ ...EMPTY_DESKTOP_SETTINGS, activeProfileId: 'p1', profiles: [profile] });
+        await emit({ kind: 'imported', profileId: 'p1', name: 'ShioajiPro', duplicate: false });
+        const progress = () => view!.root.findAllByProps({ 'aria-label': '申請進度' })[0]!.findAllByType('button');
+        const success = () => progress().find(b => b.findAllByType('span').some(span => span.children.includes('下載 .env')))!;
+        await act(async () => success().props.onClick());
+        expect(json()).not.toContain('啟動模擬環境');
+        expect(button('下一步')!.props.disabled).toBe(false);
+        await act(async () => button('下一步')!.props.onClick());
+        expect(json()).toContain('啟動模擬環境');
+        await act(async () => success().props.onClick());
+        expect(json()).not.toContain('啟動模擬環境');
+        expect(progress().at(-1)!.props.disabled).toBe(false);
+        await act(async () => progress().at(-1)!.props.onClick());
+        expect(json()).toContain('啟動模擬環境');
+    });
+
+    it('keeps 完成 locked and the download step final before an import', async () => {
+        await mount();
+        await act(async () => button('開始申請')!.props.onClick());
+        await emit({ kind: 'step', step: 'success' });
+        const progress = view!.root.findAllByProps({ 'aria-label': '申請進度' })[0]!.findAllByType('button');
+        expect(progress.at(-1)!.props.disabled).toBe(true);
+        expect(button('下一步')!.props.disabled).toBe(true);
+    });
+
+    it('opens the AI assistant in the guide column while the apply window is docked', async () => {
+        await mount();
+        await act(async () => button('開始申請')!.props.onClick());
+        await emit({ kind: 'step', step: 'form' });
+        mocks.panel.mockClear();
+        await act(async () => button('問 AI 助理')!.props.onClick());
+        expect(mocks.panel).toHaveBeenCalled();
+        expect(view!.root.findAllByType(ApplyGuide)).toHaveLength(0);
+        await act(async () => button('回到導覽')!.props.onClick());
+        expect(view!.root.findAllByType(ApplyGuide)).toHaveLength(1);
+    });
+
+    it('shows a failed reopen on the step the user is on', async () => {
+        await mount();
+        await act(async () => button('開始申請')!.props.onClick());
+        await emit({ kind: 'step', step: 'form' });
+        await emit({ kind: 'closed' });
+        mocks.open.mockRejectedValueOnce(new Error('無法建立申請視窗'));
+        await act(async () => button('重新開啟')!.props.onClick());
+        expect(json()).toContain('填寫「新增 API KEY」');
+        expect(json()).toContain('無法建立申請視窗');
+    });
+
+    it('reports other downloads only when they actually finished', async () => {
+        await mount();
+        await act(async () => button('開始申請')!.props.onClick());
+        await emit({ kind: 'step', step: 'success' });
+        await emit({ kind: 'downloaded', fileName: 'qrcode.png', ok: false });
+        expect(json()).toContain('下載失敗');
+        expect(json()).not.toContain('已存到下載資料夾');
+        await emit({ kind: 'downloaded', fileName: 'qrcode.png', ok: true });
+        expect(json()).toContain('已存到下載資料夾');
+    });
+
+    it('never claims the .env was saved when its import fails', async () => {
+        await mount();
+        await act(async () => button('開始申請')!.props.onClick());
+        await emit({ kind: 'step', step: 'success' });
+        await emit({ kind: 'import-failed', message: '無法存取系統憑證庫' });
+        expect(json()).toContain('無法存取系統憑證庫');
+        expect(json()).not.toContain('已存到下載資料夾');
+        expect(json()).toContain('再按一次「下載 .env」');
     });
 });

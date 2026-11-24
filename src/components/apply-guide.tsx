@@ -28,8 +28,8 @@ export interface ApplyGuideController {
     windowState: ApplyWindowState;
     synced: ApplyPageStep | null;
     imported: ApplyImported | null;
-    failure: { message: string; savedToDownloads: boolean } | null;
-    downloaded: string | null;
+    failure: { message: string } | null;
+    downloaded: { fileName: string; ok: boolean } | null;
     opening: boolean;
     openError: string;
     open: () => Promise<void>;
@@ -42,7 +42,7 @@ export function useApplyGuide(onImported?: (imported: ApplyImported) => void): A
     const [synced, setSynced] = useState<ApplyPageStep | null>(null);
     const [imported, setImported] = useState<ApplyImported | null>(null);
     const [failure, setFailure] = useState<ApplyGuideController['failure']>(null);
-    const [downloaded, setDownloaded] = useState<string | null>(null);
+    const [downloaded, setDownloaded] = useState<ApplyGuideController['downloaded']>(null);
     const [opening, setOpening] = useState(false);
     const [openError, setOpenError] = useState('');
     const importedRef = useRef(onImported);
@@ -64,10 +64,10 @@ export function useApplyGuide(onImported?: (imported: ApplyImported) => void): A
                     break;
                 }
                 case 'import-failed':
-                    setFailure({ message: event.message, savedToDownloads: event.savedToDownloads });
+                    setFailure({ message: event.message });
                     break;
                 case 'downloaded':
-                    setDownloaded(event.fileName);
+                    setDownloaded({ fileName: event.fileName, ok: event.ok });
                     break;
                 case 'closed':
                     setWindowState('closed'); setSynced(null);
@@ -125,14 +125,14 @@ function Callout({ tone, icon, title, children, actions }: { tone: 'danger' | 'w
     </div>;
 }
 
-function Progress({ step, onSelect }: { step: GuideStep; onSelect: (step: GuideStep) => void }) {
+function Progress({ step, imported, onSelect }: { step: GuideStep; imported: boolean; onSelect: (step: GuideStep) => void }) {
     const index = SITE_STEPS.indexOf(step);
     return <ol className={g.progress} aria-label="申請進度">
         {SITE_STEPS.map((item, i) => {
             const state = i < index ? 'done' : i === index ? 'current' : 'todo';
             return <li key={item}>
                 <button className={g.progressItem[state]} aria-current={state === 'current' ? 'step' : undefined}
-                    disabled={item === 'imported'} onClick={() => onSelect(item)}>
+                    disabled={item === 'imported' && !imported} onClick={() => onSelect(item)}>
                     <span className={g.progressBar[state]} />
                     <span className={g.progressLabel}>{GUIDE_COPY[item].label}</span>
                 </button>
@@ -197,7 +197,7 @@ export function ApplyGuide({ guide, settings, busy, agentAvailable, onToggleAgen
         const profile = settings.profiles.find(p => p.id === guide.imported!.profileId);
         return <section className={g.card} aria-label="申請 API Key 導覽">
             {header}
-            <Progress step={step} onSelect={guide.setStep} />
+            <Progress step={step} imported={!!guide.imported} onSelect={guide.setStep} />
             <div className={g.body}>
                 <h2 className={g.title}>{copy.title}</h2>
                 <div className={g.doneBox}>
@@ -236,7 +236,7 @@ export function ApplyGuide({ guide, settings, busy, agentAvailable, onToggleAgen
     const failure = guide.failure;
     return <section className={g.card} aria-label="申請 API Key 導覽">
         {header}
-        <Progress step={step} onSelect={guide.setStep} />
+        <Progress step={step} imported={!!guide.imported} onSelect={guide.setStep} />
         <div className={g.body}>
             <p className={g.stepEyebrow}>步驟 {siteIndex + 1}／{TOTAL_SITE_STEPS}</p>
             <h2 className={g.title}>{copy.title}</h2>
@@ -245,29 +245,29 @@ export function ApplyGuide({ guide, settings, busy, agentAvailable, onToggleAgen
                 actions={<button className={s.smallButton} onClick={() => void guide.open()}><RotateCw size={14} />重新開啟</button>}>
                 重新開啟後需要再登入一次。{step === 'success' ? '如果已經看到「新增成功」但還沒下載 .env，Secret Key 無法再查看，請新增一把新的金鑰。' : ''}
             </Callout>}
+            {guide.openError && <Callout tone="danger" icon={<AlertTriangle size={16} />} title="無法開啟申請視窗">{guide.openError}</Callout>}
             {windowState === 'browser' && <Callout tone="warn" icon={<ExternalLink size={16} />} title="已在瀏覽器開啟官網"
                 actions={<button className={s.smallButton} onClick={onManual}><SquarePen size={14} />從 .env 匯入</button>}>
                 這個版本無法在 App 內開啟申請視窗。照下面的步驟在瀏覽器申請，下載 .env 後回到這裡匯入。
             </Callout>}
             {failure && <Callout tone="danger" icon={<AlertTriangle size={16} />} title="無法載入下載的 .env"
                 actions={<button className={s.smallButton} onClick={onManual}><SquarePen size={14} />改用手動設定</button>}>
-                {failure.message}
-                {failure.savedToDownloads
-                    ? '。檔案已存到下載資料夾，可以改用「從 .env 匯入」。'
-                    : '。請先不要關閉官網的「新增成功」視窗，按「複製」把 API Key 與 Secret Key 貼到手動設定。'}
+                {failure.message}。請先不要關閉官網的「新增成功」視窗，可以再按一次「下載 .env」重試，或按「複製」把 API Key 與 Secret Key 貼到手動設定。
             </Callout>}
             <PointList points={copy.points} canLocate={windowOpen} />
             {step === 'login' && windowOpen && <div className={g.actions}>
                 <button className={s.button} onClick={() => void showApplyApiPage()}><ArrowRight size={14} />回到 API 管理頁</button>
             </div>}
-            {guide.downloaded && step === 'success' && <p className={s.hint}>另外下載的「{guide.downloaded}」已存到下載資料夾。</p>}
+            {guide.downloaded && step === 'success' && <p className={s.hint}>{guide.downloaded.ok
+                ? `另外下載的「${guide.downloaded.fileName}」已存到下載資料夾。`
+                : `「${guide.downloaded.fileName}」下載失敗，請在官網再下載一次。`}</p>}
             {copy.note && <p className={s.hint}>{copy.note}</p>}
             {altLinks}
         </div>
         <div className={g.footer}>
             <button className={s.smallButton} disabled={step === 'login'} onClick={() => guide.setStep(previousGuideStep(step))}><ChevronLeft size={14} />上一步</button>
             <span className={g.footerHint}>{windowOpen ? '官網畫面切換時，這裡會自動跳到對應步驟。' : ''}</span>
-            <button className={s.smallButton} disabled={step === 'success'} onClick={() => guide.setStep(nextGuideStep(step))}>下一步<ChevronRight size={14} /></button>
+            <button className={s.smallButton} disabled={step === 'success' && !guide.imported} onClick={() => guide.setStep(nextGuideStep(step))}>下一步<ChevronRight size={14} /></button>
         </div>
     </section>;
 }

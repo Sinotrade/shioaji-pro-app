@@ -12,8 +12,8 @@ import { openExternalUrl } from './tauri';
 export type ApplyGuideEvent =
     | { kind: 'step'; step: ApplyPageStep }
     | { kind: 'imported'; profileId: string; name: string; duplicate: boolean }
-    | { kind: 'import-failed'; message: string; savedToDownloads: boolean }
-    | { kind: 'downloaded'; fileName: string }
+    | { kind: 'import-failed'; message: string }
+    | { kind: 'downloaded'; fileName: string; ok: boolean }
     | { kind: 'closed' };
 
 export type ApplyWindowOpenResult = 'window' | 'browser';
@@ -66,11 +66,11 @@ export function parseApplyGuideEvent(name: string, payload: unknown): ApplyGuide
                 ? { kind: 'imported', profileId: record.profileId, name: record.name, duplicate: record.duplicate === true }
                 : null;
         case 'apply-guide:import-failed':
-            return typeof record.message === 'string'
-                ? { kind: 'import-failed', message: record.message, savedToDownloads: record.savedToDownloads === true }
-                : null;
+            return typeof record.message === 'string' ? { kind: 'import-failed', message: record.message } : null;
         case 'apply-guide:downloaded':
-            return typeof record.fileName === 'string' ? { kind: 'downloaded', fileName: record.fileName } : null;
+            return typeof record.fileName === 'string' && typeof record.ok === 'boolean'
+                ? { kind: 'downloaded', fileName: record.fileName, ok: record.ok }
+                : null;
         case 'apply-guide:closed':
             return { kind: 'closed' };
         default:
