@@ -50,6 +50,12 @@ export function usTickWire(): UsTickWire {
     return rejected.has(getApiBase()) ? 'Tick' : 'TickFull';
 }
 
+/** base 上確定不會有 TickFull：/info 是不支援的舊版，或版本不明但拒絕過 TickFull */
+export function usTickFullKnownAbsent(base: string): boolean {
+    const supported = sdkSupportsUsTickFull(knownServerInfo()?.version);
+    return supported === false || (supported === null && rejected.has(base));
+}
+
 /** TickFull 被 base 這個 sidecar 拒絕：之後（版本仍不明時）改用 Tick */
 export function noteUsTickFullRejected(base: string) {
     rejected.add(base);

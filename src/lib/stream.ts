@@ -19,7 +19,7 @@ import { createSharedStream, type StreamWire } from './shared-stream';
 import { invalidateTradingMirror } from './trading-mirror-lease';
 import { invalidateProductCatalog } from './product-catalog-version';
 import { normalizeUsBidAsk, normalizeUsTick, recordUsTick, US_BIDASK_EVENT, US_STREAM_PATHS, US_TICK_EVENT, type RawUsBidAsk, type RawUsTick } from './us/us-quotes';
-import { isUsTickFullRejection, isUsTickRegistryKey, noteUsTickFullRejected, rememberUsTickWire, usTickWire, type UsTickWire } from './us/us-tick-wire';
+import { isUsTickFullRejection, isUsTickRegistryKey, noteUsTickFullRejected, rememberUsTickWire, usTickFullKnownAbsent, usTickWire, type UsTickWire } from './us/us-tick-wire';
 import { subscribeUsTickDetail } from './us/us-tick-prefs';
 
 /** `stale`: the EventSource still looks open but no heartbeat or event
@@ -556,117 +556,90 @@ export function withUsTickLock<T>(key: string, fn: () => Promise<T>): Promise<T>
     return run;
 }
 
-// ---- 每商品、每個 sidecar（base）的實際狀態 ----
+// ---- 美股逐筆：要對帳的商品 ----
 //
-// down：registry 記的種類其實已經退掉（新種類沒訂上）；registry 仍留它給退訂用
-//   （對沒訂的退訂無害），改訂與重播要補訂。
-// maybe：訂閱結果不確定（沒收到回應／逾時）的種類 — sidecar 可能已經訂上。換訂別的
-//   種類之前、關閉時都要先把它退掉，才不會 Tick＋TickFull 同時在或留下孤兒。
-// 以 base 區分：換了伺服器位址，舊 sidecar 的狀態不套用到新的（新的由重連重播整批訂）。
-// 同一位址的 sidecar 重啟後舊狀態只會多送一次無害的退訂／補訂。
-interface UsTickState { down: boolean; maybe: Set<UsTickWire> }
-const usTickStates = new Map<string, UsTickState>();
-const stateKey = (base: string, key: string) => `${base}|${key}`;
+// sidecar 的美股退訂是冪等的（沒訂也回 200 success；Solace 另發的 "Subscription Not Found"
+// 事件本 App 沒有訂閱、不會顯示），而 Tick 與 TickFull 可以同時訂（成交重複、分不出來）。
+// 所以不追蹤「哪一種可能在」，只記「這個商品的結果不確定、要對帳」：
+//   對帳／換訂＝退掉另一種 → 訂上要的那種，兩步都要 2xx 才算完成；任何失敗、逾時都留著
+//   旗標，不先訂新的，由 5 秒後的對帳（或重連重播）再跑一次。
+// 旗標以伺服器位址（base）區分；就算帶到重啟後的 sidecar，也只是多送冪等的退訂／訂閱。
+const usTickReconcile = new Set<string>();
+const reconcileKey = (base: string, key: string) => `${base}|${key}`;
 
-function usTickState(key: string, base = getApiBase()): UsTickState {
-    const k = stateKey(base, key);
-    let st = usTickStates.get(k);
-    if (!st) { st = { down: false, maybe: new Set() }; usTickStates.set(k, st); }
-    return st;
+export function needsUsTickReconcile(key: string, base = getApiBase()): boolean {
+    return usTickReconcile.has(reconcileKey(base, key));
 }
 
-function peekUsTickState(key: string, base = getApiBase()): UsTickState | undefined {
-    const st = usTickStates.get(stateKey(base, key));
-    return st && (st.down || st.maybe.size > 0) ? st : undefined;
+export function setUsTickReconcile(key: string, on: boolean, base = getApiBase()) {
+    if (on) usTickReconcile.add(reconcileKey(base, key));
+    else usTickReconcile.delete(reconcileKey(base, key));
 }
 
-export function clearUsTickState(key: string, base = getApiBase()) {
-    usTickStates.delete(stateKey(base, key));
-}
-
-/** 這個 base 上 key 可能訂著、但 registry 沒記的種類（結果不確定） */
-export function possiblyActiveUsTickWires(key: string, base = getApiBase()): UsTickWire[] {
-    return [...(peekUsTickState(key, base)?.maybe ?? [])];
-}
-
-/** 測試／診斷用 */
-export function usTickStateForTest(key: string, base = getApiBase()) {
-    const st = peekUsTickState(key, base);
-    return st ? { down: st.down, maybe: [...st.maybe].sort() } : undefined;
-}
+export const otherUsTickKind = (kind: UsTickWire): UsTickWire => (kind === 'Tick' ? 'TickFull' : 'Tick');
 
 /**
- * 退掉一個「可能在」的種類：成功、或 sidecar 明確回 4xx（不認得／沒訂）都算已不在；
- * 逾時、斷線、5xx 結果不明，丟出讓呼叫端整筆留到之後重試。
+ * 退訂一種：2xx 才算完成。TickFull 在確定不支援它的舊 sidecar 上不必退；被舊 sidecar
+ * 以 400 拒絕（不認得）也代表本來就不在。其他失敗（含 429、5xx、逾時）照樣丟出。
  */
-async function dropMaybe(st: UsTickState, kind: UsTickWire, post: (path: 'unsubscribe', kind: UsTickWire) => Promise<unknown>) {
+export async function dropUsTickKind(kind: UsTickWire, base: string, post: (path: 'unsubscribe', kind: UsTickWire) => Promise<unknown>) {
+    if (kind === 'TickFull' && usTickFullKnownAbsent(base)) return;
     try {
         await post('unsubscribe', kind);
     } catch (e) {
-        const definite4xx = isDefiniteStreamFailure(e) && /^4\d\d\b/.test(String((e as Error).message ?? ''));
-        if (!definite4xx && !(kind === 'TickFull' && isUsTickFullRejection(e))) throw e;
+        if (kind !== 'TickFull' || !isUsTickFullRejection(e)) throw e;
+        if (getApiBase() === base) noteUsTickFullRejected(base);
     }
-    st.maybe.delete(kind);
 }
 
 /**
- * 把 key 的美股逐筆換成（或補訂）wanted：先退掉目前登記的種類（current，down 時已不在
- * 就不退）與所有結果不確定的種類，再訂 wanted；TickFull 被舊 sidecar 以 400 拒絕就改訂
- * Tick。訂閱結果不確定時把該種類記為 maybe。sessionStorage 在送出前記新種類
- * （重新整理後退訂用）。必須在 withUsTickLock(key) 裡呼叫。回傳實際訂上的種類。
+ * 把 key 的美股逐筆換成（或補訂）wanted。present：可能訂著的種類（registry、上一次載入
+ * 記下的）；其中有另一種、或這個商品要對帳時，先退掉另一種。送出訂閱前呼叫
+ * beforeSubscribe（registry 先記要訂的種類：結果不確定時關閉／重播也找得到它），
+ * sessionStorage 也先記。TickFull 被舊 sidecar 以 400 拒絕就改訂 Tick。
+ * 任何一步失敗都標記要對帳後丟出。必須在 withUsTickLock(key) 裡呼叫。
  */
 export async function ensureUsTickKind<R>(opts: {
     key: string;
     base: string;
-    current: UsTickWire | undefined;
+    present: (UsTickWire | undefined)[];
     wanted: UsTickWire;
     post: (path: 'subscribe' | 'unsubscribe', kind: UsTickWire) => Promise<R>;
+    beforeSubscribe: (kind: UsTickWire) => void;
 }): Promise<{ wire: UsTickWire; response: R }> {
-    const { key, base, current, post } = opts;
+    const { key, base, post } = opts;
     const code = key.slice(0, -':Tick'.length);
-    const st = usTickState(key, base);
-    if (current && current !== opts.wanted && !st.down) {
-        // 舊的那種一定要先退掉；只有 TickFull 被舊 sidecar 以 400 拒絕時可確定它不在。
-        // 其他失敗就整筆留到之後重試，不先訂新的
-        try {
-            await post('unsubscribe', current);
-        } catch (e) {
-            if (current !== 'TickFull' || !isUsTickFullRejection(e)) throw e;
-        }
-        st.down = true;
-        st.maybe.delete(current);
-    }
-    for (const kind of [...st.maybe]) if (kind !== opts.wanted) await dropMaybe(st, kind, (path, k) => post(path, k));
-    if (getApiBase() !== base) throw usBaseChanged();
     let wire = opts.wanted;
-    rememberUsTickWire(base, code, wire);
-    let response: R;
     try {
-        response = await post('subscribe', wire);
-    } catch (e) {
-        if (!isDefiniteStreamFailure(e)) { st.maybe.add(wire); throw e; }
-        if (wire !== 'TickFull' || !isUsTickFullRejection(e) || getApiBase() !== base) throw e;
-        noteUsTickFullRejected(base);
-        wire = 'Tick';
+        if (needsUsTickReconcile(key, base) || opts.present.includes(otherUsTickKind(wire))) {
+            await dropUsTickKind(otherUsTickKind(wire), base, (path, k) => post(path, k));
+        }
+        if (getApiBase() !== base) throw usBaseChanged();
         rememberUsTickWire(base, code, wire);
+        opts.beforeSubscribe(wire);
+        let response: R;
         try {
             response = await post('subscribe', wire);
-        } catch (e2) {
-            if (!isDefiniteStreamFailure(e2)) st.maybe.add(wire);
-            throw e2;
+        } catch (e) {
+            if (wire !== 'TickFull' || !isUsTickFullRejection(e) || getApiBase() !== base) throw e;
+            noteUsTickFullRejected(base);
+            wire = 'Tick';
+            rememberUsTickWire(base, code, wire);
+            opts.beforeSubscribe(wire);
+            response = await post('subscribe', wire);
         }
+        setUsTickReconcile(key, false, base);
+        return { wire, response };
+    } catch (e) {
+        setUsTickReconcile(key, true, base);
+        throw e;
     }
-    st.down = false;
-    st.maybe.delete(wire);
-    if (!st.maybe.size) usTickStates.delete(stateKey(base, key));
-    return { wire, response };
 }
 
 /**
  * 重播美股逐筆：依目前設定與 sidecar 重新決定 TickFull／Tick（使用者可能換了設定、
- * sidecar 可能換了版本），在每商品鎖裡讀 registry，經 ensureUsTickKind 換訂或補訂；
- * registry 改記實際成功的 body。onlyIfStale：設定切換用，種類已對、有在訂、也沒有
- * 結果不確定的種類就不動。
+ * sidecar 可能換了版本），在每商品鎖裡讀 registry，經 ensureUsTickKind 換訂或補訂。
+ * onlyIfStale：設定切換／對帳用，種類已對、也不用對帳就不動。
  */
 function replayUsTick(key: string, post: StreamPost, onlyIfStale = false): Promise<void> {
     return withUsTickLock(key, async () => {
@@ -674,13 +647,15 @@ function replayUsTick(key: string, post: StreamPost, onlyIfStale = false): Promi
         if (!registered) return; // 排隊期間已經被退訂
         const base = getApiBase();
         const wanted = usTickWire();
-        const current = registered.quote_type === 'TickFull' ? 'TickFull' : 'Tick';
-        if (onlyIfStale && current === wanted && !peekUsTickState(key, base)) return;
-        const { wire } = await ensureUsTickKind({
-            key, base, current, wanted,
+        const current: UsTickWire = registered.quote_type === 'TickFull' ? 'TickFull' : 'Tick';
+        if (onlyIfStale && current === wanted && !needsUsTickReconcile(key, base)) return;
+        await ensureUsTickKind({
+            key, base, present: [current], wanted,
             post: (path, kind) => post(path, { ...registered, quote_type: kind }),
+            beforeSubscribe: (kind) => {
+                if (subscriptionRegistry.has(key)) subscriptionRegistry.set(key, kind === current ? registered : { ...registered, quote_type: kind });
+            },
         });
-        subscriptionRegistry.set(key, wire === current ? registered : { ...registered, quote_type: wire });
     });
 }
 
@@ -701,19 +676,23 @@ async function switchUsTicksOnce() {
     for (const [key, body] of [...subscriptionRegistry.entries()]) {
         if (!isUsTickRegistryKey(key)) continue;
         // 正在改訂中（鎖住）的商品一定要排進來：完成後才知道是不是已經對了
-        if (body.quote_type === usTickWire() && !peekUsTickState(key) && !usTickLocks.has(key)) continue;
+        if (body.quote_type === usTickWire() && !needsUsTickReconcile(key) && !usTickLocks.has(key)) continue;
         try {
             await replayUsTick(key, post, true);
         } catch {
             failed = true;
         }
     }
-    if (failed && !usTickSwitchRetry) {
-        usTickSwitchRetry = setTimeout(() => {
-            usTickSwitchRetry = null;
-            void resubscribeUsTicks();
-        }, 5000);
-    }
+    if (failed) scheduleUsTickReconcile();
+}
+
+/** 5 秒後跑一次美股逐筆對帳（訂閱結果不確定時用） */
+export function scheduleUsTickReconcile() {
+    if (usTickSwitchRetry) return;
+    usTickSwitchRetry = setTimeout(() => {
+        usTickSwitchRetry = null;
+        void resubscribeUsTicks();
+    }, 5000);
 }
 
 /** 美股逐筆依目前設定改訂（設定切換時自動呼叫；回傳下一輪完成的 promise） */
