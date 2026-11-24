@@ -13,7 +13,7 @@ import {
     type ApplyPageStep, type GuidePoint, type GuideStep,
 } from '../lib/apply-guide-config';
 import {
-    focusApplyTarget, listenApplyGuide, openApplyWindow, showApplyApiPage, type ApplyGuideEvent,
+    focusApplyTarget, listenApplyGuide, openApplyWindow, showApplyApiPage, type ApplyGuideEvent, type DownloadStatus,
 } from '../lib/apply-guide-native';
 import { openExternalUrl, type DesktopSettings } from '../lib/tauri';
 import * as g from './apply-guide.css';
@@ -29,7 +29,7 @@ export interface ApplyGuideController {
     synced: ApplyPageStep | null;
     imported: ApplyImported | null;
     failure: { message: string } | null;
-    downloaded: { fileName: string; ok: boolean } | null;
+    downloaded: { fileName: string; status: DownloadStatus } | null;
     opening: boolean;
     openError: string;
     open: () => Promise<void>;
@@ -55,7 +55,9 @@ export function useApplyGuide(onImported?: (imported: ApplyImported) => void): A
                 case 'step':
                     setSynced(event.step);
                     setWindowState('open');
-                    setStep(current => current === 'imported' ? current : event.step);
+                    // 載入後關掉「新增成功」會回到列表：留在完成頁；
+                    // 開始申請另一把（身份驗證以後）才跟著官網走，完成頁仍可從進度列回去
+                    setStep(current => current === 'imported' && (event.step === 'list' || event.step === 'login') ? current : event.step);
                     break;
                 case 'imported': {
                     const value = { profileId: event.profileId, name: event.name };
@@ -67,7 +69,7 @@ export function useApplyGuide(onImported?: (imported: ApplyImported) => void): A
                     setFailure({ message: event.message });
                     break;
                 case 'downloaded':
-                    setDownloaded({ fileName: event.fileName, ok: event.ok });
+                    setDownloaded({ fileName: event.fileName, status: event.status });
                     break;
                 case 'closed':
                     setWindowState('closed'); setSynced(null);
@@ -193,6 +195,12 @@ export function ApplyGuide({ guide, settings, busy, agentAvailable, onToggleAgen
         </section>;
     }
 
+    const failure = guide.failure;
+    const failureCallout = failure && <Callout tone="danger" icon={<AlertTriangle size={16} />} title="無法載入下載的 .env"
+                actions={<button className={s.smallButton} onClick={onManual}><SquarePen size={14} />改用手動設定</button>}>
+                {failure.message}。請先不要關閉官網的「新增成功」視窗，可以再按一次「下載 .env」重試，或按「複製」把 API Key 與 Secret Key 貼到手動設定。
+            </Callout>;
+
     if (step === 'imported' && guide.imported) {
         const profile = settings.profiles.find(p => p.id === guide.imported!.profileId);
         // 匯入後使用者可能在帳號設定改成正式環境：導覽只啟動模擬環境
@@ -203,6 +211,8 @@ export function ApplyGuide({ guide, settings, busy, agentAvailable, onToggleAgen
             <Progress step={step} imported={!!guide.imported} onSelect={guide.setStep} />
             <div className={g.body}>
                 <h2 className={g.title}>{copy.title}</h2>
+                {failure && <p className={g.lead}>之後下載的 .env 沒有載入成功，目前載入的仍是下面這把金鑰。</p>}
+                {failureCallout}
                 <div className={g.doneBox}>
                     <span className={g.doneIcon}><CheckCircle2 size={26} /></span>
                     <div>
@@ -243,7 +253,6 @@ export function ApplyGuide({ guide, settings, busy, agentAvailable, onToggleAgen
         </section>;
     }
 
-    const failure = guide.failure;
     return <section className={g.card} aria-label="申請 API Key 導覽">
         {header}
         <Progress step={step} imported={!!guide.imported} onSelect={guide.setStep} />
@@ -260,17 +269,16 @@ export function ApplyGuide({ guide, settings, busy, agentAvailable, onToggleAgen
                 actions={<button className={s.smallButton} onClick={onManual}><SquarePen size={14} />從 .env 匯入</button>}>
                 這個版本無法在 App 內開啟申請視窗。照下面的步驟在瀏覽器申請，下載 .env 後回到這裡匯入。
             </Callout>}
-            {failure && <Callout tone="danger" icon={<AlertTriangle size={16} />} title="無法載入下載的 .env"
-                actions={<button className={s.smallButton} onClick={onManual}><SquarePen size={14} />改用手動設定</button>}>
-                {failure.message}。請先不要關閉官網的「新增成功」視窗，可以再按一次「下載 .env」重試，或按「複製」把 API Key 與 Secret Key 貼到手動設定。
-            </Callout>}
+            {failureCallout}
             <PointList points={copy.points} canLocate={windowOpen} />
             {step === 'login' && windowOpen && <div className={g.actions}>
                 <button className={s.button} onClick={() => void showApplyApiPage()}><ArrowRight size={14} />回到 API 管理頁</button>
             </div>}
-            {guide.downloaded && step === 'success' && <p className={s.hint}>{guide.downloaded.ok
-                ? `另外下載的「${guide.downloaded.fileName}」已存到下載資料夾。`
-                : `「${guide.downloaded.fileName}」下載失敗，請在官網再下載一次。`}</p>}
+            {guide.downloaded && step === 'success' && <p className={s.hint}>{{
+                saved: `另外下載的「${guide.downloaded.fileName}」已存到下載資料夾。`,
+                unknown: `「${guide.downloaded.fileName}」已交給系統下載，請到下載資料夾確認。`,
+                failed: `「${guide.downloaded.fileName}」下載失敗，請在官網再下載一次。`,
+            }[guide.downloaded.status]}</p>}
             {copy.note && <p className={s.hint}>{copy.note}</p>}
             {altLinks}
         </div>

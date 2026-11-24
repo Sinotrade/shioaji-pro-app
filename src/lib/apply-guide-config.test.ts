@@ -92,8 +92,10 @@ describe('apply guide native events', () => {
         expect(parseApplyGuideEvent('apply-guide:imported', { profileId: 1 })).toBeNull();
         expect(parseApplyGuideEvent('apply-guide:import-failed', { message: '格式錯誤' }))
             .toEqual({ kind: 'import-failed', message: '格式錯誤' });
-        expect(parseApplyGuideEvent('apply-guide:downloaded', { fileName: 'qrcode.png', ok: true })).toEqual({ kind: 'downloaded', fileName: 'qrcode.png', ok: true });
-        expect(parseApplyGuideEvent('apply-guide:downloaded', { fileName: 'ca.pfx', ok: false })).toEqual({ kind: 'downloaded', fileName: 'ca.pfx', ok: false });
+        for (const status of ['saved', 'failed', 'unknown'] as const) {
+            expect(parseApplyGuideEvent('apply-guide:downloaded', { fileName: 'qrcode.png', status })).toEqual({ kind: 'downloaded', fileName: 'qrcode.png', status });
+        }
+        expect(parseApplyGuideEvent('apply-guide:downloaded', { fileName: 'qrcode.png', status: 'ok' })).toBeNull();
         expect(parseApplyGuideEvent('apply-guide:downloaded', { fileName: 'qrcode.png' })).toBeNull();
         expect(parseApplyGuideEvent('apply-guide:closed', null)).toEqual({ kind: 'closed' });
         expect(parseApplyGuideEvent('other', {})).toBeNull();

@@ -222,10 +222,13 @@ describe('apply guide review fixes', () => {
         await mount();
         await act(async () => button('開始申請')!.props.onClick());
         await emit({ kind: 'step', step: 'success' });
-        await emit({ kind: 'downloaded', fileName: 'qrcode.png', ok: false });
+        await emit({ kind: 'downloaded', fileName: 'qrcode.png', status: 'failed' });
         expect(json()).toContain('下載失敗');
         expect(json()).not.toContain('已存到下載資料夾');
-        await emit({ kind: 'downloaded', fileName: 'qrcode.png', ok: true });
+        await emit({ kind: 'downloaded', fileName: 'qrcode.png', status: 'unknown' });
+        expect(json()).toContain('已交給系統下載');
+        expect(json()).not.toContain('下載失敗');
+        await emit({ kind: 'downloaded', fileName: 'qrcode.png', status: 'saved' });
         expect(json()).toContain('已存到下載資料夾');
     });
 
@@ -276,5 +279,49 @@ describe('apply guide review round 2', () => {
         await importWith({ ...EMPTY_DESKTOP_SETTINGS, activeProfileId: 'p1', profiles: [profile] });
         expect(json()).toContain('已存進這台電腦的系統憑證庫');
         expect(json()).not.toContain('金鑰以檔案保存');
+    });
+});
+
+describe('apply guide review round 3', () => {
+    const other = { ...profile, id: 'p2', name: 'SecondKey', apiKeyMasked: '••••4321' };
+    const toDone = async () => {
+        await mount();
+        await act(async () => button('開始申請')!.props.onClick());
+        mocks.load.mockResolvedValue({ ...EMPTY_DESKTOP_SETTINGS, activeProfileId: 'p1', profiles: [profile] });
+        await emit({ kind: 'imported', profileId: 'p1', name: 'ShioajiPro', duplicate: false });
+        expect(json()).toContain('金鑰已載入');
+    };
+
+    it('shows a later import failure on the 完成 page', async () => {
+        await toDone();
+        await emit({ kind: 'import-failed', message: '無法存取系統憑證庫' });
+        expect(json()).toContain('無法載入下載的 .env');
+        expect(json()).toContain('無法存取系統憑證庫');
+        expect(json()).toContain('ShioajiPro');
+    });
+
+    it('replaces the completion page with a later imported key', async () => {
+        await toDone();
+        await emit({ kind: 'import-failed', message: '無法存取系統憑證庫' });
+        mocks.load.mockResolvedValue({ ...EMPTY_DESKTOP_SETTINGS, activeProfileId: 'p1', profiles: [profile, other] });
+        await emit({ kind: 'imported', profileId: 'p2', name: 'SecondKey', duplicate: false });
+        expect(json()).toContain('SecondKey');
+        expect(json()).toContain('••••4321');
+        expect(json()).not.toContain('無法存取系統憑證庫');
+        mocks.select.mockResolvedValue({ ...EMPTY_DESKTOP_SETTINGS, activeProfileId: 'p2', configured: true, credentialRevision: 'native', profiles: [profile, other] });
+        mocks.start.mockResolvedValue({ ok: true });
+        await act(async () => button('啟動模擬環境')!.props.onClick());
+        expect(mocks.select).toHaveBeenCalledWith('p2');
+    });
+
+    it('follows the site when another key is being created', async () => {
+        await toDone();
+        await emit({ kind: 'step', step: 'list' });
+        expect(json()).toContain('金鑰已載入');
+        await emit({ kind: 'step', step: 'verify' });
+        expect(json()).toContain('收驗證碼完成身份驗證');
+        // 完成頁仍可從進度列回去
+        const progress = view!.root.findAllByProps({ 'aria-label': '申請進度' })[0]!.findAllByType('button');
+        expect(progress.at(-1)!.props.disabled).toBe(false);
     });
 });
