@@ -1,4 +1,4 @@
-import { Bot } from 'lucide-react';
+import { Bot, KeyRound } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { registerOnboardingAppStateHost } from '../lib/agent-app-command';
 import { agentModule } from '../lib/features';
@@ -10,6 +10,8 @@ import { clearStoredSpawnKeyHash } from '../lib/spawn-keys';
 import { FeatureGate } from './feature-gate';
 import { CredentialProfiles } from './credential-profiles';
 import { timedOnboarding } from '../lib/server-actions';
+import { closeApplyWindow } from '../lib/apply-guide-native';
+import { ApplyGuide, useApplyGuide } from './apply-guide';
 import * as styles from './onboarding-setup.css';
 import * as dialog from './server-settings-dialog.css';
 
@@ -24,6 +26,11 @@ export function OnboardingSetup() {
     const [loaded, setLoaded] = useState(false);
     const [confirmLogout, setConfirmLogout] = useState(false);
     const logoutInFlight = useRef(false);
+    // 首次設定預設走申請導覽；已有帳號（或待遷移）時直接顯示帳號設定
+    const [mode, setMode] = useState<'guide' | 'manual'>('guide');
+    const [agentOpen, setAgentOpen] = useState(true);
+    const refresh = () => { loadDesktopSettings().then(setSettings).catch(() => undefined); };
+    const guide = useApplyGuide(refresh);
     const stopForChange = async () => {
         const result = await serverStop({ stopAgents: true, ownedOnly: true });
         if (!result.ok) throw new Error(result.output || '無法停止伺服器，尚未變更帳號。');
@@ -41,7 +48,11 @@ export function OnboardingSetup() {
     };
     useEffect(() => {
         let active = true;
-        loadDesktopSettings().then(value => { if (active) { setSettings(value); setLoaded(true); } }).catch(() => { if (active) setError('無法讀取本機設定，請重新開啟 App 後重試。'); });
+        loadDesktopSettings().then(value => {
+            if (!active) return;
+            setSettings(value); setLoaded(true);
+            if (value.profiles.length > 0 || value.migrationError) setMode('manual');
+        }).catch(() => { if (active) setError('無法讀取本機設定，請重新開啟 App 後重試。'); });
         const off = isTauri ? registerOnboardingAppStateHost(window) : undefined;
         return () => { active = false; off?.(); };
     }, []);
@@ -74,6 +85,7 @@ export function OnboardingSetup() {
         const invalid = validateDesktopSettings(target);
         if (invalid) { setError(invalid.body); return; }
         setBusy(true); setError('');
+        void closeApplyWindow();
         try {
             const result = await timedOnboarding({ save: async () => {}, start: () => serverStart(target), reloadWhenHealthy });
             if (!result.ok) {
@@ -90,6 +102,26 @@ export function OnboardingSetup() {
         if (logoutInFlight.current) throw new Error('正在登出，請等待完成。');
         await launch(settings);
     };
+    // 申請導覽載入的 .env：選成使用中的帳號後啟動（模擬環境）
+    const startImported = async (profileId: string) => {
+        if (logoutInFlight.current) return;
+        setBusy(true); setError('');
+        let next: DesktopSettings;
+        try {
+            next = await loadDesktopSettings();
+            if (next.activeProfileId !== profileId) {
+                await stopForChange();
+                next = await selectCredentialProfile(profileId);
+            }
+            setSettings(next);
+        } catch (e) {
+            setError(e instanceof Error ? e.message : String(e));
+            setBusy(false);
+            return;
+        }
+        setBusy(false);
+        await launch(next);
+    };
     const action = async (kind: 'select' | 'delete', id: string) => {
         if (logoutInFlight.current) throw new Error('正在登出，請等待完成。');
         setBusy(true);
@@ -101,11 +133,25 @@ export function OnboardingSetup() {
     };
     const AgentPanel = agentModule?.Panel;
     agentModule?.ensureDefaultProvider('codex');
-    return (<div className={styles.shell}><div className={styles.layout}>
-        <div className={styles.card}>
+    const guiding = mode === 'guide' && loaded;
+    // 申請視窗開著時導覽貼齊左側，右側讓給原生申請視窗；AI 助理先收起
+    const docked = guiding && guide.step !== 'start' && guide.windowState === 'open';
+    const showAgent = !!AgentPanel && agentOpen && !docked;
+    const errors = <>
+        {error && <p className={styles.errorText} role="alert">{error}</p>}
+        {startError && <ServerStartErrorPanel error={startError.error} logPath={startError.logPath} onOpenLogFolder={isTauri ? openServerLogFolder : undefined} />}
+    </>;
+    return (<div className={docked ? styles.shellDocked : styles.shell}><div className={docked ? styles.layoutDocked : styles.layout}>
+        {guiding ? <div className={styles.guideColumn}>
+            <ApplyGuide guide={guide} settings={settings} busy={busy}
+                agentAvailable={!!AgentPanel}
+                onToggleAgent={() => setAgentOpen(open => docked || !open)}
+                onManual={() => setMode('manual')}
+                onStart={startImported} />
+            {(error || startError) && <div className={styles.guideErrors}>{errors}</div>}
+        </div> : <div className={styles.card}>
             <div><div className={styles.logo}>Shioaji Pro</div><div className={styles.subtitle}>設定或選擇帳號以啟動交易伺服器</div></div>
-            {error && <p className={styles.errorText} role="alert">{error}</p>}
-            {startError && <ServerStartErrorPanel error={startError.error} logPath={startError.logPath} onOpenLogFolder={isTauri ? openServerLogFolder : undefined} />}
+            {errors}
             {loaded && <CredentialProfiles settings={settings} busy={busy} running={false} onSave={save} onAction={action} onImported={setSettings} onStart={start} onBusyChange={setBusy} />}
             {loaded && settings.migrationError && <div className={styles.logoutBox}>
                 <p className={styles.hint}>無法轉移時可以登出重來：會停止本 App 的 Agent 與伺服器，並清除舊金鑰、CA 密碼與使用中帳號的金鑰。</p>
@@ -115,9 +161,10 @@ export function OnboardingSetup() {
                 </div>
             </div>}
             {busy && <p className={styles.hint}>啟動中 — 登入與載入合約約需 10–30 秒…</p>}
-            <p className={styles.hint}>金鑰只存在這台電腦的系統憑證庫。還沒有 API Key？可以請 AI 助理引導申請。</p>
-        </div>
-                {AgentPanel && (
+            <p className={styles.hint}>金鑰只存在這台電腦的系統憑證庫。</p>
+            <button className={styles.guideLink} onClick={() => setMode('guide')}><KeyRound size={14} />還沒有 API Key？跟著導覽申請</button>
+        </div>}
+                {showAgent && AgentPanel && (
                     <div className={styles.agentCard}>
                         <div className={styles.agentHeader}>
                             <Bot size={14} />

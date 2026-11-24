@@ -15,6 +15,12 @@ export const shell = style({
     zIndex: 1000,
 });
 
+// 申請視窗開著時：導覽卡貼齊左側，右側留給原生申請視窗
+export const shellDocked = style([shell, {
+    justifyContent: 'flex-start',
+    paddingLeft: vars.space.lg,
+}]);
+
 // row of [setup card, agent side-panel] — wraps to a single column narrow
 // viewport since the agent panel needs real width to be usable
 export const layout = style({
@@ -24,6 +30,45 @@ export const layout = style({
     justifyContent: 'center',
     gap: vars.space.lg,
     maxWidth: '92vw',
+});
+
+export const layoutDocked = style([layout, { justifyContent: 'flex-start' }]);
+
+export const guideColumn = style({
+    display: 'flex',
+    flexDirection: 'column',
+    gap: vars.space.sm,
+    maxHeight: '92vh',
+    minHeight: 0,
+});
+
+export const guideErrors = style({
+    display: 'flex',
+    flexDirection: 'column',
+    gap: vars.space.sm,
+    width: 'min(28rem, 92vw)',
+    boxSizing: 'border-box',
+    fontSize: '0.875rem',
+    padding: vars.space.md,
+    background: vars.color.panelRaised,
+    border: `1px solid ${vars.color.border}`,
+    borderRadius: vars.radius.lg,
+});
+
+export const guideLink = style({
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '6px',
+    alignSelf: 'flex-start',
+    padding: 0,
+    border: 0,
+    background: 'transparent',
+    color: vars.color.accent,
+    cursor: 'pointer',
+    fontFamily: vars.font.body,
+    fontSize: '0.78rem',
+    fontWeight: 600,
+    ':focus-visible': { outline: `2px solid ${vars.color.accent}`, outlineOffset: 2 },
 });
 
 export const card = style({

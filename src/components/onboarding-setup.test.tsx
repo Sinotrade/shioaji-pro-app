@@ -16,6 +16,12 @@ import { OnboardingSetup } from './onboarding-setup';
 import { CredentialProfiles } from './credential-profiles';
 import { ServerStartErrorPanel } from './server-start-error-panel';
 let view: ReactTestRenderer | undefined;
+const text = (node: { children: unknown[] }) => node.children.filter(x => typeof x === 'string').join('');
+// 沒有帳號時預設是申請導覽；這些測試操作的是手動帳號設定
+const toManual = async () => {
+    const button = view!.root.findAllByType('button').find(b => text(b) === '我已經有 API Key');
+    if (button) await act(async () => button.props.onClick());
+};
 beforeEach(() => {
     vi.clearAllMocks(); vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true); vi.stubGlobal('window', new EventTarget());
     mocks.load.mockResolvedValue(EMPTY_DESKTOP_SETTINGS);
@@ -30,7 +36,7 @@ describe('first-run credential profiles', () => {
     it('starts with the native non-secret read model after saving a new account', async () => {
         const settings: DesktopSettings = { ...EMPTY_DESKTOP_SETTINGS, configured: true, activeProfileId: 'new', credentialRevision: 'native', profiles: [{ id: 'new', name: '新帳號', environment: 'simulation', hasCA: false, caPath: '', createdAt: '', apiKeyMasked: '••••1234', secretState: 'stored', credentialBackend: 'system', revision: 'native' }] };
         mocks.save.mockResolvedValue(settings); mocks.start.mockResolvedValue({ ok: true });
-        await act(async () => { view = create(createElement(OnboardingSetup)); });
+        await act(async () => { view = create(createElement(OnboardingSetup)); }); await toManual();
         await act(async () => view!.root.findByType(CredentialProfiles).props.onSave({ name: '新帳號', environment: 'simulation', caPath: '', apiKey: 'test', secretKey: 'test' }, true));
         expect(mocks.start).toHaveBeenCalledWith(settings);
         expect(mocks.stop).toHaveBeenCalledWith({ stopAgents: true, ownedOnly: true });
@@ -39,13 +45,13 @@ describe('first-run credential profiles', () => {
     });
     it('does not start when secret storage fails', async () => {
         mocks.save.mockRejectedValue(new Error('storage unavailable'));
-        await act(async () => { view = create(createElement(OnboardingSetup)); });
+        await act(async () => { view = create(createElement(OnboardingSetup)); }); await toManual();
         await expect(view!.root.findByType(CredentialProfiles).props.onSave({ name: 'test', environment: 'simulation', caPath: '' }, true)).rejects.toThrow();
         expect(mocks.start).not.toHaveBeenCalled();
     });
     it('retries migration through native settings and refreshes the current view', async () => {
         mocks.load.mockResolvedValueOnce({ ...EMPTY_DESKTOP_SETTINGS, migrationError: '暫時無法存取' });
-        await act(async () => { view = create(createElement(OnboardingSetup)); });
+        await act(async () => { view = create(createElement(OnboardingSetup)); }); await toManual();
         const retry = view!.root.findAllByType('button').find(b => b.children.filter(x => typeof x === 'string').join('') === '重試遷移')!;
         await act(async () => retry.props.onClick());
         expect(mocks.load).toHaveBeenCalledTimes(2);
@@ -54,7 +60,7 @@ describe('first-run credential profiles', () => {
     });
     it('stops the owned server and Agents before selecting from onboarding', async () => {
         mocks.select.mockImplementation(async () => { expect(mocks.stop).toHaveBeenCalledWith({ stopAgents: true, ownedOnly: true }); return EMPTY_DESKTOP_SETTINGS; });
-        await act(async () => { view = create(createElement(OnboardingSetup)); });
+        await act(async () => { view = create(createElement(OnboardingSetup)); }); await toManual();
         await act(async () => view!.root.findByType(CredentialProfiles).props.onAction('select', 'two'));
         expect(mocks.select).toHaveBeenCalledWith('two');
     });
@@ -62,7 +68,7 @@ describe('first-run credential profiles', () => {
         mocks.stop.mockResolvedValue({ ok: false, output: 'Agent 尚未停止' });
         const next = { ...EMPTY_DESKTOP_SETTINGS, profiles: [{ id: 'two', secretState: 'stored', environment: 'simulation' }] };
         mocks.save.mockResolvedValue(next);
-        await act(async () => { view = create(createElement(OnboardingSetup)); });
+        await act(async () => { view = create(createElement(OnboardingSetup)); }); await toManual();
         await expect(view!.root.findByType(CredentialProfiles).props.onSave({ name: 'two', environment: 'simulation', caPath: '' }, true)).rejects.toThrow('Agent 尚未停止');
         expect(mocks.select).not.toHaveBeenCalled(); expect(mocks.start).not.toHaveBeenCalled();
     });
@@ -74,13 +80,13 @@ describe('first-run credential profiles', () => {
         mocks.stop.mockImplementation(async () => { expect(mocks.save).toHaveBeenCalledOnce(); return { ok: true }; });
         mocks.select.mockImplementation(async () => { expect(mocks.stop).toHaveBeenCalledOnce(); return selected; });
         mocks.start.mockImplementation(async () => { expect(mocks.select).toHaveBeenCalledWith('two'); return { ok: true }; });
-        await act(async () => { view = create(createElement(OnboardingSetup)); });
+        await act(async () => { view = create(createElement(OnboardingSetup)); }); await toManual();
         await act(async () => view!.root.findByType(CredentialProfiles).props.onSave({ id: 'two', name: 'two', environment: 'simulation', caPath: '' }, true));
         expect(mocks.start).toHaveBeenCalledWith(selected);
     });
     it('leaves a running server untouched when the saved production target has no CA', async () => {
         mocks.save.mockResolvedValue({ ...EMPTY_DESKTOP_SETTINGS, profiles: [{ id: 'two', secretState: 'stored', environment: 'production' }] });
-        await act(async () => { view = create(createElement(OnboardingSetup)); });
+        await act(async () => { view = create(createElement(OnboardingSetup)); }); await toManual();
         await act(async () => {
             await expect(view!.root.findByType(CredentialProfiles).props.onSave({ name: 'two', environment: 'production', caPath: '' }, true)).rejects.toThrow();
         });
@@ -90,7 +96,7 @@ describe('first-run credential profiles', () => {
         const profile = { id: 'new', name: '新帳號', environment: 'simulation', hasCA: false, caPath: '', createdAt: '', apiKeyMasked: '••••1234', secretState: 'stored', credentialBackend: 'system', revision: 'native' } as const;
         const saved: DesktopSettings = { ...EMPTY_DESKTOP_SETTINGS, configured: true, activeProfileId: 'new', credentialRevision: 'native', profiles: [profile] };
         mocks.save.mockResolvedValue(saved); mocks.start.mockResolvedValue({ ok: true });
-        await act(async () => { view = create(createElement(OnboardingSetup)); });
+        await act(async () => { view = create(createElement(OnboardingSetup)); }); await toManual();
         const label = (b: { children: unknown[] }) => b.children.filter(x => typeof x === 'string').join('');
         const button = (text: string) => view!.root.findAllByType('button').find(b => label(b) === text)!;
         const inputs = () => view!.root.findByType(CredentialProfiles).findAllByType('input');
@@ -107,7 +113,7 @@ describe('first-run credential profiles', () => {
     it('offers two-click logout after migration failure and stops before clearing', async () => {
         mocks.load.mockResolvedValue({ ...EMPTY_DESKTOP_SETTINGS, migrationError: '遷移失敗；原有資料已保留' });
         mocks.logout.mockImplementation(async () => { expect(mocks.stop).toHaveBeenCalledWith({ stopAgents: true, ownedOnly: true }); return EMPTY_DESKTOP_SETTINGS; });
-        await act(async () => { view = create(createElement(OnboardingSetup)); });
+        await act(async () => { view = create(createElement(OnboardingSetup)); }); await toManual();
         const button = () => view!.root.findAllByType('button').find(b => b.children.join('').includes('登出並清除'))!;
         expect(button()).toBeDefined();
         await act(async () => button().props.onClick());
@@ -119,7 +125,7 @@ describe('first-run credential profiles', () => {
     it('keeps migration data when stopping fails during logout', async () => {
         mocks.load.mockResolvedValue({ ...EMPTY_DESKTOP_SETTINGS, migrationError: '遷移失敗' });
         mocks.stop.mockResolvedValue({ ok: false, output: '外部伺服器不是本 App 啟動的' });
-        await act(async () => { view = create(createElement(OnboardingSetup)); });
+        await act(async () => { view = create(createElement(OnboardingSetup)); }); await toManual();
         const button = () => view!.root.findAllByType('button').find(b => b.children.join('').includes('登出並清除'))!;
         await act(async () => button().props.onClick()); await act(async () => button().props.onClick());
         expect(mocks.logout).not.toHaveBeenCalled(); expect(mocks.clearHash).not.toHaveBeenCalled();
@@ -133,7 +139,7 @@ describe('server start failure', () => {
     const text = () => JSON.stringify(view!.toJSON());
     const startNow = async () => {
         mocks.load.mockResolvedValue(ready);
-        await act(async () => { view = create(createElement(OnboardingSetup)); });
+        await act(async () => { view = create(createElement(OnboardingSetup)); }); await toManual();
         const button = view!.root.findAllByType('button').find(b => b.children.filter(x => typeof x === 'string').join('') === '啟動')!;
         await act(async () => button.props.onClick());
     };
