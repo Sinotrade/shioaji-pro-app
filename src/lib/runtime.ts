@@ -48,6 +48,22 @@ export function sameServerVersion(a: string, b: string): boolean {
     return canonicalServerVersion(a) === canonicalServerVersion(b);
 }
 
+/**
+ * SDK 版本是否已到 1.8.0b2（含 1.8.0 正式版之後）：美股 TickFull、台股庫存明細
+ * unit=Share 都從這一版開始。認不得的版本字串回 null（呼叫端自行決定要不要試）。
+ */
+export function serverVersionAtLeast180b2(version: string | undefined | null): boolean | null {
+    const v = canonicalServerVersion(String(version ?? ''));
+    const m = /^(\d+)\.(\d+)\.(\d+)(?:-(alpha|beta|rc)\.(\d+))?$/.exec(v);
+    if (!m) return null;
+    const [maj, min, pat] = [Number(m[1]), Number(m[2]), Number(m[3])];
+    if (maj !== 1) return maj > 1;
+    if (min !== 8) return min > 8;
+    if (pat > 0 || !m[4] || m[4] === 'rc') return true;
+    if (m[4] === 'alpha') return false;
+    return Number(m[5]) >= 2;
+}
+
 // The shioaji server may run on a non-default port when the preferred one is
 // occupied — the chosen port is persisted here and read by every API/SSE
 // consumer.

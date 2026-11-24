@@ -54,6 +54,23 @@ it('stock lots: 張 units, 未滿 1 張 for odd lots, optional margin columns hi
     expect(t).toContain('以「張」計');
 });
 
+it('stock lots with unit=Share (SDK 1.8.0b2+): 股數 in 張+股 form like the realized detail, no 張 note', async () => {
+    m.posDetail.mockResolvedValue(normalizePositionDetail('S', [
+        { date: '2026-11-03', code: '2330', quantity: 2000, price: 1000, last_price: 1100, dseq: 'A', direction: 'Buy', pnl: 199000, fee: 1425, cond: 'Cash' },
+        { date: '2026-11-04', code: '2330', quantity: 1500, price: 1050, last_price: 1100, dseq: 'B', direction: 'Buy', pnl: 74000, fee: 712, cond: 'Cash' },
+        { date: '2026-11-05', code: '2330', quantity: 500, price: 1080, last_price: 1100, dseq: 'C', direction: 'Buy', pnl: 10000, fee: 20, cond: 'Cash' },
+    ], 'Share'));
+    await act(async () => { view = create(createElement(TwPositionDetail, { account: S(), market: 'S', row: { id: 0, code: '2330', direction: 'Buy', cond: 'Cash', quantity: 4000 }, version: 1 })); });
+    await settle();
+    const t = all();
+    expect(t).toContain('成交日條件股數成交價現價損益手續費');
+    expect(t).toContain('2026-11-03現股2張1,000');
+    expect(t).toContain('2026-11-04現股1張+500股1,050');
+    expect(t).toContain('2026-11-05現股500股1,080');
+    expect(t).not.toContain('未滿 1 張');
+    expect(t).not.toContain('以「張」計');
+});
+
 it('futures lots show remaining (original) contracts and direction; privacy masks quantities, cost and money', async () => {
     m.posDetail.mockResolvedValue(normalizePositionDetail('F', [{ date: '20261103', code: 'TXFL6', quantity: 1, entry_quantity: 2, price: 23000, last_price: 22900, dseq: 'X', direction: 'Sell', pnl: 20000, fee: 60 }]));
     m.priv = true;

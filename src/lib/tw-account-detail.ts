@@ -3,7 +3,8 @@
 // 形狀對照 shioaji 1.8 原始碼（src/api/api_v1/portf/position_detail.rs、profit_loss_detail.rs、
 // src/server/http/portf.rs）與 sw（swrelaystation/api/v1/endpoints/portfolio/*_detail.py）：
 //   POST /portfolio/position_detail    {account…, detail_id: position_unit 列的 id}
-//     S → StockPositionDetail { date, code, quantity(張，SDK 不帶 unit → sw 預設 Common，零股截成 0),
+//     （SDK 1.8.0b2 起可帶 unit: "Share"，quantity 改為股數；舊版不認得 unit 會忽略）
+//     S → StockPositionDetail { date, code, quantity(unit=Share 為股數；不帶 unit → sw 預設 Common，張數、零股截成 0),
 //          price, last_price, dseq, direction, pnl, currency, fee, cond, ex_dividends, interest,
 //          margintrading_amt, collateral }
 //     F → FuturePositionDetail { date, code, quantity(未平口數), entry_quantity(原始口數), price,
@@ -31,17 +32,23 @@ import {
     type StockProfitLoss,
 } from './shioaji';
 import { canonicalBrokerCode } from './realized-name';
+import { serverVersionAtLeast180b2 } from './runtime';
+import { knownServerInfo } from './server-info-store';
 import type { Account } from './types/portfolio';
 
 export type TwMarket = 'S' | 'F';
+/** 台股庫存明細股數單位：Share＝股，Common＝張 */
+export type TwStockDetailUnit = 'Share' | 'Common';
 type Dir = 'Buy' | 'Sell';
 
 export interface TwStockPositionDetail {
     market: 'S';
     date: string;
     code: string;
-    /** 張（券商以張回傳；零股截成 0） */
+    /** unit=Share：股數；unit=Common（舊 SDK 不支援 unit）：張，零股截成 0 */
     quantity: number;
+    /** quantity 的單位：sidecar 支援 unit=Share（SDK 1.8.0b2 起）時是 Share */
+    unit: TwStockDetailUnit;
     price: number;
     last_price: number;
     dseq: string;
@@ -132,10 +139,10 @@ export function twIsoDate(raw: string): string {
     return m ? `${m[1]}-${m[2]}-${m[3]}` : s;
 }
 
-export function normalizePositionDetail(market: TwMarket, raw: unknown): TwPositionDetail[] {
+export function normalizePositionDetail(market: TwMarket, raw: unknown, unit: TwStockDetailUnit = 'Common'): TwPositionDetail[] {
     return rows(raw).map(r => market === 'S'
         ? {
-            market: 'S' as const, date: twIsoDate(str(r.date)), code: str(r.code), quantity: num(r.quantity),
+            market: 'S' as const, date: twIsoDate(str(r.date)), code: str(r.code), quantity: num(r.quantity), unit,
             price: num(r.price), last_price: num(r.last_price), dseq: str(r.dseq), direction: dir(r.direction),
             pnl: num(r.pnl), fee: num(r.fee), cond: str(r.cond) || 'Cash', ex_dividends: num(r.ex_dividends),
             interest: num(r.interest), margintrading_amt: num(r.margintrading_amt), collateral: num(r.collateral),
@@ -179,7 +186,10 @@ export interface TwPositionKey {
 }
 
 export async function fetchTwPositionDetail(account: Account, market: TwMarket, row: TwPositionKey): Promise<TwPositionDetail[]> {
-    const lots = normalizePositionDetail(market, await fetchPositionDetail(market, account, row.id));
+    // 股票：sidecar 確定支援 unit（SDK 1.8.0b2 起）才帶 unit=Share、以股數顯示；版本不明或舊版
+    // 不帶（舊版會忽略不認得的欄位、照樣回張數，所以不能靠回應判斷），維持以張顯示
+    const unit: TwStockDetailUnit = market === 'S' && serverVersionAtLeast180b2(knownServerInfo()?.version) === true ? 'Share' : 'Common';
+    const lots = normalizePositionDetail(market, await fetchPositionDetail(market, account, row.id, unit === 'Share' ? 'Share' : undefined), unit);
     const code = canonicalBrokerCode(row.code);
     const cond = row.cond || 'Cash';
     // sidecar 快取被較新的 position_unit 換掉時，同一個 id 可能指向別檔：不符就整批不顯示

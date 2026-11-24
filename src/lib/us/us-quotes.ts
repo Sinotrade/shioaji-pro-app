@@ -31,7 +31,7 @@ export const US_STREAM_PATHS: Record<string, string> = {
     [US_TICK_EVENT]: '/api/v1/stream/data/us_tick',
     [US_BIDASK_EVENT]: '/api/v1/stream/data/us_bidask',
 };
-/** 美股可訂閱的 quote_type（沒有 Quote） */
+/** 美股可訂閱的 quote_type（沒有 Quote）。App 內一律叫 Tick；送出時 Tick 依 sidecar 換成 TickFull（us-tick-wire.ts） */
 export const US_QUOTE_TYPES = ['Tick', 'BidAsk'] as const;
 
 /**
@@ -339,7 +339,7 @@ export function normalizeUsBidAsk(raw: RawUsBidAsk): SseBidAsk | null {
 /** 訂閱 body：與台股同一個 flat 形狀，exchange 決定 region；不帶 intraday_odd */
 export function usSubscriptionBody(
     contract: { code: string; exchange: string | null },
-    quoteType: (typeof US_QUOTE_TYPES)[number],
+    quoteType: (typeof US_QUOTE_TYPES)[number] | 'TickFull',
 ) {
     return {
         security_type: 'STK',

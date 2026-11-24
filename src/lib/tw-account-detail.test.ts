@@ -3,6 +3,8 @@ import { beforeEach, expect, it, vi } from 'vitest';
 
 const m = vi.hoisted(() => ({ posDetail: vi.fn(), pnl: vi.fn(), pnlDetail: vi.fn() }));
 // fetchProfitLossDetailOf 的行為：查當天列表 → pick → 用找回的 id 查明細（鎖另見 profit-loss-cache-lock.test）
+const info = vi.hoisted(() => ({ version: undefined as string | undefined }));
+vi.mock('./server-info-store', async (orig) => ({ ...await orig<object>(), knownServerInfo: () => (info.version === undefined ? undefined : { version: info.version, simulation: false }) }));
 vi.mock('./shioaji', () => ({
     fetchPositionDetail: m.posDetail,
     fetchProfitLossDetailOf: async (market: string, account: unknown, day: string, pick: (rows: unknown[]) => { id: number } | undefined) => {
@@ -37,7 +39,7 @@ const futLot = (over: Record<string, unknown> = {}) => ({
     currency: 'TWD', fee: 60, entry_quantity: 2, ...over,
 });
 
-beforeEach(() => { Object.values(m).forEach(f => f.mockReset()); });
+beforeEach(() => { Object.values(m).forEach(f => f.mockReset()); info.version = undefined; });
 
 it('normalizes dates from YYYYMMDD and YYYY-MM-DD', () => {
     expect(twIsoDate('20261020')).toBe('2026-10-20');
@@ -64,7 +66,7 @@ it('maps stock and futures profit detail fields as the SDK returns them', () => 
 it('position detail sends the row id and rejects lots of another row (stale sidecar cache)', async () => {
     m.posDetail.mockResolvedValue([stockLot()]);
     await expect(fetchTwPositionDetail(S, 'S', { id: 4, code: '2330', direction: 'Buy', cond: 'Cash' })).resolves.toHaveLength(1);
-    expect(m.posDetail).toHaveBeenCalledWith('S', S, 4);
+    expect(m.posDetail).toHaveBeenCalledWith('S', S, 4, undefined);
     // 代碼不同
     await expect(fetchTwPositionDetail(S, 'S', { id: 4, code: '2317', direction: 'Buy', cond: 'Cash' })).rejects.toThrow(TW_POSITION_DETAIL_MISMATCH);
     // 同代碼、不同交易條件（現股 vs 融資）
@@ -128,4 +130,28 @@ it('futures closing detail keeps only the selected direction and day (r6 filters
     const rows = await fetchTwProfitDetail(F, 'F', futRow);
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ direction: 'Buy', pnl: -14850 });
+});
+
+it('position detail asks for unit=Share only when the sidecar is known to support it (1.8.0b2+)', async () => {
+    m.posDetail.mockResolvedValue([stockLot({ quantity: 1500 })]);
+    // 版本不明、b1：不帶 unit（b1 會忽略不認得的欄位、照樣回張數），結果標成張
+    for (const v of [undefined, '1.8.0-beta.1']) {
+        info.version = v;
+        m.posDetail.mockClear();
+        const [lot] = await fetchTwPositionDetail(S, 'S', { id: 4, code: '2330', direction: 'Buy', cond: 'Cash' });
+        expect(m.posDetail).toHaveBeenCalledWith('S', S, 4, undefined);
+        expect(lot).toMatchObject({ quantity: 1500, unit: 'Common' });
+    }
+    for (const v of ['1.8.0-beta.2', '1.8.0', '1.8.1']) {
+        info.version = v;
+        m.posDetail.mockClear();
+        const [lot] = await fetchTwPositionDetail(S, 'S', { id: 4, code: '2330', direction: 'Buy', cond: 'Cash' });
+        expect(m.posDetail).toHaveBeenCalledWith('S', S, 4, 'Share');
+        expect(lot).toMatchObject({ quantity: 1500, unit: 'Share' });
+    }
+    // 期貨永遠不帶 unit
+    m.posDetail.mockResolvedValue([futLot()]);
+    m.posDetail.mockClear();
+    await fetchTwPositionDetail(F, 'F', { id: 0, code: 'TXFL6', direction: 'Sell' });
+    expect(m.posDetail).toHaveBeenCalledWith('F', F, 0, undefined);
 });

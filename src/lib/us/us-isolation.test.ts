@@ -41,6 +41,6 @@ describe('Taiwan order and quote paths refuse US contracts', () => {
         expect(m.post).not.toHaveBeenCalled();
         m.post.mockResolvedValue({ success: true, message: '' });
         await subscribeQuote({ ...aapl, exchange: 'NASDAQ' }, 'Tick');
-        expect(m.post).toHaveBeenCalledWith('/api/v1/stream/subscribe', { security_type: 'STK', exchange: 'NASDAQ', code: 'AAPL', quote_type: 'Tick' });
+        expect(m.post).toHaveBeenCalledWith('/api/v1/stream/subscribe', { security_type: 'STK', exchange: 'NASDAQ', code: 'AAPL', quote_type: 'TickFull' });
     });
 });

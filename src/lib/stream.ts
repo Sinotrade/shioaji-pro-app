@@ -19,6 +19,7 @@ import { createSharedStream, type StreamWire } from './shared-stream';
 import { invalidateTradingMirror } from './trading-mirror-lease';
 import { invalidateProductCatalog } from './product-catalog-version';
 import { normalizeUsBidAsk, normalizeUsTick, recordUsTick, US_BIDASK_EVENT, US_STREAM_PATHS, US_TICK_EVENT, type RawUsBidAsk, type RawUsTick } from './us/us-quotes';
+import { isUsTickFullRejection, isUsTickRegistryKey, noteUsTickFullRejected, usTickWire } from './us/us-tick-wire';
 
 /** `stale`: the EventSource still looks open but no heartbeat or event
  *  arrived within the watchdog window (e.g. the sidecar behind a proxy was
@@ -492,6 +493,39 @@ export function unregisterCapabilitySubscription(key: string) {
     capabilityRegistry.delete(key);
 }
 
+/** 已登記的訂閱 body（美股退訂要用訂閱時實際送出的 quote_type） */
+export function getRegisteredSubscription(code: string, quoteType: string): Record<string, unknown> | undefined {
+    return subscriptionRegistry.get(`${code}:${quoteType}`);
+}
+
+/**
+ * 重播美股逐筆：依目前 sidecar 重新決定 TickFull／Tick（sidecar 可能換了版本）。
+ * 跟登記的不同時先退掉舊的那種（同一個 sidecar 沒重啟時才不會 Tick＋TickFull
+ * 同時在），TickFull 被拒就改 Tick；registry 改記實際成功的 body。
+ */
+async function replayUsTick(
+    key: string,
+    registered: Record<string, unknown>,
+    post: (path: 'subscribe' | 'unsubscribe', body: Record<string, unknown>) => Promise<void>,
+) {
+    const wanted = usTickWire();
+    let body = registered.quote_type === wanted ? registered : { ...registered, quote_type: wanted };
+    if (body !== registered) {
+        // sidecar 重啟過時舊訂閱本來就不在，退訂失敗不影響
+        try { await post('unsubscribe', registered); } catch { /* best effort */ }
+    }
+    try {
+        await post('subscribe', body);
+    } catch (e) {
+        if (body.quote_type !== 'TickFull' || !isUsTickFullRejection(e)) throw e;
+        noteUsTickFullRejected();
+        body = { ...registered, quote_type: 'Tick' };
+        await post('subscribe', body);
+    }
+    // 重播期間被退訂了就不要再登記回去
+    if (subscriptionRegistry.get(key) === registered) subscriptionRegistry.set(key, body);
+}
+
 let resubscribeRetryTimer: ReturnType<typeof setTimeout> | null = null;
 
 // Replay after a reconnect is paced: Shioaji documents 50 subscriptions per
@@ -510,6 +544,8 @@ function replay(onlyCapabilities: boolean): Promise<void> {
     return replaying;
 }
 function resubscribeAll(): Promise<void> { return replay(false); }
+/** 測試用：直接跑一次重播（不經 SSE 重連） */
+export function replayRegisteredSubscriptionsForTest(): Promise<void> { return replay(false); }
 function resubscribeCapabilities(): Promise<void> {
     return capabilityRegistry.size ? replay(true) : Promise.resolve();
 }
@@ -525,16 +561,20 @@ async function replayOnce(onlyCapabilities = false) {
         }
         sent++;
     };
-    for (const body of onlyCapabilities ? [] : [...subscriptionRegistry.values()]) {
+    const post = async (path: 'subscribe' | 'unsubscribe', body: Record<string, unknown>) => {
+        const response = await apiPost<{ success?: boolean; message?: string }>(
+            `/api/v1/stream/${path}`,
+            body,
+        );
+        if (response.success === false) {
+            throw new Error(response.message || '行情重新訂閱失敗');
+        }
+    };
+    for (const [key, body] of onlyCapabilities ? [] : [...subscriptionRegistry.entries()]) {
         await pace();
         try {
-            const response = await apiPost<{ success?: boolean; message?: string }>(
-                '/api/v1/stream/subscribe',
-                body,
-            );
-            if (response.success === false) {
-                throw new Error(response.message || '行情重新訂閱失敗');
-            }
+            if (isUsTickRegistryKey(key)) await replayUsTick(key, body, post);
+            else await post('subscribe', body);
         } catch {
             failed = true;
         }

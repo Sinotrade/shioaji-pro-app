@@ -23,6 +23,7 @@ import {
     registerCapabilitySubscription,
     registerSubscription,
     registerSubscriptionRaw,
+    getRegisteredSubscription,
     retainUsQuoteStreams,
     unregisterCapabilitySubscription,
     unregisterSubscription,
@@ -65,7 +66,8 @@ import { contractMarket } from './contract-market';
 import { todayStr } from './utils/date';
 import { profitLossCacheKey, withProfitLossCache } from './profit-loss-cache-lock';
 import { usLinkKey } from './contract-key';
-import { usSubscriptionBody } from './us/us-quotes';
+import { US_QUOTE_TYPES, usSubscriptionBody } from './us/us-quotes';
+import { isUsTickFullRejection, noteUsTickFullRejected, usTickWire } from './us/us-tick-wire';
 
 export interface ServerInfo {
     name: string;
@@ -486,23 +488,66 @@ export interface QuoteSubscribeOptions {
 // 美股訂閱期間保持獨立的美股 SSE（key：US:CODE:quoteType）
 const usStreamHolds = new Map<string, () => void>();
 
+type UsQuoteType = (typeof US_QUOTE_TYPES)[number];
+
+async function postUsSubscription(path: 'subscribe' | 'unsubscribe', body: ReturnType<typeof usSubscriptionBody>, failure: string) {
+    const response = await apiPost<SubscriptionResponse>(`/api/v1/stream/${path}`, body);
+    if (!response.success) throw new Error(response.message || failure);
+    return response;
+}
+
+/** 美股訂閱：Tick 依 sidecar 能力送 TickFull 或 Tick；registry 記實際送出的 body（重連照它重播） */
+async function subscribeUsQuote(contract: ContractBase, quoteType: UsQuoteType): Promise<SubscriptionResponse> {
+    const key = usLinkKey(contract.code);
+    const holdKey = `${key}:${quoteType}`;
+    let body = usSubscriptionBody(contract, quoteType === 'Tick' ? usTickWire() : quoteType);
+    let response: SubscriptionResponse;
+    try {
+        response = await postUsSubscription('subscribe', body, '美股行情訂閱失敗');
+    } catch (e) {
+        // 舊 sidecar（1.8.0b1）不認得 TickFull → 記下並改訂 Tick（b1 的 Tick 就是全部成交）
+        if (body.quote_type !== 'TickFull' || !isUsTickFullRejection(e)) throw e;
+        noteUsTickFullRejected();
+        body = usSubscriptionBody(contract, 'Tick');
+        response = await postUsSubscription('subscribe', body, '美股行情訂閱失敗');
+    }
+    registerSubscriptionRaw(key, quoteType, body);
+    if (!usStreamHolds.has(holdKey)) usStreamHolds.set(holdKey, retainUsQuoteStreams());
+    return response;
+}
+
+/** 美股退訂：用訂閱時實際送出的 quote_type；沒有記錄（上次載入留下的）就用目前的判斷，被拒再試 Tick */
+async function unsubscribeUsQuote(contract: ContractBase, quoteType: UsQuoteType): Promise<SubscriptionResponse> {
+    const key = usLinkKey(contract.code);
+    const holdKey = `${key}:${quoteType}`;
+    const registered = getRegisteredSubscription(key, quoteType)?.quote_type;
+    const wire = quoteType !== 'Tick' ? quoteType
+        : registered === 'TickFull' || registered === 'Tick' ? registered : usTickWire();
+    let response: SubscriptionResponse;
+    try {
+        response = await postUsSubscription('unsubscribe', usSubscriptionBody(contract, wire), '取消行情訂閱失敗');
+    } catch (e) {
+        if (wire !== 'TickFull' || registered === 'TickFull' || !isUsTickFullRejection(e)) throw e;
+        noteUsTickFullRejected();
+        response = await postUsSubscription('unsubscribe', usSubscriptionBody(contract, 'Tick'), '取消行情訂閱失敗');
+    }
+    unregisterSubscription(key, quoteType);
+    usStreamHolds.get(holdKey)?.();
+    usStreamHolds.delete(holdKey);
+    return response;
+}
+
 export function subscribeQuote(
     contract: ContractBase,
     quoteType: QuoteTypeName,
     options?: QuoteSubscribeOptions,
 ) {
     const oddLot = options?.oddLot === true;
-    // 美股（SDK 1.8.0b1）：只有 Tick／BidAsk，沒有零股分流
+    // 美股：只有 Tick／BidAsk，沒有零股分流。逐筆（Tick）在 1.8.0b2 起實際訂
+    // TickFull（每一筆成交）；舊 sidecar 拒收時退回 Tick（見 us/us-tick-wire.ts）
     if (isUsContract(contract)) {
         if (oddLot || quoteType === 'Quote') return Promise.reject(new Error(US_NO_QUOTES));
-        const body = usSubscriptionBody(contract, quoteType);
-        return apiPost<SubscriptionResponse>('/api/v1/stream/subscribe', body).then((response) => {
-            if (!response.success) throw new Error(response.message || '美股行情訂閱失敗');
-            const holdKey = `${usLinkKey(contract.code)}:${quoteType}`;
-            registerSubscriptionRaw(usLinkKey(contract.code), quoteType, body);
-            if (!usStreamHolds.has(holdKey)) usStreamHolds.set(holdKey, retainUsQuoteStreams());
-            return response;
-        });
+        return subscribeUsQuote(contract, quoteType);
     }
     // 組合商品走巢狀腳訂閱（flat code 如 TXFI6/J6 server 不認）
     const comboMeta = (contract as { combo?: unknown }).combo;
@@ -539,14 +584,7 @@ export function unsubscribeQuote(
     const oddLot = options?.oddLot === true;
     if (isUsContract(contract)) {
         if (oddLot || quoteType === 'Quote') return Promise.resolve({ success: true, message: '' } as SubscriptionResponse);
-        return apiPost<SubscriptionResponse>('/api/v1/stream/unsubscribe', usSubscriptionBody(contract, quoteType)).then((response) => {
-            if (!response.success) throw new Error(response.message || '取消行情訂閱失敗');
-            const holdKey = `${usLinkKey(contract.code)}:${quoteType}`;
-            unregisterSubscription(usLinkKey(contract.code), quoteType);
-            usStreamHolds.get(holdKey)?.();
-            usStreamHolds.delete(holdKey);
-            return response;
-        });
+        return unsubscribeUsQuote(contract, quoteType);
     }
     const comboMeta = (contract as { combo?: unknown }).combo;
     if (comboMeta && !oddLot) {
@@ -1258,14 +1296,17 @@ export function fetchPositions(
 }
 
 /** 台股庫存明細（逐筆成交批次）：`detail_id` 是 sidecar 最近一次 position_unit 回傳的列 `id`。
- *  股票的 quantity 由券商以「張」計（SDK 不帶 unit，未滿 1 張的零股會是 0）；期貨為口數。
- *  模擬環境 SDK 直接回空陣列、不送出請求。 */
+ *  股票：`unit: 'Share'`（SDK 1.8.0b2 起支援）時 quantity 是股數；不帶 unit 時券商以「張」計，
+ *  未滿 1 張的零股會是 0。只有確定 sidecar 支援時才帶 unit（見 tw-account-detail.ts）。
+ *  期貨為口數。模擬環境 SDK 直接回空陣列、不送出請求。 */
 export function fetchPositionDetail(
     accountType: 'S' | 'F',
     account: AccountSelector,
     detailId: number,
+    unit?: 'Share',
 ) {
-    return accountQueryPost<unknown>('/api/v1/portfolio/position_detail', accountType, account, { detail_id: detailId });
+    return accountQueryPost<unknown>('/api/v1/portfolio/position_detail', accountType, account,
+        unit ? { detail_id: detailId, unit } : { detail_id: detailId });
 }
 
 export function fetchAccountBalance(account?: AccountSelector) {

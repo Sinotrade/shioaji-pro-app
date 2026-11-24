@@ -90,11 +90,15 @@ export function TwPositionDetail({ account, market, row, version }: {
 const lotKey = (d: TwPositionDetailRow, i: number) => `${d.date}:${d.dseq}:${i}`;
 
 function StockLots({ rows, priv }: { rows: TwStockPositionDetail[]; priv: boolean }) {
+    // unit=Share（SDK 1.8.0b2 起）：股數，與沖銷明細同格式（1張+500股）；
+    // 舊 SDK 不支援 unit：券商以「張」回傳，零股截成 0，另附說明
+    const shares = rows.length > 0 && rows.every(d => d.unit === 'Share');
     const columns: DetailColumn<TwStockPositionDetail>[] = [
         { header: '成交日', cell: d => d.date || '—' },
         { header: '條件', cell: d => twCondLabel(d.cond) },
-        // 券商以「張」回傳（SDK 未帶 unit），零股截成 0
-        { header: '數量', cell: d => maskMoney(d.quantity > 0 ? `${d.quantity.toLocaleString('en-US')} 張` : '未滿 1 張', priv) },
+        shares
+            ? { header: '股數', cell: d => maskMoney(fmtStockLots(Math.abs(d.quantity)), priv) }
+            : { header: '數量', cell: d => maskMoney(d.quantity > 0 ? `${d.quantity.toLocaleString('en-US')} 張` : '未滿 1 張', priv) },
         // 成交價即成本價：和持倉表的成本一樣隨遮金額隱藏
         { header: '成交價', cell: d => maskMoney(fmtPrice(d.price), priv) },
         { header: '現價', cell: d => fmtPrice(d.last_price) },
@@ -108,7 +112,7 @@ function StockLots({ rows, priv }: { rows: TwStockPositionDetail[]; priv: boolea
     return (
         <>
             <DetailTable label='台股庫存明細' rows={rows} rowKey={lotKey} columns={columns} />
-            <span className={dock.usNote}>券商庫存明細以「張」計，未滿 1 張的零股不列股數；合計以持倉列為準。</span>
+            {!shares && <span className={dock.usNote}>券商庫存明細以「張」計，未滿 1 張的零股不列股數；合計以持倉列為準。</span>}
         </>
     );
 }
