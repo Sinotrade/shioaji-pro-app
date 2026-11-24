@@ -201,6 +201,12 @@ export const pinBtn = styleVariants({
 // 面板自己的圖示開關鈕（成交明細「完整成交」）：與彈出／關閉同尺寸的圖示鈕，按下＝accent 底
 const iconToggleBase = style({
     ...compactControl,
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    alignSelf: 'center',
+    padding: 0,
+    lineHeight: 0,
     width: '18px',
     height: '18px',
     cursor: 'pointer',
