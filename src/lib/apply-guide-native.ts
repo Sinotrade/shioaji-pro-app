@@ -16,7 +16,9 @@ export type ApplyGuideEvent =
     | { kind: 'downloaded'; fileName: string; status: DownloadStatus }
     | { kind: 'closed' };
 
-export type ApplyWindowOpenResult = 'window' | 'browser';
+/** beside：申請視窗放在主視窗旁邊（不重疊）；overlay：蓋住主視窗右側，導覽要靠左。 */
+export type ApplyWindowPlacement = 'beside' | 'overlay';
+export type ApplyWindowOpenResult = ApplyWindowPlacement | 'browser';
 /** unknown：平台無法判斷結果（Linux），檔案已交給系統下載。 */
 export type DownloadStatus = 'saved' | 'failed' | 'unknown';
 const DOWNLOAD_STATUSES: readonly unknown[] = ['saved', 'failed', 'unknown'];
@@ -28,8 +30,9 @@ export async function openApplyWindow(): Promise<ApplyWindowOpenResult> {
     if (isTauri) {
         try {
             const { invoke } = await core();
-            await invoke('apply_window_open', { config: APPLY_PAGE_RULES });
-            return 'window';
+            const placement = await invoke<unknown>('apply_window_open', { config: APPLY_PAGE_RULES });
+            // 舊版原生端沒有回傳位置：照舊靠左，確保導覽不被蓋住
+            return placement === 'beside' ? 'beside' : 'overlay';
         } catch (error) {
             // 指令存在但失敗（例如建立視窗失敗）時把原因交給呼叫端
             if (!isMissingCommand(error)) throw new Error(typeof error === 'string' ? error : '無法開啟申請視窗');

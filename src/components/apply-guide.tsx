@@ -13,7 +13,7 @@ import {
     type ApplyPageStep, type GuidePoint, type GuideStep,
 } from '../lib/apply-guide-config';
 import {
-    focusApplyTarget, listenApplyGuide, openApplyWindow, showApplyApiPage, type ApplyGuideEvent, type DownloadStatus,
+    focusApplyTarget, listenApplyGuide, openApplyWindow, showApplyApiPage, type ApplyGuideEvent, type ApplyWindowPlacement, type DownloadStatus,
 } from '../lib/apply-guide-native';
 import { openExternalUrl, type DesktopSettings } from '../lib/tauri';
 import * as g from './apply-guide.css';
@@ -26,6 +26,8 @@ export interface ApplyGuideController {
     step: GuideStep;
     setStep: (step: GuideStep) => void;
     windowState: ApplyWindowState;
+    /** 申請視窗的位置；只有 overlay（蓋住主視窗）時導覽才靠左。 */
+    placement: ApplyWindowPlacement;
     synced: ApplyPageStep | null;
     imported: ApplyImported | null;
     failure: { message: string } | null;
@@ -39,6 +41,7 @@ export interface ApplyGuideController {
 export function useApplyGuide(onImported?: (imported: ApplyImported) => void): ApplyGuideController {
     const [step, setStep] = useState<GuideStep>('start');
     const [windowState, setWindowState] = useState<ApplyWindowState>('idle');
+    const [placement, setPlacement] = useState<ApplyWindowPlacement>('overlay');
     const [synced, setSynced] = useState<ApplyPageStep | null>(null);
     const [imported, setImported] = useState<ApplyImported | null>(null);
     const [failure, setFailure] = useState<ApplyGuideController['failure']>(null);
@@ -83,13 +86,14 @@ export function useApplyGuide(onImported?: (imported: ApplyImported) => void): A
         setOpening(true); setOpenError('');
         try {
             const result = await openApplyWindow();
-            setWindowState(result === 'window' ? 'open' : 'browser');
+            if (result === 'browser') setWindowState('browser');
+            else { setPlacement(result); setWindowState('open'); }
             setStep(current => current === 'start' ? 'login' : current);
         } catch (error) {
             setOpenError(error instanceof Error ? error.message : String(error));
         } finally { setOpening(false); }
     };
-    return { step, setStep, windowState, synced, imported, failure, downloaded, opening, openError, open };
+    return { step, setStep, windowState, placement, synced, imported, failure, downloaded, opening, openError, open };
 }
 
 const SITE_STEPS: GuideStep[] = GUIDE_ORDER.filter(step => step !== 'start');

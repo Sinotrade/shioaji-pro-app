@@ -37,7 +37,7 @@ beforeEach(() => {
     vi.clearAllMocks(); vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true); vi.stubGlobal('window', new EventTarget());
     mocks.load.mockResolvedValue(EMPTY_DESKTOP_SETTINGS);
     mocks.stop.mockResolvedValue({ ok: true });
-    mocks.open.mockResolvedValue('window');
+    mocks.open.mockResolvedValue('overlay');
 });
 afterEach(async () => { if (view) { await act(async () => view!.unmount()); view = undefined; } vi.unstubAllGlobals(); });
 
@@ -193,6 +193,23 @@ describe('apply guide review fixes', () => {
         const progress = view!.root.findAllByProps({ 'aria-label': '申請進度' })[0]!.findAllByType('button');
         expect(progress.at(-1)!.props.disabled).toBe(true);
         expect(button('下一步')!.props.disabled).toBe(true);
+    });
+
+    it('keeps the guide centred when the apply window opens beside the main window', async () => {
+        mocks.open.mockResolvedValue('beside');
+        await mount();
+        await act(async () => button('開始申請')!.props.onClick());
+        await emit({ kind: 'step', step: 'form' });
+        // 不靠左：AI 助理照常在導覽旁邊（沒有導覽欄位裡的「收合」）
+        expect(button('收合')).toBeUndefined();
+        expect(button('收合 AI 助理')).toBeDefined();
+        expect(mocks.panel).toHaveBeenCalled();
+        // 重新開啟時若改成蓋住主視窗，就靠左、AI 助理移到導覽下方
+        await emit({ kind: 'closed' });
+        mocks.open.mockResolvedValue('overlay');
+        await act(async () => button('重新開啟')!.props.onClick());
+        await emit({ kind: 'step', step: 'form' });
+        expect(button('收合')).toBeDefined();
     });
 
     it('shows the AI assistant expanded by default, beside or under the guide, and lets it collapse', async () => {

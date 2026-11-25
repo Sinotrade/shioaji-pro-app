@@ -142,8 +142,9 @@ export function OnboardingSetup() {
     const AgentPanel = agentModule?.Panel;
     agentModule?.ensureDefaultProvider('codex');
     const guiding = mode === 'guide' && loaded;
-    // 申請視窗開著時導覽貼齊左側，右側讓給原生申請視窗；AI 助理移到導覽下方
-    const docked = guiding && guide.step !== 'start' && guide.windowState === 'open';
+    // 申請視窗蓋住主視窗右側時導覽貼齊左側、AI 助理移到導覽下方；
+    // 申請視窗放在主視窗旁邊（寬螢幕）時維持置中
+    const docked = guiding && guide.step !== 'start' && guide.windowState === 'open' && guide.placement === 'overlay';
     const showAgent = !!AgentPanel && agentOpen && !docked;
     const agentInColumn = !!AgentPanel && agentOpen && docked;
     const agentPanel = AgentPanel && <FeatureGate feature='agent'>

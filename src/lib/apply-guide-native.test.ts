@@ -9,9 +9,16 @@ import { openApplyWindow } from './apply-guide-native';
 beforeEach(() => { vi.clearAllMocks(); });
 
 describe('openApplyWindow', () => {
-    it('uses the native window when the shell has it', async () => {
+    it('uses the native window and reports where the shell placed it', async () => {
+        mocks.invoke.mockResolvedValue('beside');
+        await expect(openApplyWindow()).resolves.toBe('beside');
+        mocks.invoke.mockResolvedValue('overlay');
+        await expect(openApplyWindow()).resolves.toBe('overlay');
+        // 舊版原生端不回傳位置：當作 overlay，導覽照舊靠左
         mocks.invoke.mockResolvedValue(null);
-        await expect(openApplyWindow()).resolves.toBe('window');
+        await expect(openApplyWindow()).resolves.toBe('overlay');
+        mocks.invoke.mockResolvedValue('elsewhere');
+        await expect(openApplyWindow()).resolves.toBe('overlay');
         expect(mocks.openOrThrow).not.toHaveBeenCalled();
     });
 
