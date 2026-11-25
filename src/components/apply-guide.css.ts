@@ -250,6 +250,20 @@ export const textButton = style([buttonBase, {
     fontSize: '0.92em', textDecoration: 'underline', textUnderlineOffset: '0.2em', whiteSpace: 'normal', textAlign: 'left',
     selectors: { '&:hover:not(:disabled)': { background: g.accentSoft } },
 }]);
+// 「同時把 .env 檔存到『下載』資料夾」：整列可點的勾選框
+export const option = style({
+    display: 'grid', gridTemplateColumns: '1.5em minmax(0, 1fr)', columnGap: '0.75em', alignItems: 'start',
+    padding: '0.875em 1em', borderRadius: 12, border: `1px solid ${g.divider}`, background: g.surface, cursor: 'pointer',
+});
+export const optionBox = style({
+    width: '1.25em', height: '1.25em', margin: '0.2em 0 0', accentColor: g.accent, cursor: 'pointer',
+    selectors: { '&:focus-visible': ring },
+});
+export const optionText = style({ display: 'flex', flexDirection: 'column', gap: '0.25em', minWidth: 0 });
+export const optionTitle = style({ fontWeight: 700, lineHeight: 1.5 });
+export const optionHint = style({ color: g.text2, fontSize: '0.92em', lineHeight: 1.65 });
+export const optionHintWarn = style([optionHint, { color: g.text, fontWeight: 600 }]);
+
 export const quietLinks = style({ display: 'flex', flexWrap: 'wrap', gap: '0.25em 0.75em', marginLeft: '-0.5em' });
 
 export const footer = style({

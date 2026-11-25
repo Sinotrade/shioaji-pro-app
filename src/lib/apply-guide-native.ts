@@ -68,6 +68,8 @@ async function call(command: string, args?: Record<string, unknown>) {
 export const closeApplyWindow = () => call('apply_window_close');
 export const showApplyApiPage = () => call('apply_window_show_api_page');
 export const focusApplyTarget = (target: string) => call('apply_window_focus', { target });
+/** 「下載 .env」時是否同時把檔案存到下載資料夾（預設不存，只匯入 App）。舊版原生殼沒有這個指令：照舊只匯入。 */
+export const setApplySaveEnv = (save: boolean) => call('apply_window_set_save_env', { save });
 
 /**
  * 登出官網：關掉申請視窗與它的彈出視窗，清除申請視窗保存的官網資料

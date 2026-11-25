@@ -14,7 +14,7 @@ import {
     type ApplyPageStep, type GuidePoint, type GuideStep,
 } from '../lib/apply-guide-config';
 import {
-    clearApplySiteData, focusApplyTarget, listenApplyGuide, openApplyWindow, showApplyApiPage, type ApplyGuideEvent, type ApplyWindowPlacement, type DownloadStatus,
+    clearApplySiteData, focusApplyTarget, listenApplyGuide, setApplySaveEnv, openApplyWindow, showApplyApiPage, type ApplyGuideEvent, type ApplyWindowPlacement, type DownloadStatus,
 } from '../lib/apply-guide-native';
 import { openExternalUrl, type DesktopSettings } from '../lib/tauri';
 import { baseMode, setThemeSettings, useThemeSettings } from '../lib/theme-store';
@@ -39,6 +39,17 @@ export interface ApplyGuideController {
     /** 登出並清除官網資料：idle／進行中／完成／失敗訊息。 */
     siteClear: SiteClearState;
     clearSiteData: () => Promise<void>;
+    /** 「下載 .env」時同時把檔案存到下載資料夾（預設關，選擇會記住）。 */
+    saveEnvFile: boolean;
+    setSaveEnvFile: (save: boolean) => void;
+}
+
+const SAVE_ENV_KEY = 'sjpro.applyGuide.saveEnvFile';
+function readSaveEnvPref(): boolean {
+    try { return localStorage.getItem(SAVE_ENV_KEY) === '1'; } catch { return false; }
+}
+function writeSaveEnvPref(save: boolean) {
+    try { if (save) localStorage.setItem(SAVE_ENV_KEY, '1'); else localStorage.removeItem(SAVE_ENV_KEY); } catch { /* 只是介面偏好 */ }
 }
 
 export type SiteClearState = { kind: 'idle' } | { kind: 'clearing' } | { kind: 'done' } | { kind: 'failed'; message: string };
@@ -55,6 +66,9 @@ export function useApplyGuide(onImported?: (imported: ApplyImported) => void): A
     const [opening, setOpening] = useState(false);
     const [openError, setOpenError] = useState('');
     const [siteClear, setSiteClear] = useState<SiteClearState>({ kind: 'idle' });
+    const [saveEnvFile, setSaveEnvState] = useState(readSaveEnvPref);
+    const saveEnvRef = useRef(saveEnvFile);
+    saveEnvRef.current = saveEnvFile;
     const importedRef = useRef(onImported);
     importedRef.current = onImported;
     useEffect(() => {
@@ -93,6 +107,8 @@ export function useApplyGuide(onImported?: (imported: ApplyImported) => void): A
         setOpening(true); setOpenError(''); setSiteClear({ kind: 'idle' });
         try {
             const result = await openApplyWindow();
+            // 原生端每次啟動都預設不存檔：開窗後把使用者記住的選擇帶過去
+            if (result !== 'browser') void setApplySaveEnv(saveEnvRef.current);
             if (result === 'browser') setWindowState('browser');
             else { setPlacement(result); setWindowState('open'); }
             setStep(current => current === 'start' ? 'login' : current);
@@ -112,8 +128,36 @@ export function useApplyGuide(onImported?: (imported: ApplyImported) => void): A
             setSiteClear({ kind: 'failed', message: error instanceof Error ? error.message : String(error) });
         }
     };
-    return { step, setStep, windowState, placement, synced, imported, failure, downloaded, opening, openError, open, siteClear, clearSiteData };
+    const setSaveEnvFile = (save: boolean) => {
+        setSaveEnvState(save); writeSaveEnvPref(save);
+        void setApplySaveEnv(save);
+    };
+    return {
+        step, setStep, windowState, placement, synced, imported, failure, downloaded, opening, openError, open,
+        siteClear, clearSiteData, saveEnvFile, setSaveEnvFile,
+    };
 }
+
+/** 「同時把 .env 檔存到『下載』資料夾」：預設關，只匯入 App。 */
+function SaveEnvOption({ guide }: { guide: ApplyGuideController }) {
+    const on = guide.saveEnvFile;
+    return <label className={g.option}>
+        <input type="checkbox" className={g.optionBox} checked={on} aria-describedby="apply-save-env-hint"
+            onChange={event => guide.setSaveEnvFile(event.currentTarget.checked)} />
+        <span className={g.optionText}>
+            <span className={g.optionTitle}>同時把 .env 檔存到「下載」資料夾</span>
+            <span id="apply-save-env-hint" className={on ? g.optionHintWarn : g.optionHint}>
+                {on ? '檔案內含 Secret Key，請妥善保管。' : '按「下載 .env」會直接匯入 App，不會另存檔案。'}
+            </span>
+        </span>
+    </label>;
+}
+
+const downloadedText = (d: { fileName: string; status: DownloadStatus }) => ({
+    saved: `「${d.fileName}」已存到下載資料夾。`,
+    unknown: `「${d.fileName}」已交給系統下載，請到下載資料夾確認。`,
+    failed: `「${d.fileName}」下載失敗，請在官網再下載一次。`,
+}[d.status]);
 
 /** 「登出並清除官網資料」：先確認再清；用瀏覽器開官網時不顯示（那邊的登入由瀏覽器管）。 */
 function SiteLogout({ guide }: { guide: ApplyGuideController }) {
@@ -327,6 +371,7 @@ export function ApplyGuide({ guide, settings, busy, docked = false, contentRef, 
                     {!production && <p className={g.lead}><Rich text={copy.lead} /></p>}
                 </div>
                 {failure && <p className={g.secondary}>之後下載的 .env 沒有載入成功，目前使用的仍是下面這把金鑰。</p>}
+                {guide.downloaded && <p className={g.secondary}>{downloadedText(guide.downloaded)}</p>}
                 {failureCallout}
                 <dl className={g.doneBox}>
                     <dt className={g.doneTerm}>帳號名稱</dt>
@@ -393,11 +438,8 @@ export function ApplyGuide({ guide, settings, busy, docked = false, contentRef, 
             {step === 'login' && windowOpen && <div className={g.actions}>
                 <button className={g.secondaryButton} onClick={() => void showApplyApiPage()}><ArrowRight size={18} aria-hidden />回到 API 管理頁</button>
             </div>}
-            {guide.downloaded && step === 'success' && <p className={g.secondary}>{{
-                saved: `另外下載的「${guide.downloaded.fileName}」已存到下載資料夾。`,
-                unknown: `「${guide.downloaded.fileName}」已交給系統下載，請到下載資料夾確認。`,
-                failed: `「${guide.downloaded.fileName}」下載失敗，請在官網再下載一次。`,
-            }[guide.downloaded.status]}</p>}
+            {step === 'success' && windowState !== 'browser' && <SaveEnvOption guide={guide} />}
+            {guide.downloaded && step === 'success' && <p className={g.secondary}>{downloadedText(guide.downloaded)}</p>}
             {copy.note && <p className={g.secondary}>{copy.note}</p>}
             {manualLink}
             <SiteLogout guide={guide} />

@@ -6,7 +6,7 @@ import type { ApplyGuideEvent } from '../lib/apply-guide-native';
 const mocks = vi.hoisted(() => ({
     panel: vi.fn(() => null), defaults: vi.fn(), load: vi.fn(), save: vi.fn(), select: vi.fn(), start: vi.fn(),
     reload: vi.fn(), stop: vi.fn(), logout: vi.fn(), openLogs: vi.fn(), external: vi.fn(),
-    open: vi.fn(), close: vi.fn(), apiPage: vi.fn(), focus: vi.fn(), clearSite: vi.fn(),
+    open: vi.fn(), close: vi.fn(), apiPage: vi.fn(), focus: vi.fn(), clearSite: vi.fn(), saveEnv: vi.fn(),
     handler: null as ((event: ApplyGuideEvent) => void) | null,
 }));
 vi.mock('../lib/spawn-keys', () => ({ clearStoredSpawnKeyHash: vi.fn() }));
@@ -18,7 +18,7 @@ vi.mock('../lib/tauri', async () => ({
     serverStop: mocks.stop, logoutCredentialProfile: mocks.logout, openServerLogFolder: mocks.openLogs, openExternalUrl: mocks.external,
 }));
 vi.mock('../lib/apply-guide-native', () => ({
-    openApplyWindow: mocks.open, closeApplyWindow: mocks.close, clearApplySiteData: mocks.clearSite, showApplyApiPage: mocks.apiPage, focusApplyTarget: mocks.focus,
+    openApplyWindow: mocks.open, closeApplyWindow: mocks.close, clearApplySiteData: mocks.clearSite, setApplySaveEnv: mocks.saveEnv, showApplyApiPage: mocks.apiPage, focusApplyTarget: mocks.focus,
     listenApplyGuide: async (handler: (event: ApplyGuideEvent) => void) => { mocks.handler = handler; return () => { mocks.handler = null; }; },
 }));
 import { EMPTY_DESKTOP_SETTINGS, type DesktopSettings } from '../lib/desktop-credentials';
@@ -45,6 +45,37 @@ afterEach(async () => { if (view) { await act(async () => view!.unmount()); view
 const mount = async () => { await act(async () => { view = create(createElement(OnboardingSetup)); }); };
 
 describe('first-run apply guide', () => {
+    it('only imports the .env by default and remembers the opt-in to also save the file', async () => {
+        const store = new Map<string, string>();
+        vi.stubGlobal('localStorage', {
+            getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => void store.set(k, v),
+            removeItem: (k: string) => void store.delete(k),
+        });
+        await mount();
+        await act(async () => button('開始申請')!.props.onClick());
+        expect(mocks.saveEnv).toHaveBeenLastCalledWith(false);
+        await emit({ kind: 'step', step: 'success' });
+        const box = () => view!.root.findAll(n => n.type === 'input' && n.props.type === 'checkbox')[0]!;
+        expect(box().props.checked).toBe(false);
+        expect(json()).toContain('會直接匯入 App，不會另存檔案');
+        await act(async () => box().props.onChange({ currentTarget: { checked: true } }));
+        expect(mocks.saveEnv).toHaveBeenLastCalledWith(true);
+        expect(store.get('sjpro.applyGuide.saveEnvFile')).toBe('1');
+        expect(json()).toContain('檔案內含 Secret Key，請妥善保管');
+        await emit({ kind: 'downloaded', fileName: 'ShioajiPro (1).env', status: 'saved' });
+        expect(json()).toContain('ShioajiPro (1).env');
+        // 重新開 App：選擇記住，開窗時帶給原生端
+        await act(async () => view!.unmount()); view = undefined; mocks.saveEnv.mockClear();
+        await mount();
+        await act(async () => button('開始申請')!.props.onClick());
+        expect(mocks.saveEnv).toHaveBeenLastCalledWith(true);
+        await emit({ kind: 'step', step: 'success' });
+        expect(box().props.checked).toBe(true);
+        await act(async () => box().props.onChange({ currentTarget: { checked: false } }));
+        expect(store.has('sjpro.applyGuide.saveEnvFile')).toBe(false);
+        expect(mocks.saveEnv).toHaveBeenLastCalledWith(false);
+    });
+
     it('logs out of the site only after confirming, and says the login is kept until then', async () => {
         mocks.clearSite.mockResolvedValue('cleared');
         await mount();

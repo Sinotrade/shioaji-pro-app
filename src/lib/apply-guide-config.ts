@@ -159,7 +159,7 @@ export const GUIDE_COPY: Record<GuideStep, GuideStepCopy> = {
         lead: '申請成功！按官網上的「下載 .env」，App 會自動收下並保存。',
         points: [
             { title: 'Secret Key 只會顯示這一次', body: '關掉官網的這個視窗後就看不到了。請等 App 顯示「金鑰已載入」再關。', target: 'secret-key', tone: 'caution' },
-            { title: '按「下載 .env」', body: '按下後，金鑰會直接存進 App（這台電腦的系統憑證庫），下載資料夾裡不會出現 .env 檔。內容是金鑰名稱、API Key 與 Secret Key，不含 CA 憑證。', target: 'download-env' },
+            { title: '按「下載 .env」', body: '按下後，金鑰會直接存進 App（這台電腦的系統憑證庫）。內容是金鑰名稱、API Key 與 Secret Key，不含 CA 憑證。', target: 'download-env' },
             { title: '「下載 QR Code」可以略過', body: '那是給手機 App 掃描用的。' },
         ],
     },

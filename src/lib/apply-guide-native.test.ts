@@ -4,7 +4,7 @@ const mocks = vi.hoisted(() => ({ invoke: vi.fn(), openOrThrow: vi.fn(), open: v
 vi.mock('./runtime', () => ({ isTauri: true }));
 vi.mock('./tauri', () => ({ openExternalUrl: mocks.open, openExternalUrlOrThrow: mocks.openOrThrow }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke: mocks.invoke }));
-import { clearApplySiteData, openApplyWindow } from './apply-guide-native';
+import { clearApplySiteData, openApplyWindow, setApplySaveEnv } from './apply-guide-native';
 
 beforeEach(() => { vi.clearAllMocks(); });
 
@@ -57,5 +57,15 @@ describe('clearApplySiteData', () => {
     it('passes on why the wipe failed', async () => {
         mocks.invoke.mockRejectedValue('清除官網資料逾時，請再試一次');
         await expect(clearApplySiteData()).rejects.toThrow('清除官網資料逾時，請再試一次');
+    });
+});
+
+describe('setApplySaveEnv', () => {
+    it('passes the opt-in to the shell and ignores an older shell', async () => {
+        mocks.invoke.mockResolvedValue(null);
+        await setApplySaveEnv(true);
+        expect(mocks.invoke).toHaveBeenCalledWith('apply_window_set_save_env', { save: true });
+        mocks.invoke.mockRejectedValue('Command apply_window_set_save_env not found');
+        await expect(setApplySaveEnv(false)).resolves.toBeUndefined();
     });
 });
