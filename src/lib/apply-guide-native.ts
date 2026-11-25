@@ -50,9 +50,15 @@ export async function openApplyWindow(): Promise<ApplyWindowOpenResult> {
     return 'browser';
 }
 
+const errorText = (error: unknown) => typeof error === 'string' ? error : error instanceof Error ? error.message : '';
+
 function isMissingCommand(error: unknown) {
-    const text = typeof error === 'string' ? error : error instanceof Error ? error.message : '';
-    return /not found|unknown command|not allowed/i.test(text);
+    return /not found|unknown command|not allowed/i.test(errorText(error));
+}
+
+/** 只有「沒有這個指令」（舊版原生殼）；不含權限被擋（not allowed） */
+function isUnknownCommand(error: unknown) {
+    return /not found|unknown command/i.test(errorText(error));
 }
 
 async function call(command: string, args?: Record<string, unknown>) {
@@ -83,7 +89,8 @@ export async function clearApplySiteData(): Promise<'cleared' | 'unsupported'> {
         await invoke('apply_window_clear_site_data');
         return 'cleared';
     } catch (error) {
-        if (isMissingCommand(error)) return 'unsupported';
+        // 權限被擋時資料沒清：要讓呼叫端顯示失敗，不能回報已登出
+        if (isUnknownCommand(error)) return 'unsupported';
         throw new Error(typeof error === 'string' ? error : error instanceof Error ? error.message : '無法清除官網資料');
     }
 }

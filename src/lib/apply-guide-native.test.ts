@@ -54,6 +54,11 @@ describe('clearApplySiteData', () => {
         await expect(clearApplySiteData()).resolves.toBe('unsupported');
     });
 
+    it('does not report a logout when the shell refuses the command', async () => {
+        mocks.invoke.mockRejectedValue('Command apply_window_clear_site_data not allowed by ACL');
+        await expect(clearApplySiteData()).rejects.toThrow('not allowed');
+    });
+
     it('passes on why the wipe failed', async () => {
         mocks.invoke.mockRejectedValue('清除官網資料逾時，請再試一次');
         await expect(clearApplySiteData()).rejects.toThrow('清除官網資料逾時，請再試一次');

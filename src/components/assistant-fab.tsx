@@ -15,8 +15,14 @@ const GAP = 16;
 
 function useRect(ref: RefObject<HTMLElement | null> | undefined, active: boolean) {
     const [rect, setRect] = useState<DOMRect | null>(null);
+    // 導覽換步驟時內容區可能換成另一個元素（ref 物件不變）：每次 render 後對一次，
+    // 換了就重新量、重新觀察，不要一直量已經拿掉的舊元素
+    const [el, setEl] = useState<HTMLElement | null>(null);
     useLayoutEffect(() => {
-        const el = ref?.current;
+        const current = ref?.current ?? null;
+        if (current !== el) setEl(current);
+    });
+    useLayoutEffect(() => {
         if (!active || !el) { setRect(null); return; }
         const update = () => setRect(el.getBoundingClientRect());
         update();
@@ -24,7 +30,7 @@ function useRect(ref: RefObject<HTMLElement | null> | undefined, active: boolean
         observer?.observe(el);
         window.addEventListener('resize', update);
         return () => { observer?.disconnect(); window.removeEventListener('resize', update); };
-    }, [ref, active]);
+    }, [el, active]);
     return rect;
 }
 
