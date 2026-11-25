@@ -506,12 +506,13 @@ export const STREAM_REQUEST_TIMEOUT_MS = 10_000;
 
 /**
  * 行情訂閱請求加上逾時。逾時不取消請求本身（可能已送達），只是不再等它；
- * 呼叫端依 isDefiniteStreamFailure 判斷結果是否確定。
+ * 呼叫端依 isDefiniteStreamFailure 判斷結果是否確定。逾時的錯誤帶著原本的請求
+ * （late），呼叫端可以在它之後才完成時再對帳一次（見 ensureUsTickKind）。
  */
 export function withStreamTimeout<T>(request: Promise<T>): Promise<T> {
     let timer: ReturnType<typeof setTimeout>;
     const timedOut = new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(Object.assign(new Error('行情訂閱請求逾時，結果不確定'), { requestTimedOut: true as const })),
+        timer = setTimeout(() => reject(Object.assign(new Error('行情訂閱請求逾時，結果不確定'), { requestTimedOut: true as const, late: request })),
             STREAM_REQUEST_TIMEOUT_MS);
     });
     return Promise.race([request, timedOut]).finally(() => clearTimeout(timer));
@@ -632,8 +633,24 @@ export async function ensureUsTickKind<R>(opts: {
         return { wire, response };
     } catch (e) {
         setUsTickReconcile(key, true, base);
+        reconcileWhenLateRequestLands(e, key, base);
         throw e;
     }
+}
+
+/**
+ * 逾時的訂閱／退訂之後才在 sidecar 生效時（例如逾時後的對帳已經退了 TickFull、訂了 Tick，
+ * 原本那筆 TickFull 訂閱才完成），結果又變了：再標記對帳、5 秒後跑一次，
+ * 不讓 Tick 與 TickFull 同時在、或要的那種被晚到的退訂拿掉。
+ */
+function reconcileWhenLateRequestLands(e: unknown, key: string, base: string) {
+    const late = (e as { requestTimedOut?: unknown; late?: unknown } | null)?.late;
+    if ((e as { requestTimedOut?: unknown } | null)?.requestTimedOut !== true || !(late instanceof Promise)) return;
+    late.then(() => {
+        if (getApiBase() !== base) return;
+        setUsTickReconcile(key, true, base);
+        scheduleUsTickReconcile();
+    }, () => undefined);
 }
 
 /**

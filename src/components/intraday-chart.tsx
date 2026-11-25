@@ -126,6 +126,9 @@ interface Readout {
     total: number; // 張/口 — for IND, 成交金額 (yuan)
 }
 
+/** 只有只加量成交的即時那一分（OHLC 借前一筆的價）：第一筆算價的成交到了改用它的價格 */
+const unpricedMinutes = new WeakSet<object>();
+
 const fmtVol = (v: number) =>
     v.toLocaleString('en-US', { maximumFractionDigits: 0 });
 const fmtAmtYi = (v: number) => `${(v / 1e8).toFixed(1)}億`;
@@ -1433,10 +1436,14 @@ export function IntradayChart({
             lastLabelRef.current = label;
             minuteVolRef.current = size;
             minOhlcRef.current = { open: p, high: p, low: p, close: p };
+            // 只加量的成交開的這一分：價格是借來的，第一筆算價的成交到了再從它開始
+            if (opts?.volumeOnly) unpricedMinutes.add(minOhlcRef.current);
         } else {
             minuteVolRef.current += size;
             const m = minOhlcRef.current;
-            if (m) {
+            if (m && !opts?.volumeOnly && unpricedMinutes.delete(m)) {
+                m.open = m.high = m.low = m.close = p;
+            } else if (m) {
                 m.high = Math.max(m.high, p);
                 m.low = Math.min(m.low, p);
                 m.close = p;

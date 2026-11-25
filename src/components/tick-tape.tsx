@@ -10,7 +10,7 @@ import { retainQuote } from '../lib/quote-ownership';
 // 跨日標日期分隔。資料轉接見 lib/us/us-tape.ts。
 
 import { Funnel } from 'lucide-react';
-import { memo, useEffect, useMemo, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { contractLinkKey } from '../lib/contract-key';
 import { fetchLastTicks } from '../lib/shioaji';
 import { onAnyTick } from '../lib/stream';
@@ -26,6 +26,7 @@ import {
     nextTapeRowId,
     usTapeDayBreaks,
     usTapeRowFromMeta,
+    usTapeRowShown,
     usTapeRowsFromHistory,
     type TapeRow,
 } from '../lib/us/us-tape';
@@ -135,6 +136,9 @@ export function TickTape({ contract }: { contract: ContractBase }) {
     // 訂閱由 stream.ts 改訂），兩邊才一致。台股不看這個設定
     const usDetail = useUsTickDetail();
     const historyDetail = isUs ? usDetail : null;
+    // 即時列依目前設定過濾（listener 不隨設定重掛）
+    const usDetailRef = useRef(usDetail);
+    usDetailRef.current = usDetail;
 
     // history preload, then live stream on top
     useEffect(() => {
@@ -198,7 +202,10 @@ export function TickTape({ contract }: { contract: ContractBase }) {
             ? subscribeUsSessionTicks(key, () => {
                   const meta = getUsTickMeta(key);
                   if (!meta || !(meta.volume > 0)) return;
-                  push(usTapeRowFromMeta(meta));
+                  const row = usTapeRowFromMeta(meta);
+                  // 一般成交：改訂完成前 TickFull 多出來的成交不列
+                  if (!usTapeRowShown(row, usDetailRef.current)) return;
+                  push(row);
               })
             : onAnyTick((tick) => {
                   if (tick.code !== contract.code) return;

@@ -61,6 +61,37 @@ describe('quote ownership shared consumers', () => {
         second();
         expect(mocks.unsubscribe).toHaveBeenCalledTimes(1);
     });
+    it('retries a failed release by itself, unless someone wants the quote again', async () => {
+        vi.useFakeTimers();
+        try {
+            const { retainQuote, RELEASE_GRACE_MS, RELEASE_RETRY_MS } = await import('./quote-ownership');
+            const release = retainQuote(contract, 'Tick');
+            await vi.advanceTimersByTimeAsync(0);
+            expect(mocks.subscribe).toHaveBeenCalledTimes(1);
+            mocks.unsubscribe.mockRejectedValueOnce(Object.assign(new Error('429'), { status: 429 }));
+            release();
+            await vi.advanceTimersByTimeAsync(RELEASE_GRACE_MS);
+            expect(mocks.unsubscribe).toHaveBeenCalledTimes(1);
+            // 沒有任何面板開關，也會自己再退一次
+            await vi.advanceTimersByTimeAsync(RELEASE_RETRY_MS);
+            expect(mocks.unsubscribe).toHaveBeenCalledTimes(2);
+            await vi.advanceTimersByTimeAsync(RELEASE_RETRY_MS * 2);
+            expect(mocks.unsubscribe).toHaveBeenCalledTimes(2);
+
+            // 失敗後又有人要：重試時不退
+            const again = retainQuote(contract, 'BidAsk');
+            await vi.advanceTimersByTimeAsync(0);
+            mocks.unsubscribe.mockRejectedValueOnce(new Error('503'));
+            again();
+            await vi.advanceTimersByTimeAsync(RELEASE_GRACE_MS);
+            expect(mocks.unsubscribe).toHaveBeenCalledTimes(3);
+            retainQuote(contract, 'BidAsk');
+            await vi.advanceTimersByTimeAsync(RELEASE_RETRY_MS);
+            expect(mocks.unsubscribe).toHaveBeenCalledTimes(3);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
     it('retries an initially failed subscription when the stream becomes live', async () => {
         mocks.subscribe.mockRejectedValueOnce(new Error('temporary unavailable'));
         const { retainQuote } = await import('./quote-ownership');

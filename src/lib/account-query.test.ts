@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Account } from './types/portfolio';
 
-const m = vi.hoisted(() => ({ accounts: [] as Account[], base: 'http://query.invalid', fetch: vi.fn() }));
+const m = vi.hoisted(() => ({ accounts: [] as Account[], base: 'http://query.invalid', fetch: vi.fn(), warrantPreload: null as Promise<void> | null }));
 vi.mock('./account-store', () => ({ getAccountState: () => ({ accounts: m.accounts }), accountFor: (type: string) => m.accounts.find(a => a.account_type === type) }));
 vi.mock('./runtime', () => ({ getApiBase: () => m.base, isTauri: false }));
-// 權證表預載（#409）另測（warrant-preload.test.ts）；這裡只看帳務查詢本身
-vi.mock('./warrant-preload', () => ({ ensureWarrantContracts: () => Promise.resolve(), warrantContractsReady: () => true }));
+// 權證表預載（#409）另測（warrant-preload.test.ts）；這裡只看帳務查詢本身（預設已載入）
+vi.mock('./warrant-preload', () => ({ ensureWarrantContracts: () => m.warrantPreload ?? Promise.resolve(), warrantContractsReady: () => m.warrantPreload === null }));
 import { createAccountQuery } from './account-query';
 import * as api from './shioaji';
 import { beginServerInfoRequest, forgetServerInfo, observeServerInfo } from './server-info-store';
@@ -33,6 +33,7 @@ beforeEach(() => {
     m.base = 'http://query.invalid';
     m.accounts = [{ account_type: 'S', broker_id: 'fixture', account_id: 'unsigned', signed: false, username: '', person_id: '' }];
     m.fetch.mockReset().mockResolvedValue(new Response('[]'));
+    m.warrantPreload = null;
     forgetServerInfo(m.base);
     mode(true);
 });
@@ -83,6 +84,26 @@ describe.each(queries)('account HTTP query %s', (route, type, read) => {
 it('rechecks mode at HTTP dispatch after request serialization', async () => {
     m.accounts[0]!.broker_id = { toJSON() { mode(false); return 'fixture'; } } as unknown as string;
     await expect(api.fetchTrades('S', m.accounts[0])).rejects.toThrow('模式已變更');
+    expect(m.fetch).not.toHaveBeenCalled();
+});
+
+it('drops a trades query whose mode changed while the warrant table was loading', async () => {
+    const preload = deferred<void>();
+    m.warrantPreload = preload.promise;
+    const pending = api.fetchTrades('S', m.accounts[0]);
+    mode(false); // 等權證表期間伺服器模式變了（同一個帳戶在新伺服器也在）
+    preload.resolve();
+    await expect(pending).rejects.toThrow('模式已變更');
+    expect(m.fetch).not.toHaveBeenCalled();
+});
+
+it('drops a trades query whose server changed while the warrant table was loading', async () => {
+    const preload = deferred<void>();
+    m.warrantPreload = preload.promise;
+    const pending = api.fetchTrades('S', m.accounts[0]);
+    m.base = 'http://other.invalid';
+    preload.resolve();
+    await expect(pending).rejects.toThrow('伺服器已變更');
     expect(m.fetch).not.toHaveBeenCalled();
 });
 

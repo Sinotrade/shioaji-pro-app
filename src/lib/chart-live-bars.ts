@@ -13,6 +13,9 @@ import type { Candle } from './types/market';
 
 export type MergeResult = { kind: 'new' | 'tail'; bar: Candle } | null;
 
+/** 只有只加量成交的 K 棒（價格是借前一根收盤的）；第一筆算價的成交到了就改用它的價格 */
+const unpricedBars = new WeakSet<Candle>();
+
 /**
  * bars 是畫在圖上的 K 棒（依時間排序，新開的一根會 push 進去）；tail 是
  * 目前最新一根。barTime 是成交所屬 K 棒的標籤。比 tail 舊回 null。
@@ -33,10 +36,18 @@ export function mergeTradeIntoBars(
     if (!Number.isFinite(barTime) || !Number.isFinite(price)) return null;
     if (!tail || barTime > tail.time) {
         const bar: Candle = { time: barTime, open: price, high: price, low: price, close: price, volume };
+        // 只加量的成交開的這根先借前一根的收盤當價，還不是這一桶的價格
+        if (volumeOnly) unpricedBars.add(bar);
         bars.push(bar);
         return { kind: 'new', bar };
     }
     if (barTime < tail.time) return null;
+    if (!volumeOnly && unpricedBars.delete(tail)) {
+        // 這一桶第一筆算價的成交：開高低收從它開始（伺服器 K 棒也是），借來的收盤不留在高低裡
+        tail.open = tail.high = tail.low = tail.close = price;
+        tail.volume += volume;
+        return { kind: 'tail', bar: tail };
+    }
     tail.high = Math.max(tail.high, price);
     tail.low = Math.min(tail.low, price);
     tail.close = price;

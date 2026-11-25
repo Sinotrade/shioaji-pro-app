@@ -512,6 +512,35 @@ describe('uncertain outcomes, stalled requests and reconcile (Codex rounds 3-4)'
         expect(sessionStorage.getItem(`sj-us-tick-wire:${m.base}`)).toBe('{}');
     });
 
+    it('a timed-out TickFull subscribe that lands after switching back is reconciled away', async () => {
+        m.version = '1.8.0';
+        const { subscribeQuote } = await import('../shioaji');
+        const stream = await import('../stream');
+        const prefs = await import('./us-tick-prefs');
+        await subscribeQuote(aapl, 'Tick');
+        let land!: (v: unknown) => void;
+        const stalled = new Promise((resolve) => { land = resolve; });
+        m.post.mockImplementation((path: string, body: Record<string, unknown>) =>
+            path.endsWith('/subscribe') && body.quote_type === 'TickFull' ? stalled : Promise.resolve(ok));
+        prefs.setUsTickDetail('TickFull');
+        const pass = stream.resubscribeUsTicks();
+        await vi.advanceTimersByTimeAsync(stream.STREAM_REQUEST_TIMEOUT_MS);
+        await pass;
+        // 5 秒對帳前切回一般成交：退 TickFull、訂 Tick，對帳完成
+        prefs.setUsTickDetail('Tick');
+        await stream.resubscribeUsTicks();
+        expect(stream.needsUsTickReconcile('US:AAPL:Tick')).toBe(false);
+        // 原本逾時的 TickFull 訂閱這時才在 sidecar 生效 → Tick 與 TickFull 並存，要再對帳一次
+        m.post.mockClear();
+        m.post.mockResolvedValue(ok);
+        land(ok);
+        await vi.advanceTimersByTimeAsync(0);
+        expect(stream.needsUsTickReconcile('US:AAPL:Tick')).toBe(true);
+        await vi.advanceTimersByTimeAsync(5000);
+        await vi.waitFor(() => expect(kinds()).toEqual([['unsubscribe', 'AAPL', 'TickFull'], ['subscribe', 'AAPL', 'Tick']]));
+        expect(stream.needsUsTickReconcile('US:AAPL:Tick')).toBe(false);
+    });
+
     it('a stalled response times out: other symbols replay meanwhile, then close removes both kinds', async () => {
         m.version = '1.8.0';
         const { subscribeQuote, unsubscribeQuote } = await import('../shioaji');

@@ -233,6 +233,22 @@ describe('IntradayChart (US)', () => {
         expect(lastUpdate()).toEqual({ time: T('2026-11-19T09:31:00'), value: 100.5 });
     });
 
+    it('a minute opened by an odd lot takes its OHLC from the first TICL trade', async () => {
+        fetchMock.mockResolvedValue(MORNING);
+        snap.value = { tradeDate: '2026-11-19', reference: 99 };
+        mount({ contract: aapl });
+        await flush();
+        const rec = (iso: string, p: string, volume: number, odd: boolean) => {
+            const ms = Date.parse(`${iso}Z`);
+            act(() => recordUsTick({ key: 'US:AAPL', price: p, session: 'Regular', freshness: null, ts: ms, tsUs: ms * 1000, volume, updatesLast: !odd, oddLot: odd }));
+        };
+        rec('2026-11-19T15:10:10', '120', 3, true); // 零股：只加量，借前一筆的價開這一分
+        rec('2026-11-19T15:10:20', '110', 5, false);
+        rec('2026-11-19T15:10:30', '108', 1, false);
+        const bar = created.filter((c) => c.kind === 'Bar').at(-1)!;
+        expect(bar.update.mock.calls.at(-1)![0]).toMatchObject({ time: T('2026-11-19T10:11:00'), open: 110, high: 110, low: 108, close: 108 });
+    });
+
     describe('session: 一般盤／含盤前盤後', () => {
         const filler = () => created.filter((c) => c.kind === 'Line').at(-1)!;
         const vol = () => created.filter((c) => c.kind === 'Histogram').at(-1)!;

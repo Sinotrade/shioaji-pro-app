@@ -457,6 +457,9 @@ export function isUsRegularLabel(label: number): boolean {
 type ExtendedBook = { bars: Map<number, Candle>; days: number[] /* 由舊到新 */ };
 const extendedBars = new Map<string, ExtendedBook>();
 
+/** 只有只加量成交的盤前盤後 K 棒（價格借前一根收盤）；第一筆算價的成交到了改用它的價格 */
+const unpricedExtBars = new WeakSet<Candle>();
+
 function recordUsExtendedTrade(meta: UsTickMeta) {
     if (!(meta.volume > 0)) return;
     const price = Number(meta.price);
@@ -478,7 +481,10 @@ function recordUsExtendedTrade(meta: UsTickMeta) {
     const priced = isUsTiclTrade(meta);
     if (bar) {
         // 收盤取最後抵達的那筆（與即時 K 棒相同）
-        if (priced) {
+        if (priced && unpricedExtBars.delete(bar)) {
+            // 這一分第一筆算價的成交：開高低收從它開始，不留借來的收盤
+            bar.open = bar.high = bar.low = bar.close = price;
+        } else if (priced) {
             bar.high = Math.max(bar.high, price);
             bar.low = Math.min(bar.low, price);
             bar.close = price;
@@ -492,7 +498,9 @@ function recordUsExtendedTrade(meta: UsTickMeta) {
             if (!prev) return;
             p = prev.close;
         }
-        bars.set(label, { time: label, open: p, high: p, low: p, close: p, volume: meta.volume });
+        const opened: Candle = { time: label, open: p, high: p, low: p, close: p, volume: meta.volume };
+        if (!priced) unpricedExtBars.add(opened);
+        bars.set(label, opened);
         // 只留最近 US_EXTENDED_KEEP_DAYS 個有成交的日期（週末、假日不算）
         const day = Math.floor(label / US_DAY);
         if (!book.days.includes(day)) {

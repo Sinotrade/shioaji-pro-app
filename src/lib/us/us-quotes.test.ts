@@ -137,5 +137,9 @@ describe('extended-hours memory bars follow the TICL price definition', () => {
         rec(4, 1, '9', 2, true);
         const bars = getUsExtendedBars('US:AAPL');
         expect(bars.map(b => [b.open, b.high, b.low, b.close, b.volume])).toEqual([[10, 10, 10, 10, 103], [10, 10, 10, 10, 2]]);
+        // 零股開的那一分：第一筆整股成交到了，開高低收改從它開始
+        rec(4, 1, '11', 5, false);
+        rec(4, 1, '10.5', 1, false);
+        expect(getUsExtendedBars('US:AAPL').at(-1)).toMatchObject({ open: 11, high: 11, low: 10.5, close: 10.5, volume: 8 });
     });
 });

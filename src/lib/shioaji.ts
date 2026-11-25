@@ -1315,8 +1315,7 @@ export interface AccountSelector {
 }
 
 function accountQueryPost<T>(path: string, type: AccountTypeName, selector?: AccountSelector, extra: Record<string, unknown> = {},
-    guard?: () => void): Promise<T> {
-    const query = createAccountQuery();
+    guard?: () => void, query = createAccountQuery()): Promise<T> {
     return query.read(type, selector, account => apiPost<T>(path, {
         ...extra,
         account_type: type,
@@ -1338,8 +1337,15 @@ export function fetchTrades(
     account?: AccountSelector,
     options?: FetchTradesOptions,
 ): Promise<Trade[]> {
-    const query = () => accountQueryPost<Trade[]>('/api/v1/order/trades', accountType, account,
-        options?.refresh === undefined ? {} : { refresh: options.refresh });
+    // 查詢的伺服器／模式世代在等權證表之前就定下：等待期間換了伺服器，這次查詢作廢
+    // （不會對新伺服器送出沒預載過的查詢、也不會把它的回應當成這次的結果）
+    const generation = createAccountQuery();
+    const base = getApiBase();
+    const query = () => {
+        if (getApiBase() !== base) return Promise.reject(new Error('查詢期間伺服器已變更，已丟棄回應；請重新更新'));
+        return accountQueryPost<Trade[]>('/api/v1/order/trades', accountType, account,
+            options?.refresh === undefined ? {} : { refresh: options.refresh }, undefined, generation);
+    };
     // 證券帳戶：這個 sidecar 第一次查委託成交前先載入權證合約表，權證委託才會
     // 標 WRT（#409）；載過之後照原本同步送出
     if (accountType === 'S' && !warrantContractsReady()) return ensureWarrantContracts().then(query);

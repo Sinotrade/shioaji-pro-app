@@ -46,6 +46,29 @@ describe('TickTape (US) history follows the tick-detail setting', () => {
         expect(m.release).not.toHaveBeenCalled();
         expect(m.subscribe).toHaveBeenCalledTimes(1);
     });
+    it('一般成交 lists only TICL trades while the wire switch from TickFull is pending', async () => {
+        const { recordUsTick } = await import('../lib/us/us-quotes');
+        setUsTickDetail('TickFull');
+        m.load.mockResolvedValue([]);
+        await act(async () => { r = create(createElement(TickTape, { contract: aapl })); });
+        const onTick = m.subscribe.mock.calls[0]![1] as () => void;
+        const trade = (sec: number, price: string, odd: boolean) => act(() => {
+            const ms = Date.UTC(2026, 10, 25, 15, 0, sec);
+            recordUsTick({ key: 'US:AAPL', price, session: 'Regular', freshness: null, ts: ms, tsUs: ms * 1000, volume: odd ? 3 : 100, updatesLast: !odd, oddLot: odd });
+            onTick();
+        });
+        const text = () => JSON.stringify(r!.toJSON());
+        trade(1, '101.25', true);
+        trade(2, '102.25', false);
+        expect(text()).toContain('101.25');
+        expect(text()).toContain('102.25');
+        // 切回一般成交（明細重抓歷史）：改訂完成前還進來的零股不列
+        await act(async () => { setUsTickDetail('Tick'); });
+        trade(3, '103.25', true);
+        trade(4, '104.25', false);
+        expect(text()).not.toContain('103.25');
+        expect(text()).toContain('104.25');
+    });
     it('ignores the setting for Taiwan contracts', async () => {
         const tw = { region: 'TW', exchange: 'TSE', code: '2330', security_type: 'STK', target_code: null } as unknown as ContractBase;
         const { fetchLastTicks } = await import('../lib/shioaji');
