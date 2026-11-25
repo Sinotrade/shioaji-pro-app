@@ -108,3 +108,11 @@ describe('apply guide native events', () => {
         expect(parseApplyGuideEvent('other', {})).toBeNull();
     });
 });
+
+describe('download step copy', () => {
+    it('says the keys go straight into the app and no file lands in Downloads', () => {
+        const point = GUIDE_COPY.success.points.find(p => p.target === 'download-env')!;
+        expect(point.body).toContain('直接存進 App');
+        expect(point.body).toContain('下載資料夾裡不會出現 .env 檔');
+    });
+});
