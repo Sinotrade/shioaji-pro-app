@@ -33,9 +33,10 @@ function Harness({ step }: { step: 'download' | 'done' }) {
 describe('AssistantFab docked anchor', () => {
     it('follows the guide body when the step swaps in a new element', async () => {
         const options = {
-            createNodeMock: (el: { props: Record<string, unknown> }) => {
-                const key = el.props['data-rect'];
-                return { getBoundingClientRect: () => (typeof key === 'string' ? rects[key] : { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 }) };
+            createNodeMock: (el: { props: unknown }) => {
+                const key = (el.props as Record<string, unknown>)['data-rect'];
+                const rect = (typeof key === 'string' && rects[key]) || ({ left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 } as DOMRect);
+                return { getBoundingClientRect: () => rect };
             },
         };
         await act(async () => { view = create(createElement(Harness, { step: 'download' }), options); });
