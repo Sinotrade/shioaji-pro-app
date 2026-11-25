@@ -2,11 +2,18 @@
 //
 // HTTP（與台股同一組端點，contract 帶 region US）：
 //   - POST /api/v1/data/kbars：1 分 K，欄位與台股同（datetime／Open…）。美股的
-//     時間是 UTC 的「K 棒結束時間」（台股是台北牆鐘），只有一般盤；日 K 目前回空。
+//     時間是 UTC 的「K 棒結束時間」（台股是台北牆鐘）；日 K 目前回空。預設只有
+//     一般盤；SDK 1.8.0 起可帶 sessions（PreMarket／Regular／AfterHours／
+//     Overnight）含延長時段，回應多一個 Session 欄。K 棒由一般成交（TICL）組成：
+//     開高低收只看一般成交，量另含零股。
 //   - POST /api/v1/data/ticks：UsTicks（ts 為 UTC epoch ns，另有 session、
-//     updates_last、odd_lot；bid／ask 可能是 null）。只有一般盤（含收盤競價
-//     session=AfterHours）；一次最多 100000 筆。部分 sidecar 版本回台股形狀
-//     （datetime 字串、沒有 session）— 兩種都接受，時間一律當 UTC。
+//     updates_last、odd_lot；bid／ask 可能是 null）。預設只有一般盤（含收盤競價
+//     session=AfterHours）；SDK 1.8.0 起 sessions 同上，full=false（預設）是即時
+//     Tick（TICL）的定義、full=true 是 TickFull（每一筆）；一次最多 100000 筆，
+//     更多用 offset 分頁。部分 sidecar 版本回台股形狀（datetime 字串、沒有
+//     session）— 兩種都接受，時間一律當 UTC。
+//   舊 sidecar（≤1.8.0b3）不認 sessions／full／offset：照樣 200，只是忽略
+//   （實測 1.8.0b1），所以一律照送，不必依版本分支。
 //   - POST /api/v1/data/snapshots：每列帶 region，美股列是 UsSnapshot。
 // 美股行情只有 BC 有；IDC 回空。
 //
@@ -69,6 +76,16 @@ export class UsHistoryUnavailable extends Error {
 export function isUsHistoryUnavailable(e: unknown): e is UsHistoryUnavailable {
     return e instanceof UsHistoryUnavailable;
 }
+
+/** 美股交易時段（kbars／ticks 的 sessions 參數；wire 值是名稱） */
+export type UsHistorySession = 'PreMarket' | 'Regular' | 'AfterHours' | 'Overnight';
+/** 成交明細：全部時段（今天盤前的成交重開 App 也看得到） */
+export const US_TAPE_SESSIONS: readonly UsHistorySession[] = ['PreMarket', 'Regular', 'AfterHours', 'Overnight'];
+/**
+ * K 線「含盤前盤後」：04:00–20:00。夜盤（20:00–04:00）不在圖表的時段框架裡，
+ * 即時成交也不畫夜盤，歷史就不要 — 否則重新載入前後的 K 棒不一樣。
+ */
+export const US_EXTENDED_KBAR_SESSIONS: readonly UsHistorySession[] = ['PreMarket', 'Regular', 'AfterHours'];
 
 function usContractBody(c: Pick<ContractBase, 'code' | 'exchange'>) {
     return { security_type: 'STK', region: 'US', exchange: c.exchange, code: c.code.trim().toUpperCase() };
@@ -195,16 +212,45 @@ export function splitDateRange(start: string, end: string, maxDays = US_KBARS_MA
     return out;
 }
 
+/**
+ * 美股 1 分 K 的結果；extendedHistory＝要了延長時段而且 sidecar 真的給了
+ * （回應帶 Session 欄）。舊 sidecar 忽略 sessions 只回一般盤時是 false，
+ * 圖表就退回用記憶體裡的盤前盤後 K 棒（us-quotes getUsExtendedBars）。
+ */
+export type UsKbars = Candle[] & { extendedHistory?: boolean };
+
+/** kbars 請求的 body（extended＝含盤前盤後，見 US_EXTENDED_KBAR_SESSIONS） */
+export function usKbarsBody(contract: Pick<ContractBase, 'code' | 'exchange'>, start: string, end: string, extended = false): Record<string, unknown> {
+    const body: Record<string, unknown> = { contract: usContractBody(contract), start, end };
+    if (extended) body.sessions = [...US_EXTENDED_KBAR_SESSIONS];
+    return body;
+}
+
+function parseUsKbarsWithSessions(raw: unknown): { bars: Candle[]; sessions: boolean } | null {
+    const bars = parseUsKbars(raw);
+    if (!bars) return null;
+    const r = raw as Record<string, unknown>;
+    return { bars, sessions: Array.isArray(r.Session) || Array.isArray(r.session) };
+}
+
 /** 美股 1 分 K；超過 30 天的區間依序分段抓再合併 */
-export async function fetchUsKbars(contract: Pick<ContractBase, 'code' | 'exchange'>, start: string, end: string, opts?: { timeoutMs?: number }): Promise<Candle[]> {
+export async function fetchUsKbars(contract: Pick<ContractBase, 'code' | 'exchange'>, start: string, end: string, opts?: { timeoutMs?: number; extended?: boolean }): Promise<UsKbars> {
+    const extended = opts?.extended === true;
     const parts: Candle[][] = [];
+    let sessions = true;
     for (const [a, b] of splitDateRange(start, end)) {
-        parts.push(await usPost('/api/v1/data/kbars', { contract: usContractBody(contract), start: a, end: b }, parseUsKbars, opts));
+        const r = await usPost('/api/v1/data/kbars', usKbarsBody(contract, a, b, extended), parseUsKbarsWithSessions, opts);
+        parts.push(r.bars);
+        sessions &&= r.sessions;
     }
-    if (parts.length === 1) return parts[0]!;
-    const byTime = new Map<number, Candle>();
-    for (const c of parts.flat()) byTime.set(c.time, c);
-    return [...byTime.values()].sort((x, y) => x.time - y.time);
+    let out: Candle[];
+    if (parts.length === 1) out = parts[0]!;
+    else {
+        const byTime = new Map<number, Candle>();
+        for (const c of parts.flat()) byTime.set(c.time, c);
+        out = [...byTime.values()].sort((x, y) => x.time - y.time);
+    }
+    return extended ? Object.assign(out, { extendedHistory: sessions }) : out;
 }
 
 // ---- ticks ----
@@ -285,14 +331,36 @@ export function parseUsTicks(raw: unknown): UsHistoryTick[] | null {
     return out.map((t, i) => [t, i] as const).sort((x, y) => x[0].ts - y[0].ts || x[1] - y[1]).map(([t]) => t);
 }
 
-/** date 是美東交易日（YYYY-MM-DD）；lastCnt 給定時只取最後 N 筆 */
-export function fetchUsTicks(contract: Pick<ContractBase, 'code' | 'exchange'>, date: string, opts?: { lastCnt?: number; timeoutMs?: number }): Promise<UsHistoryTick[]> {
+/** SDK 1.8.0：ticks 一次最多回這麼多筆，更多用 offset 分頁 */
+export const US_TICKS_MAX_ROWS = 100_000;
+
+export interface UsTicksQuery {
+    /** 只取最後 N 筆（LastCount） */
+    lastCnt?: number;
+    /** true＝完整成交（TickFull 的定義），false／省略＝一般成交（Tick／TICL） */
+    full?: boolean;
+    /** 時段；省略＝伺服器預設（只有一般盤） */
+    sessions?: readonly UsHistorySession[];
+    /** 跳過幾筆（LastCount 從尾端算，否則從頭） */
+    offset?: number;
+}
+
+/** ticks 請求的 body；美股專用參數只在有給時才帶（台股不經這裡） */
+export function usTicksBody(contract: Pick<ContractBase, 'code' | 'exchange'>, date: string, q: UsTicksQuery = {}): Record<string, unknown> {
     const body: Record<string, unknown> = { contract: usContractBody(contract), date };
-    if (opts?.lastCnt) {
+    if (q.lastCnt) {
         body.query_type = 'LastCount';
-        body.last_cnt = opts.lastCnt;
+        body.last_cnt = q.lastCnt;
     }
-    return usPost('/api/v1/data/ticks', body, parseUsTicks, opts);
+    if (q.full !== undefined) body.full = q.full;
+    if (q.sessions) body.sessions = [...q.sessions];
+    if (q.offset) body.offset = q.offset;
+    return body;
+}
+
+/** date 是美東交易日（YYYY-MM-DD）；lastCnt 給定時只取最後 N 筆 */
+export function fetchUsTicks(contract: Pick<ContractBase, 'code' | 'exchange'>, date: string, opts?: UsTicksQuery & { timeoutMs?: number }): Promise<UsHistoryTick[]> {
+    return usPost('/api/v1/data/ticks', usTicksBody(contract, date, opts), parseUsTicks, opts);
 }
 
 // ---- snapshots ----

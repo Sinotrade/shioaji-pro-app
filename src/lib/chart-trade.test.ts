@@ -58,4 +58,18 @@ describe('trade adapters', () => {
         expect(usChartTrade({ ts: ms(9, 0, 0), session: 'PreMarket', price: '352', volume: 1 })).toBeNull();
         expect(usChartTrade({ ts: ms(10, 0, 0), session: 'Regular', price: '352', volume: 0 })).toBeNull();
     });
+    it('US: odd lots and special-condition trades only add volume (server kbars use TICL for OHLC)', () => {
+        const ms = (h: number, m: number, s: number) => Date.UTC(2026, 10, 18, h + 5, m) + s * 1000;
+        // 一般盤：updates_last 才算價格
+        expect(usChartTrade({ ts: ms(10, 0, 0), session: 'Regular', price: '352', volume: 100, updatesLast: true, oddLot: false })?.volumeOnly).toBeUndefined();
+        expect(usChartTrade({ ts: ms(10, 0, 0), session: 'Regular', price: '351.9', volume: 3, updatesLast: false, oddLot: true })).toMatchObject({ volume: 3, volumeOnly: true });
+        expect(usChartTrade({ ts: ms(10, 0, 0), session: 'Regular', price: '349', volume: 9000, updatesLast: false, oddLot: false })?.volumeOnly).toBe(true);
+        // 延長時段：整股算價格（updates_last 一律 false），零股只加量
+        expect(usChartTrade({ ts: ms(4, 10, 0), session: 'PreMarket', price: '350', volume: 100, updatesLast: false, oddLot: false }, true)?.volumeOnly).toBeUndefined();
+        expect(usChartTrade({ ts: ms(4, 10, 0), session: 'PreMarket', price: '350.1', volume: 5, updatesLast: false, oddLot: true }, true)?.volumeOnly).toBe(true);
+        // 收盤競價（AfterHours 16:00:01，updates_last=false 的整股）照算價格
+        expect(usChartTrade({ ts: ms(16, 0, 1), session: 'AfterHours', price: '354.07', volume: 5600, updatesLast: false, oddLot: false })?.volumeOnly).toBeUndefined();
+        // 舊 sidecar 沒有這兩個欄位：全部算
+        expect(usChartTrade({ ts: ms(10, 0, 0), session: 'Regular', price: '352', volume: 1 })?.volumeOnly).toBeUndefined();
+    });
 });

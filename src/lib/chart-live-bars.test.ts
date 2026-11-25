@@ -6,6 +6,13 @@ const bar = (time: number, p = 10): Candle => ({ time, open: p, high: p, low: p,
 const minuteLabel = (t: number) => Math.ceil(t / 60) * 60;
 
 describe('mergeTradeIntoBars', () => {
+    it('volume-only trades keep OHLC and open a flat bar at the last close', () => {
+        const bars = [bar(60, 10)];
+        expect(mergeTradeIntoBars(bars, bars[0]!, 60, 99, 5, true)).toMatchObject({ kind: 'tail', bar: { open: 10, high: 10, low: 10, close: 10, volume: 6 } });
+        expect(mergeTradeIntoBars(bars, bars[0]!, 120, 99, 2, true)).toMatchObject({ kind: 'new', bar: { time: 120, open: 10, high: 10, low: 10, close: 10, volume: 2 } });
+        // 還沒有 K 棒：不畫
+        expect(mergeTradeIntoBars([], null, 60, 99, 2, true)).toBeNull();
+    });
     it('opens a new bar and updates the tail', () => {
         const bars = [bar(60), bar(120)];
         expect(mergeTradeIntoBars(bars, bars[1]!, 180, 12, 2)?.kind).toBe('new');

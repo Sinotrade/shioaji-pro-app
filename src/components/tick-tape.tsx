@@ -4,9 +4,10 @@ import { retainQuote } from '../lib/quote-ownership';
 // Times show full microsecond precision (HH:MM:SS.ffffff).
 // Big lots (≥3× the rolling average of visible rows) are highlighted.
 //
-// 美股（region US）走同一個元件：歷史是最近一個有成交的美東交易日（只有
-// 一般盤），即時逐筆含盤前／盤後；時間是美東時間，跨日標日期分隔。資料
-// 轉接見 lib/us/us-tape.ts。
+// 美股（region US）走同一個元件：歷史是最近一個有成交的美東交易日（SDK
+// 1.8.0 起含盤前／盤後／夜盤；舊 sidecar 只有一般盤），即時逐筆含盤前／盤後；
+// 歷史與即時用同一個成交種類（漏斗鈕，切換時重抓歷史）。時間是美東時間，
+// 跨日標日期分隔。資料轉接見 lib/us/us-tape.ts。
 
 import { Funnel } from 'lucide-react';
 import { memo, useEffect, useMemo, useState } from 'react';
@@ -130,6 +131,11 @@ export function TickTape({ contract }: { contract: ContractBase }) {
     const [historyUnavailable, setHistoryUnavailable] = useState(false);
     const [retrySeq, setRetrySeq] = useState(0);
 
+    // 美股：歷史與即時訂閱用同一個成交種類（漏斗鈕）；切換時重抓歷史（即時
+    // 訂閱由 stream.ts 改訂），兩邊才一致。台股不看這個設定
+    const usDetail = useUsTickDetail();
+    const historyDetail = isUs ? usDetail : null;
+
     // history preload, then live stream on top
     useEffect(() => {
         let cancelled = false;
@@ -139,7 +145,7 @@ export function TickTape({ contract }: { contract: ContractBase }) {
         setHistoryUnavailable(false);
 
         const history: Promise<(live: TapeRow[]) => TapeRow[]> = isUs
-            ? loadUsTapeHistory(contract, MAX_ROWS).then((ticks) => {
+            ? loadUsTapeHistory(contract, MAX_ROWS, historyDetail ?? 'Tick').then((ticks) => {
                   const hist = usTapeRowsFromHistory(ticks, MAX_ROWS);
                   // 載入期間的即時列可能與歷史重疊 — 同價同量、時間差 ≤1 µs 去重
                   return (live: TapeRow[]) => mergeUsTape(live, hist, MAX_ROWS);
@@ -173,7 +179,13 @@ export function TickTape({ contract }: { contract: ContractBase }) {
             .finally(() => {
                 if (!cancelled) setLoading(false);
             });
+        return () => {
+            cancelled = true;
+        };
+    }, [contract, isUs, historyDetail, retrySeq]);
 
+    // 即時逐筆：與歷史分開，切換成交種類只重抓歷史，不重新訂閱
+    useEffect(() => {
         const releaseQuote = retainQuote(contract, 'Tick');
         const push = (row: TapeRow) => {
             setHistoryError(false);
@@ -199,11 +211,10 @@ export function TickTape({ contract }: { contract: ContractBase }) {
                   });
               });
         return () => {
-            cancelled = true;
             off();
             releaseQuote();
         };
-    }, [contract, isUs, retrySeq]);
+    }, [contract, isUs]);
 
     // big-lot threshold from the rolling average of visible rows
     const bigThreshold = useMemo(() => {

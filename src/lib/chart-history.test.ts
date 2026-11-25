@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-const mocks = vi.hoisted(() => ({ fetch: vi.fn(), base: 'fixture' }));
+const mocks = vi.hoisted(() => ({ fetch: vi.fn(), us: vi.fn(), base: 'fixture' }));
 vi.mock('./runtime', () => ({ getApiBase: () => mocks.base }));
 vi.mock('./shioaji', () => ({ fetchKbars: mocks.fetch }));
 const contract = { code: '2330', exchange: 'TSE', security_type: 'STK', target_code: null } as const;
@@ -84,5 +84,26 @@ describe('chart history request sharing', () => {
         await fetchChartHistory(contract, '2026-11-13', '2026-11-20', undefined, tpeNextDay);
         await fetchChartHistory(contract, '2026-11-13', '2026-11-20', undefined, tpeNextDay + LIVE_HISTORY_TTL_MS + 1);
         expect(mocks.fetch).toHaveBeenCalledTimes(5);
+    });
+    it('keys US extended-hours history separately and passes the flag through', async () => {
+        vi.doMock('./us/us-history', () => ({ fetchUsKbars: mocks.us }));
+        const { fetchChartHistory } = await import('./chart-history');
+        const us = { code: 'AAPL', exchange: 'NASDAQ', security_type: 'STK', region: 'US', target_code: null } as never;
+        const bars = Object.assign([{ time: Date.UTC(2026, 10, 24, 4, 1) / 1000, open: 1, high: 1, low: 1, close: 1, volume: 1 }], { extendedHistory: true });
+        mocks.us.mockResolvedValue(bars);
+        const ext = await fetchChartHistory(us, '2026-11-20', '2026-11-24', { usExtended: true });
+        expect(mocks.us).toHaveBeenLastCalledWith(us, '2026-11-20', '2026-11-24', { timeoutMs: undefined, extended: true });
+        expect(ext.usExtendedHistory).toBe(true);
+        expect(ext.datetime).toEqual(['2026-11-24T04:01:00']);
+        mocks.us.mockResolvedValue([]);
+        const reg = await fetchChartHistory(us, '2026-11-20', '2026-11-24');
+        expect(mocks.us).toHaveBeenCalledTimes(2);
+        expect(mocks.us).toHaveBeenLastCalledWith(us, '2026-11-20', '2026-11-24', { timeoutMs: undefined, extended: false });
+        expect(reg.usExtendedHistory).toBeUndefined();
+        // 台股忽略 usExtended（同一個快取鍵）
+        await fetchChartHistory(contract, '2026-09-01', '2026-09-12');
+        await fetchChartHistory(contract, '2026-09-01', '2026-09-12', { usExtended: true });
+        expect(mocks.fetch).toHaveBeenCalledOnce();
+        vi.doUnmock('./us/us-history');
     });
 });

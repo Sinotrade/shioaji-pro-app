@@ -23,7 +23,13 @@ export function mergeTradeIntoBars(
     barTime: number,
     price: number,
     volume: number,
+    volumeOnly = false,
 ): MergeResult {
+    // 只加量的成交（美股零股等）：價格沿用最新一根的收盤；還沒有 K 棒就不畫
+    if (volumeOnly) {
+        if (!tail) return null;
+        price = tail.close;
+    }
     if (!Number.isFinite(barTime) || !Number.isFinite(price)) return null;
     if (!tail || barTime > tail.time) {
         const bar: Candle = { time: barTime, open: price, high: price, low: price, close: price, volume };
@@ -81,7 +87,7 @@ export function mergePendingTrades(
         if (!(label > coveredLabel)) continue;
         const bt = barTime(label, tr.time);
         if (bt === null) continue;
-        const r = mergeTradeIntoBars(bars, tail, bt, tr.price, tr.volume);
+        const r = mergeTradeIntoBars(bars, tail, bt, tr.price, tr.volume, tr.volumeOnly);
         if (r) tail = r.bar;
     }
     return tail;
