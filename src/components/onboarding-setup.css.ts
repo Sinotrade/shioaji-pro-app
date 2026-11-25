@@ -102,9 +102,12 @@ export const agentCard = style({
 });
 
 // 申請視窗開著時，AI 助理放在導覽欄位（寬度與導覽卡相同）
+// 申請視窗開著時放在導覽下方：固定高度，導覽卡片自己縮短並捲動
 export const agentCardDocked = style([agentCard, {
     width: 'min(28rem, 92vw)',
-    height: 'min(44rem, 92vh)',
+    height: 'min(24rem, 44vh)',
+    flexShrink: 0,
+    boxShadow: 'none',
 }]);
 
 export const agentHeaderSpacer = style({ flex: 1 });

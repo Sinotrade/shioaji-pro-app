@@ -70,13 +70,13 @@ describe('first-run apply guide', () => {
         expect(json()).toContain('登入永豐金證券網站');
         await act(async () => button('回到 API 管理頁')!.props.onClick());
         expect(mocks.apiPage).toHaveBeenCalledOnce();
+        // 申請視窗開著時 AI 助理仍預設展開，移到導覽下方
+        mocks.panel.mockClear();
         await emit({ kind: 'step', step: 'form' });
         expect(json()).toContain('填寫「新增 API KEY」');
         expect(json()).toContain('已同步官網畫面');
-        // AI 助理在申請視窗開著時收起，讓導覽貼齊左側
-        mocks.panel.mockClear();
-        await emit({ kind: 'step', step: 'form' });
-        expect(mocks.panel).not.toHaveBeenCalled();
+        expect(mocks.panel).toHaveBeenCalled();
+        expect(view!.root.findAllByType(ApplyGuide)).toHaveLength(1);
         const locate = view!.root.findAllByProps({ 'aria-label': '在網頁上標示「API 權限：正式環境」' })[0]!;
         await act(async () => locate.props.onClick());
         expect(mocks.focus).toHaveBeenCalledWith('perm-prod');
@@ -195,15 +195,25 @@ describe('apply guide review fixes', () => {
         expect(button('下一步')!.props.disabled).toBe(true);
     });
 
-    it('opens the AI assistant in the guide column while the apply window is docked', async () => {
+    it('shows the AI assistant expanded by default, beside or under the guide, and lets it collapse', async () => {
         await mount();
+        // 首頁：導覽旁邊展開
+        expect(mocks.panel).toHaveBeenCalled();
+        expect(button('收合 AI 助理')!.props['aria-expanded']).toBe(true);
         await act(async () => button('開始申請')!.props.onClick());
         await emit({ kind: 'step', step: 'form' });
+        // 申請視窗開著：導覽下方仍展開，導覽同時顯示
         mocks.panel.mockClear();
+        await emit({ kind: 'step', step: 'verify' });
+        expect(mocks.panel).toHaveBeenCalled();
+        expect(view!.root.findAllByType(ApplyGuide)).toHaveLength(1);
+        await act(async () => button('收合')!.props.onClick());
+        mocks.panel.mockClear();
+        await emit({ kind: 'step', step: 'form' });
+        expect(mocks.panel).not.toHaveBeenCalled();
+        expect(button('問 AI 助理')!.props['aria-expanded']).toBe(false);
         await act(async () => button('問 AI 助理')!.props.onClick());
         expect(mocks.panel).toHaveBeenCalled();
-        expect(view!.root.findAllByType(ApplyGuide)).toHaveLength(0);
-        await act(async () => button('回到導覽')!.props.onClick());
         expect(view!.root.findAllByType(ApplyGuide)).toHaveLength(1);
     });
 

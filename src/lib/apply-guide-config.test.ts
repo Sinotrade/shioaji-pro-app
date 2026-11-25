@@ -56,6 +56,13 @@ describe('apply guide page rules', () => {
 });
 
 describe('apply guide copy', () => {
+    it('sends the verification code to the phone only, never mentioning Email', () => {
+        const all = JSON.stringify(GUIDE_COPY);
+        expect(all).not.toMatch(/e-?mail|信箱/i);
+        expect(GUIDE_COPY.start.points[0]!.body).toContain('開戶時留的手機號碼');
+        expect(GUIDE_COPY.verify.lead).toContain('開戶時留的手機號碼');
+    });
+
     it('covers every page step and explains each form field', () => {
         for (const rule of APPLY_PAGE_RULES.steps) expect(GUIDE_COPY[rule.id].title).toBeTruthy();
         const form = GUIDE_COPY.form.points.map(point => point.title).join('\n');

@@ -1,4 +1,4 @@
-import { Bot, ChevronLeft, KeyRound } from 'lucide-react';
+import { Bot, ChevronDown, KeyRound } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { registerOnboardingAppStateHost } from '../lib/agent-app-command';
 import { agentModule } from '../lib/features';
@@ -28,9 +28,8 @@ export function OnboardingSetup() {
     const logoutInFlight = useRef(false);
     // 首次設定預設走申請導覽；已有帳號（或待遷移）時直接顯示帳號設定
     const [mode, setMode] = useState<'guide' | 'manual'>('guide');
+    // AI 助理預設展開；申請視窗開著時改放在導覽下方（右側會被申請視窗蓋住）
     const [agentOpen, setAgentOpen] = useState(true);
-    // 申請視窗開著時 AI 助理改放在導覽欄位裡（右側會被申請視窗蓋住）
-    const [dockedAgent, setDockedAgent] = useState(false);
     const refresh = () => { loadDesktopSettings().then(setSettings).catch(() => undefined); };
     const guide = useApplyGuide(refresh);
     const stopForChange = async () => {
@@ -143,10 +142,10 @@ export function OnboardingSetup() {
     const AgentPanel = agentModule?.Panel;
     agentModule?.ensureDefaultProvider('codex');
     const guiding = mode === 'guide' && loaded;
-    // 申請視窗開著時導覽貼齊左側，右側讓給原生申請視窗；AI 助理改在導覽欄位切換顯示
+    // 申請視窗開著時導覽貼齊左側，右側讓給原生申請視窗；AI 助理移到導覽下方
     const docked = guiding && guide.step !== 'start' && guide.windowState === 'open';
     const showAgent = !!AgentPanel && agentOpen && !docked;
-    const agentInColumn = !!AgentPanel && docked && dockedAgent;
+    const agentInColumn = !!AgentPanel && agentOpen && docked;
     const agentPanel = AgentPanel && <FeatureGate feature='agent'>
         <AgentPanel
             onboarding
@@ -160,20 +159,22 @@ export function OnboardingSetup() {
     </>;
     return (<div className={docked ? styles.shellDocked : styles.shell}><div className={docked ? styles.layoutDocked : styles.layout}>
         {guiding ? <div className={styles.guideColumn}>
-            {agentInColumn ? <div className={styles.agentCardDocked}>
+            <ApplyGuide guide={guide} settings={settings} busy={busy}
+                agentAvailable={!!AgentPanel}
+                agentOpen={agentOpen}
+                onToggleAgent={() => setAgentOpen(open => !open)}
+                onManual={() => setMode('manual')}
+                onStart={startImported} />
+            {(error || startError) && <div className={styles.guideErrors}>{errors}</div>}
+            {agentInColumn && <div className={styles.agentCardDocked}>
                 <div className={styles.agentHeader}>
                     <Bot size={14} />
                     AI 助理 — 引導申請 API Key
                     <span className={styles.agentHeaderSpacer} />
-                    <button className={dialog.smallButton} onClick={() => setDockedAgent(false)}><ChevronLeft size={14} />回到導覽</button>
+                    <button className={dialog.smallButton} onClick={() => setAgentOpen(false)}><ChevronDown size={14} />收合</button>
                 </div>
                 <div className={styles.agentBody}>{agentPanel}</div>
-            </div> : <ApplyGuide guide={guide} settings={settings} busy={busy}
-                agentAvailable={!!AgentPanel}
-                onToggleAgent={() => docked ? setDockedAgent(true) : setAgentOpen(open => !open)}
-                onManual={() => setMode('manual')}
-                onStart={startImported} />}
-            {(error || startError) && <div className={styles.guideErrors}>{errors}</div>}
+            </div>}
         </div> : <div className={styles.card}>
             <div><div className={styles.logo}>Shioaji Pro</div><div className={styles.subtitle}>設定或選擇帳號以啟動交易伺服器</div></div>
             {errors}

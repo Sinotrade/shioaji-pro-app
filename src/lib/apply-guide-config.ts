@@ -100,7 +100,7 @@ export const GUIDE_COPY: Record<GuideStep, GuideStepCopy> = {
         title: '申請你的 Shioaji API Key',
         lead: '約 5 分鐘。App 會在旁邊開啟永豐金證券官網的 API 管理頁，這裡一步一步說明要按哪裡、每個選項是什麼意思；最後下載的 .env 會直接交給 App 保存。',
         points: [
-            { title: '需要準備', body: '永豐金證券帳戶的網路登入帳號密碼，以及開戶時留的手機或 Email（用來收驗證碼）。' },
+            { title: '需要準備', body: '永豐金證券帳戶的網路登入帳號密碼，以及開戶時留的手機號碼（用來收驗證碼）。' },
             { title: '先從模擬環境開始', body: '第一次建議申請只能用在模擬環境的金鑰：不會動用真實資金，所有功能都能先試。' },
             { title: '你的資料不經過 App', body: '登入與驗證都在官網進行；申請視窗不保存登入狀態，關閉後就會登出。' },
         ],
@@ -126,9 +126,9 @@ export const GUIDE_COPY: Record<GuideStep, GuideStepCopy> = {
     verify: {
         label: '身份驗證',
         title: '收驗證碼完成身份驗證',
-        lead: '為了確認是本人申請，官網會寄驗證碼到你開戶時留的手機或 Email。',
+        lead: '為了確認是本人申請，官網會寄驗證碼到你開戶時留的手機號碼。',
         points: [
-            { title: '選擇手機或 Email 信箱', body: '選一種收驗證碼的方式，再在下拉選單選要寄到哪一支手機或哪個信箱（已部分遮蔽）。', target: 'otp-method' },
+            { title: '選擇手機', body: '收驗證碼的方式選「手機」，再在下拉選單選開戶時留的手機號碼（已部分遮蔽）。', target: 'otp-method' },
             { title: '發送驗證碼', body: '按下後按鈕會變成倒數計時；驗證碼幾分鐘內有效，沒收到可以等倒數結束再發一次。', target: 'send-otp' },
             { title: '輸入驗證碼', body: '把收到的數字填進「請輸入驗證碼」。', target: 'otp-input' },
             { title: '確認驗證', body: '出現「身份驗證成功！」後，會自動打開「新增 API KEY」表單。', target: 'confirm-otp' },

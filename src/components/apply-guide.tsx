@@ -143,11 +143,12 @@ function Progress({ step, imported, onSelect }: { step: GuideStep; imported: boo
     </ol>;
 }
 
-export function ApplyGuide({ guide, settings, busy, agentAvailable, onToggleAgent, onManual, onStart }: {
+export function ApplyGuide({ guide, settings, busy, agentAvailable, agentOpen = false, onToggleAgent, onManual, onStart }: {
     guide: ApplyGuideController;
     settings: DesktopSettings;
     busy: boolean;
     agentAvailable: boolean;
+    agentOpen?: boolean;
     onToggleAgent: () => void;
     onManual: () => void;
     onStart: (profileId: string) => Promise<void>;
@@ -158,7 +159,7 @@ export function ApplyGuide({ guide, settings, busy, agentAvailable, onToggleAgen
     const siteIndex = SITE_STEPS.indexOf(step);
     const altLinks = <div className={g.quietLinks}>
         <button className={s.linkButton} onClick={onManual}><SquarePen size={14} />{step === 'start' ? '我已經有 API Key' : '改用手動輸入或匯入 .env'}</button>
-        {agentAvailable && <button className={s.linkButton} onClick={onToggleAgent}><Bot size={14} />問 AI 助理</button>}
+        {agentAvailable && <button className={s.linkButton} aria-expanded={agentOpen} onClick={onToggleAgent}><Bot size={14} />{agentOpen ? '收合 AI 助理' : '問 AI 助理'}</button>}
     </div>;
 
     const header = <div className={g.header}>
