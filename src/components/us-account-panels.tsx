@@ -181,6 +181,8 @@ function freshTotal<T>(rows: Tagged<T>[], pick: (r: T) => string): string | null
 
 export function UsRealizedPnlSection({ accounts, days = 30 }: { accounts: Account[]; days?: number }) {
     const privMoney = usePrivacyMoney();
+    // 同一位址換模式（模擬↔正式）：換一份快取，和展開的沖銷明細（同樣依模式分開）一致
+    const mode = useSyncExternalStore(subscribeServerInfo, getServerModeVersion);
     const key = accounts.map(acctKey).join(',');
     const begin = dateStrOffset(days);
     const end = dateStrOffset(0);
@@ -189,7 +191,7 @@ export function UsRealizedPnlSection({ accounts, days = 30 }: { accounts: Accoun
             pnl: await batch.each('pnl', accounts, a => fetchUsProfitLoss(a, begin, end)),
             dividends: await batch.each('dividends', accounts, a => fetchUsDividends(a, begin, end)),
         })), [key, begin, end]),
-        `us-pnl:${key}:${begin}:${end}`, accounts.length > 0,
+        `us-pnl:${key}:${begin}:${end}:m${mode}`, accounts.length > 0,
     );
     if (accounts.length === 0) return null;
     const pnlRows = flatten(data?.pnl ?? []);
@@ -356,7 +358,8 @@ export function UsTodayPnlSection({ accounts }: { accounts: Account[] }) {
     } else if (failed && rows.length === 0) {
         body = <AccountQueryFailure what='美股損益' error={failureText(data)} kind={failureKind(accountErrors)} onRetry={retry} />;
     } else if (rows.length === 0) {
-        body = <span className={dock.acctHint}>今日無美股已實現損益</span>;
+        // 部分帳戶失敗：失敗的帳戶可能有今日損益，不能說「今日無」；只顯示下方的部分失敗提示
+        body = partial ? null : <span className={dock.acctHint}>今日無美股已實現損益</span>;
     } else {
         body = (
             <>

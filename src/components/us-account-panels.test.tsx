@@ -103,6 +103,21 @@ it('shows realized P&L with an expandable FIFO detail labelled as whole-order fe
     expect(t).toContain('2026-11-03');
 });
 
+it('30-day P&L does not keep the other server mode\'s summary (same address)', async () => {
+    m.pnl.mockResolvedValue([{ account_type: 'H', detail_id: 'D1', code: 'AAPL', direction: 'Sell', date: '2026-11-17', quantity: '5', price: '231.2', cost: '1100', pnl: '56', pnl_pct: '5.09', currency: 'USD', base_currency: 'USD' }]);
+    m.dividends.mockResolvedValue([]);
+    await mount(createElement(UsRealizedPnlSection, { accounts: [acct()] }));
+    expect(all()).toContain('已實現損益合計+56.00 USD');
+    m.pnl.mockResolvedValue([]);
+    await act(async () => {
+        observeServerInfo(beginServerInfoRequest(), { simulation: seq % 2 === 0 } as never);
+        await new Promise(r => setTimeout(r, 0));
+    });
+    await act(async () => { await new Promise(r => setTimeout(r, 0)); });
+    expect(m.pnl).toHaveBeenCalledTimes(2);
+    expect(all()).not.toContain('+56.00 USD');
+});
+
 it('P&L section also shows the not-yet-open state instead of errors', async () => {
     m.pnl.mockRejectedValue(unavailable());
     m.dividends.mockRejectedValue(unavailable());
@@ -385,5 +400,16 @@ describe('UsTodayPnlSection', () => {
         await mount(createElement(UsTodayPnlSection, { accounts: [acct(), acct(H2)] }));
         const t = all();
         expect(t.match(/美股帳務服務尚未開放/g)).toHaveLength(1);
+    });
+
+    it('does not claim 「今日無」 when one account is empty and another failed with no earlier rows', async () => {
+        m.pnl.mockImplementation(async (a: typeof H) => {
+            if (a.account_id.startsWith('0000002')) throw new Error('502 UPSTREAM_ERROR');
+            return [];
+        });
+        await mount(createElement(UsTodayPnlSection, { accounts: [acct(), acct(H2)] }));
+        const t = all();
+        expect(t).not.toContain('今日無美股已實現損益');
+        expect(t).toContain(US_PARTIAL_FAILURE);
     });
 });
