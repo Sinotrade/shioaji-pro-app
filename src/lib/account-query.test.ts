@@ -4,6 +4,8 @@ import type { Account } from './types/portfolio';
 const m = vi.hoisted(() => ({ accounts: [] as Account[], base: 'http://query.invalid', fetch: vi.fn() }));
 vi.mock('./account-store', () => ({ getAccountState: () => ({ accounts: m.accounts }), accountFor: (type: string) => m.accounts.find(a => a.account_type === type) }));
 vi.mock('./runtime', () => ({ getApiBase: () => m.base, isTauri: false }));
+// 權證表預載（#409）另測（warrant-preload.test.ts）；這裡只看帳務查詢本身
+vi.mock('./warrant-preload', () => ({ ensureWarrantContracts: () => Promise.resolve(), warrantContractsReady: () => true }));
 import { createAccountQuery } from './account-query';
 import * as api from './shioaji';
 import { beginServerInfoRequest, forgetServerInfo, observeServerInfo } from './server-info-store';

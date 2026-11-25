@@ -75,6 +75,7 @@ import { contractMarket } from './contract-market';
 import { todayStr } from './utils/date';
 import { profitLossCacheKey, withProfitLossCache } from './profit-loss-cache-lock';
 import { usLinkKey } from './contract-key';
+import { ensureWarrantContracts, warrantContractsReady } from './warrant-preload';
 import { US_QUOTE_TYPES, usSubscriptionBody } from './us/us-quotes';
 import { isUsTickFullRejection, noteUsTickFullRejected, rememberedUsTickWire, rememberUsTickWire, usTickWire } from './us/us-tick-wire';
 
@@ -1336,9 +1337,13 @@ export function fetchTrades(
     accountType: AccountTypeName,
     account?: AccountSelector,
     options?: FetchTradesOptions,
-) {
-    return accountQueryPost<Trade[]>('/api/v1/order/trades', accountType, account,
+): Promise<Trade[]> {
+    const query = () => accountQueryPost<Trade[]>('/api/v1/order/trades', accountType, account,
         options?.refresh === undefined ? {} : { refresh: options.refresh });
+    // 證券帳戶：這個 sidecar 第一次查委託成交前先載入權證合約表，權證委託才會
+    // 標 WRT（#409）；載過之後照原本同步送出
+    if (accountType === 'S' && !warrantContractsReady()) return ensureWarrantContracts().then(query);
+    return query();
 }
 
 /** Shioaji 1.7.6+: health of the sidecar's process-local Trade cache for one
