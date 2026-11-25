@@ -237,7 +237,7 @@ const buttonBase = style({
     selectors: { '&:focus-visible': ring, '&:disabled': { opacity: 0.5, cursor: 'default' } },
 });
 export const primary = style([buttonBase, {
-    minHeight: 56, fontSize: '1.06em', fontWeight: 750,
+    minHeight: 64, fontSize: '1.42em', fontWeight: 750,
     border: `1px solid ${g.accent}`, background: g.accent, color: g.onAccent,
     selectors: { '&:hover:not(:disabled)': { filter: 'brightness(1.08)' } },
 }]);
