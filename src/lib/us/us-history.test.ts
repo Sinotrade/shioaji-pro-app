@@ -18,7 +18,11 @@ import {
     resetUsHistoryForTest,
     sdkHasUsHistory,
     splitDateRange,
+    US_EXTENDED_KBAR_SESSIONS,
+    US_TAPE_SESSIONS,
     usHistoryAvailable,
+    usKbarsBody,
+    usTicksBody,
     usTimeToMs,
 } from './us-history';
 
@@ -243,3 +247,52 @@ describe('availability and fetch', () => {
     });
 });
 
+
+describe('SDK 1.8.0 query params (full / sessions / offset)', () => {
+    const contract = { security_type: 'STK', region: 'US', exchange: 'NASDAQ', code: 'AAPL' };
+    it('builds ticks bodies: US-only params only when given', () => {
+        expect(usTicksBody(AAPL, '2026-11-25')).toEqual({ contract, date: '2026-11-25' });
+        expect(usTicksBody(AAPL, '2026-11-25', { lastCnt: 120, full: false, sessions: US_TAPE_SESSIONS })).toEqual({
+            contract, date: '2026-11-25', query_type: 'LastCount', last_cnt: 120, full: false,
+            sessions: ['PreMarket', 'Regular', 'AfterHours', 'Overnight'],
+        });
+        expect(usTicksBody(AAPL, '2026-11-25', { full: true, offset: 100_000 })).toMatchObject({ full: true, offset: 100_000 });
+        // offset 0 不送
+        expect(usTicksBody(AAPL, '2026-11-25', { offset: 0 })).not.toHaveProperty('offset');
+    });
+    it('builds kbars bodies: regular only by default, 04:00-20:00 sessions when extended', () => {
+        expect(usKbarsBody(AAPL, '2026-11-24', '2026-11-25')).toEqual({ contract, start: '2026-11-24', end: '2026-11-25' });
+        expect(usKbarsBody(AAPL, '2026-11-24', '2026-11-25', true)).toEqual({
+            contract, start: '2026-11-24', end: '2026-11-25', sessions: ['PreMarket', 'Regular', 'AfterHours'],
+        });
+        // 夜盤不在圖表框架、即時也不畫 — 歷史不要
+        expect(US_EXTENDED_KBAR_SESSIONS).not.toContain('Overnight');
+    });
+    it('sends full and sessions on fetchUsTicks', async () => {
+        m.post.mockResolvedValueOnce({ ts: [], close: [], volume: [] });
+        await fetchUsTicks(AAPL, '2026-11-25', { lastCnt: 120, full: true, sessions: US_TAPE_SESSIONS });
+        expect(m.post.mock.calls[0]![1]).toMatchObject({ full: true, sessions: [...US_TAPE_SESSIONS] });
+    });
+    it('marks extended kbars as real history only when the sidecar returns a Session column', async () => {
+        const k = { datetime: ['2026-11-24T09:01:00'], Open: [1], High: [1], Low: [1], Close: [1], Volume: [1], Amount: [0] };
+        // 1.8.0 dev：帶 sessions → 回 Session 欄
+        m.post.mockResolvedValueOnce({ ...k, Session: ['PreMarket'] });
+        const ext = await fetchUsKbars(AAPL, '2026-11-24', '2026-11-24', { extended: true });
+        expect(m.post.mock.calls[0]![1]).toMatchObject({ sessions: ['PreMarket', 'Regular', 'AfterHours'] });
+        expect(ext.extendedHistory).toBe(true);
+        expect(ext[0]!.time).toBe(wall('2026-11-24T04:01:00'));
+        // ≤1.8.0b3：忽略 sessions、只回一般盤（沒有 Session 欄）
+        m.post.mockResolvedValueOnce(k);
+        expect((await fetchUsKbars(AAPL, '2026-11-24', '2026-11-24', { extended: true })).extendedHistory).toBe(false);
+        // 一般盤：不送 sessions，也不標
+        m.post.mockResolvedValueOnce({ ...k, Session: ['Regular'] });
+        const reg = await fetchUsKbars(AAPL, '2026-11-24', '2026-11-24');
+        expect(m.post.mock.calls[2]![1]).not.toHaveProperty('sessions');
+        expect(reg.extendedHistory).toBeUndefined();
+    });
+    it('needs every chunk of a long range to honor sessions', async () => {
+        const k = (dt: string, session: boolean) => ({ datetime: [dt], Open: [1], High: [1], Low: [1], Close: [1], Volume: [1], ...(session ? { Session: ['Regular'] } : {}) });
+        m.post.mockResolvedValueOnce(k('2026-09-01T14:31:00', true)).mockResolvedValueOnce(k('2026-10-01T14:31:00', false));
+        expect((await fetchUsKbars(AAPL, '2026-09-01', '2026-10-15', { extended: true })).extendedHistory).toBe(false);
+    });
+});

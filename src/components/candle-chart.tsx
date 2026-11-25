@@ -301,8 +301,11 @@ export function CandleChart({
         (onSessionModeChange ? propMode : localSessionMode) ?? 'all';
     const canDayOnly = supportsSessionSplit(contract as SessionContractLike);
     const dayOnly = canDayOnly && sessionPick === 'day';
-    // 美股含盤前盤後：盤前盤後沒有歷史，只畫 App 開著時收到的成交
+    // 美股含盤前盤後：歷史帶 sessions 查盤前盤後（舊 sidecar 沒有，退回只畫
+    // App 開著時收到的成交）
     const usExtended = usContract && sessionPick === 'ext';
+    // 含盤前盤後但 sidecar 沒給延長時段歷史（≤1.8.0b3）：提示只有即時
+    const [usExtLiveOnly, setUsExtLiveOnly] = useState(false);
     // 載入／即時判斷用的時段鍵（全盤、僅日盤、美股含盤前盤後）
     const sessionKey = dayOnly ? 'day' : usExtended ? 'ext' : 'all';
     const pickSessionMode = (m: ChartSessionMode) => {
@@ -352,8 +355,10 @@ export function CandleChart({
               active: !usExtended,
               label: '一般盤',
               title: usExtended
-                  ? '美東時間・含盤前盤後 04:00–20:00：盤前盤後沒有歷史資料，只畫 App 開著時收到的成交 — 點擊改回只看一般盤'
-                  : '美東時間・只看一般盤 09:30–16:00 — 點擊改為含盤前盤後（盤前盤後只有 App 開著時收到的成交）',
+                  ? usExtLiveOnly
+                      ? '美東時間・含盤前盤後 04:00–20:00：這個 SDK 版本沒有盤前盤後歷史，只畫 App 開著時收到的成交 — 點擊改回只看一般盤'
+                      : '美東時間・含盤前盤後 04:00–20:00 — 點擊改回只看一般盤'
+                  : '美東時間・只看一般盤 09:30–16:00 — 點擊改為含盤前盤後 04:00–20:00',
               next: usExtended ? 'all' : 'ext',
           }
         : {
@@ -1092,7 +1097,7 @@ export function CandleChart({
                 dateStrOffset(oldestDay + 1),
                 // 長區間翻頁量大 — 放寬 timeout，timeout 誤計 dryPages
                 // 會讓無限捲動提早罷工
-                { timeoutMs: 30_000 },
+                { timeoutMs: 30_000, usExtended },
             )
                 .then((k) => {
                     if (cancelled || loadedKeyRef.current !== loadKey) return;
@@ -1138,13 +1143,16 @@ export function CandleChart({
         fetchChartHistory(contract, dateStrOffset(tf.days), dateStrOffset(0), {
             revision: historySeq,
             timeoutMs: 30_000, // 大週期初載可達數十天，不能用 10s
+            usExtended,
         })
             .then((k) => {
                 if (cancelled || !candleSeriesRef.current) return;
-                // 美股含盤前盤後：一般盤歷史接上記憶體裡的盤前盤後 1 分 K
-                //（兩者的分鐘標籤不重疊：一般盤 09:31–16:00）
+                // 美股含盤前盤後：SDK 1.8.0 起歷史本身就含盤前盤後（kbars 帶
+                // sessions）。舊 sidecar 只回一般盤時，接上記憶體裡 App 開著時
+                // 收到的盤前盤後 1 分 K（兩者的分鐘標籤不重疊：一般盤 09:31–16:00）
                 const regular = toRaw(k);
-                const raw = usExtended ? mergeCandlesByTime(regular, getUsExtendedBars(quoteKey)) : regular;
+                setUsExtLiveOnly(usExtended && !k.usExtendedHistory);
+                const raw = usExtended && !k.usExtendedHistory ? mergeCandlesByTime(regular, getUsExtendedBars(quoteKey)) : regular;
                 const bars = aggregate(raw, tf.minutes);
                 if (bars.length === 0) {
                     clearSeries();
@@ -1211,7 +1219,8 @@ export function CandleChart({
         }
         const series = candleSeriesRef.current;
         if (!series) return;
-        priceFmtRef.current.sync(contract, price);
+        // 只加量的成交（美股零股等）價格不入圖，也不拿來決定價格精度
+        if (!trade.volumeOnly) priceFmtRef.current.sync(contract, price);
         const label = candleMinuteLabel(kind, tickTime);
         // 僅日盤：夜盤/盤外成交不入圖（與歷史濾法同一套 label 判斷）
         if (dayOnly && !isDaySessionLabel(kind, label)) return;
@@ -1223,7 +1232,7 @@ export function CandleChart({
         // live 桶與歷史尾端出現 3 個桶以上的斷層（換時段/上游資料晚發布）
         // → 排程一次歷史補抓把洞補起來；live 桶照常先畫，補抓完成後
         // 整段重建。120s 節流避免上游持續缺料時反覆打
-        // 美股含盤前盤後：盤前盤後本來就沒有歷史、成交稀疏，隔很久才一筆是常態，不補抓
+        // 美股含盤前盤後：盤前盤後成交稀疏，隔很久才一筆是常態，不補抓
         const usExtendedOnly =
             kind === 'US_EXT' && !isUsRegularLabel(label);
         if (
@@ -1237,7 +1246,7 @@ export function CandleChart({
         }
         // 比尾端舊的桶（亂序或晚到的成交）丟掉：舊 K 棒已含在歷史裡，
         // 尾端也不能動
-        const merged = mergeTradeIntoBars(barsRef.current, tail, bucket, price, volume);
+        const merged = mergeTradeIntoBars(barsRef.current, tail, bucket, price, volume, trade.volumeOnly);
         if (!merged) return;
         const bar = merged.bar;
         if (merged.kind === 'new') setDataVersion((v) => v + 1);
@@ -1277,8 +1286,8 @@ export function CandleChart({
         if (trade) applyTradeRef.current(trade);
     }, [liveQuote, quote?.tick?.volume, quoteKey, isUs, tf.minutes, dayOnly]);
     // 美股：每筆成交（recordUsTick 的通知，帶 session 與單筆量）只併一般盤
-    // ＋收盤競價 — 歷史 1 分 K 只有這段，盤前／盤後的零星成交混進來會畫出
-    // 孤立的 K 棒
+    // ＋收盤競價；選了含盤前盤後才另併盤前／盤後（與歷史查的時段一致）。
+    // 零股、特殊條件成交只加量（usChartTrade 的 volumeOnly）
     useEffect(() => {
         if (!isUs) return;
         return subscribeUsSessionTicks(quoteKey, () => {
@@ -2346,8 +2355,9 @@ export function CandleChart({
                         {sessionBtn.label}
                     </button>
                 )}
-                {usExtended && (
-                    // 盤前盤後沒有歷史：明白標出來，不讓人以為圖上就是完整的盤前盤後
+                {usExtended && usExtLiveOnly && (
+                    // SDK 沒回盤前盤後歷史時才標：明白標出來，不讓人以為圖上就是完整的盤前盤後；
+                    // 有歷史（usExtendedHistory）就不顯示，同 intraday-chart
                     <span
                         className={styles.tfBtn.normal}
                         style={{ cursor: 'default' }}

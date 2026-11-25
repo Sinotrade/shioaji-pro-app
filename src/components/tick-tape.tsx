@@ -4,11 +4,13 @@ import { retainQuote } from '../lib/quote-ownership';
 // Times show full microsecond precision (HH:MM:SS.ffffff).
 // Big lots (≥3× the rolling average of visible rows) are highlighted.
 //
-// 美股（region US）走同一個元件：歷史是最近一個有成交的美東交易日（只有
-// 一般盤），即時逐筆含盤前／盤後；時間是美東時間，跨日標日期分隔。資料
-// 轉接見 lib/us/us-tape.ts。
+// 美股（region US）走同一個元件：歷史是最近一個有成交的美東交易日（SDK
+// 1.8.0 起含盤前／盤後／夜盤；舊 sidecar 只有一般盤），即時逐筆含盤前／盤後；
+// 歷史與即時用同一個成交種類（漏斗鈕，切換時重抓歷史）。時間是美東時間，
+// 跨日標日期分隔。資料轉接見 lib/us/us-tape.ts。
 
-import { memo, useEffect, useMemo, useState } from 'react';
+import { Funnel } from 'lucide-react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { contractLinkKey } from '../lib/contract-key';
 import { fetchLastTicks } from '../lib/shioaji';
 import { onAnyTick } from '../lib/stream';
@@ -17,12 +19,14 @@ import type { HistoryTicks } from '../lib/types/tick';
 import { fmtUsPrice } from '../lib/us/decimal';
 import { isUsHistoryUnavailable, nyDateStr } from '../lib/us/us-history';
 import { getUsTickMeta, subscribeUsSessionTicks } from '../lib/us/us-quotes';
+import { setUsTickDetail, useUsTickDetail } from '../lib/us/us-tick-prefs';
 import {
     loadUsTapeHistory,
     mergeUsTape,
     nextTapeRowId,
     usTapeDayBreaks,
     usTapeRowFromMeta,
+    usTapeRowShown,
     usTapeRowsFromHistory,
     type TapeRow,
 } from '../lib/us/us-tape';
@@ -30,6 +34,7 @@ import { fmtInt, fmtPrice } from '../lib/utils/format';
 import { dateStrOffset } from '../lib/utils/kbars';
 import { AsyncStatus } from './async-status';
 import * as panel from './panel.css';
+import * as chrome from './panel-chrome.css';
 import * as styles from './tick-tape.css';
 
 const MAX_ROWS = 120;
@@ -96,6 +101,28 @@ const TapeRowView = memo(function TapeRowView({
     );
 });
 
+/**
+ * 美股成交明細標題列的過濾鈕（lucide Funnel）：與 設定 → 行情「美股成交資料」同一個設定。
+ * 亮著（預設）＝一般成交（Tick，有過濾）；點掉＝完整成交（TickFull，含碎股與特殊條件成交）。
+ */
+export function UsTickDetailToggle() {
+    const filtered = useUsTickDetail() !== 'TickFull';
+    return (
+        <button
+            type='button'
+            className={chrome.iconToggleBtn[filtered ? 'on' : 'off']}
+            aria-label='只看一般成交'
+            aria-pressed={filtered}
+            title={filtered
+                ? '一般成交：正規盤會更新最新價的成交，加上盤前、盤後、夜盤的整股成交（點擊取消過濾，看完整成交）'
+                : '完整成交：含碎股與特殊條件成交的每一筆（點擊改回一般成交）'}
+            onClick={() => setUsTickDetail(filtered ? 'TickFull' : 'Tick')}
+        >
+            <Funnel size={11} aria-hidden />
+        </button>
+    );
+}
+
 export function TickTape({ contract }: { contract: ContractBase }) {
     const isUs = contract.region === 'US';
     const [rows, setRows] = useState<TapeRow[]>([]);
@@ -104,6 +131,14 @@ export function TickTape({ contract }: { contract: ContractBase }) {
     // 美股：這個 SDK 沒有美股歷史成交（舊版）— 只列開啟後的逐筆
     const [historyUnavailable, setHistoryUnavailable] = useState(false);
     const [retrySeq, setRetrySeq] = useState(0);
+
+    // 美股：歷史與即時訂閱用同一個成交種類（漏斗鈕）；切換時重抓歷史（即時
+    // 訂閱由 stream.ts 改訂），兩邊才一致。台股不看這個設定
+    const usDetail = useUsTickDetail();
+    const historyDetail = isUs ? usDetail : null;
+    // 即時列依目前設定過濾（listener 不隨設定重掛）
+    const usDetailRef = useRef(usDetail);
+    usDetailRef.current = usDetail;
 
     // history preload, then live stream on top
     useEffect(() => {
@@ -114,7 +149,7 @@ export function TickTape({ contract }: { contract: ContractBase }) {
         setHistoryUnavailable(false);
 
         const history: Promise<(live: TapeRow[]) => TapeRow[]> = isUs
-            ? loadUsTapeHistory(contract, MAX_ROWS).then((ticks) => {
+            ? loadUsTapeHistory(contract, MAX_ROWS, historyDetail ?? 'Tick').then((ticks) => {
                   const hist = usTapeRowsFromHistory(ticks, MAX_ROWS);
                   // 載入期間的即時列可能與歷史重疊 — 同價同量、時間差 ≤1 µs 去重
                   return (live: TapeRow[]) => mergeUsTape(live, hist, MAX_ROWS);
@@ -148,7 +183,13 @@ export function TickTape({ contract }: { contract: ContractBase }) {
             .finally(() => {
                 if (!cancelled) setLoading(false);
             });
+        return () => {
+            cancelled = true;
+        };
+    }, [contract, isUs, historyDetail, retrySeq]);
 
+    // 即時逐筆：與歷史分開，切換成交種類只重抓歷史，不重新訂閱
+    useEffect(() => {
         const releaseQuote = retainQuote(contract, 'Tick');
         const push = (row: TapeRow) => {
             setHistoryError(false);
@@ -161,7 +202,10 @@ export function TickTape({ contract }: { contract: ContractBase }) {
             ? subscribeUsSessionTicks(key, () => {
                   const meta = getUsTickMeta(key);
                   if (!meta || !(meta.volume > 0)) return;
-                  push(usTapeRowFromMeta(meta));
+                  const row = usTapeRowFromMeta(meta);
+                  // 一般成交：改訂完成前 TickFull 多出來的成交不列
+                  if (!usTapeRowShown(row, usDetailRef.current)) return;
+                  push(row);
               })
             : onAnyTick((tick) => {
                   if (tick.code !== contract.code) return;
@@ -174,11 +218,10 @@ export function TickTape({ contract }: { contract: ContractBase }) {
                   });
               });
         return () => {
-            cancelled = true;
             off();
             releaseQuote();
         };
-    }, [contract, isUs, retrySeq]);
+    }, [contract, isUs]);
 
     // big-lot threshold from the rolling average of visible rows
     const bigThreshold = useMemo(() => {

@@ -297,6 +297,16 @@ describe('CandleChart US session (一般盤／含盤前盤後)', () => {
         expect(onSessionModeChange).toHaveBeenCalledWith('all'); // all 是預設，spec 省略後仍是一般盤
     });
 
+    it('extended hours with SDK extended history: no 盤前盤後僅即時 note', async () => {
+        vi.setSystemTime(new Date('2026-11-19T21:40:00Z'));
+        fetchMock.mockResolvedValue({ ...kbars([['2026-11-19T15:50:00', '2026-11-19T16:00:00', () => 352]]), usExtendedHistory: true });
+        const r = mount({ contract: aapl, interval: '1m', sessionMode: 'ext', onSessionModeChange: () => {} });
+        await flush();
+        expect(toggle(r).props['aria-pressed']).toBe(false);
+        expect(r.root.findAll((n) => n.props['data-testid'] === 'us-extended-note')).toHaveLength(0);
+        expect(toggle(r).props.title).not.toContain('沒有盤前盤後歷史');
+    });
+
     it('paging older history uses the regular-history boundary, not an older extended bar in the cache', async () => {
         vi.setSystemTime(new Date('2026-11-19T21:40:00Z'));
         // 記憶體裡有上週五（11/13）的盤前成交，比第一頁歷史還早

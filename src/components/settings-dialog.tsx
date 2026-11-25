@@ -1,9 +1,10 @@
 import { canTrade } from '../lib/account-tradable';
 // src/components/settings-dialog.tsx — 統一設定面板：外觀／音效與隱私／
-// 帳號／風控／版面 五分類。原本散在 header 的主題/帳號/版面 popover 全數
+// 帳號／風控／行情／Agent／版面。原本散在 header 的主題/帳號/版面 popover 全數
 // 收斂到這裡；風控「規則」也在此（Kill Switch 留在 header，一鍵可達）。
 
 import {
+    Activity,
     Bot,
     LayoutGrid,
     Palette,
@@ -49,6 +50,7 @@ import {
 } from '../lib/risk';
 import { isTauri } from '../lib/runtime';
 import { setUsPnlSession, useUsPnlSession, type UsPnlSession } from '../lib/us/us-pnl-prefs';
+import { setUsTickDetail, useUsTickDetail, type UsTickDetail } from '../lib/us/us-tick-prefs';
 import { setSoundEnabled, soundEnabled } from '../lib/sounds';
 import {
     setThemeSettings,
@@ -108,6 +110,7 @@ type SettingsTab =
     | 'soundPrivacy'
     | 'accounts'
     | 'risk'
+    | 'quotes'
     | 'agent'
     | 'layout';
 
@@ -116,11 +119,17 @@ const US_PNL_SESSION_OPTIONS: { key: UsPnlSession; label: string; title: string 
     { key: 'regular', label: '只用一般盤', title: '只用一般盤（09:30–16:00 美東）成交計價；延長時段不更新' },
 ];
 
+const US_TICK_DETAIL_OPTIONS: { key: UsTickDetail; label: string; desc: string }[] = [
+    { key: 'Tick', label: '一般成交（預設）', desc: '正規盤會更新最新價的成交，加上盤前、盤後、夜盤的整股成交。' },
+    { key: 'TickFull', label: '完整成交', desc: '另外包含碎股與特殊條件成交的每一筆，資料量較大。' },
+];
+
 const TABS: { key: SettingsTab; label: string; icon: React.ReactNode }[] = [
     { key: 'appearance', label: '外觀', icon: <Palette size={13} /> },
     { key: 'soundPrivacy', label: '音效與隱私', icon: <Volume2 size={13} /> },
     { key: 'accounts', label: '帳號', icon: <UserRound size={13} /> },
     { key: 'risk', label: '風控', icon: <ShieldAlert size={13} /> },
+    { key: 'quotes', label: '行情', icon: <Activity size={13} /> },
     { key: 'agent', label: 'Agent', icon: <Bot size={13} /> },
     { key: 'layout', label: '版面', icon: <LayoutGrid size={13} /> },
 ];
@@ -611,6 +620,34 @@ function RiskSection() {
     );
 }
 
+export function QuotesSection() {
+    const detail = useUsTickDetail();
+    return (
+        <>
+            <span className={hud.settingLabel} id='us-tick-detail-label'>美股成交資料</span>
+            <div className={styles.radioList} role='radiogroup' aria-labelledby='us-tick-detail-label'>
+                {US_TICK_DETAIL_OPTIONS.map((o) => (
+                    <button
+                        key={o.key}
+                        type='button'
+                        role='radio'
+                        aria-checked={detail === o.key}
+                        className={styles.radioItem[detail === o.key ? 'on' : 'off']}
+                        onClick={() => setUsTickDetail(o.key)}
+                    >
+                        <span className={styles.radioDot[detail === o.key ? 'on' : 'off']} aria-hidden />
+                        <span className={styles.radioTitle}>{o.label}</span>
+                        <span className={styles.radioDesc}>{o.desc}</span>
+                    </button>
+                ))}
+            </div>
+            <span className={hud.emptyHint}>
+                切換後立即套用到目前訂閱中的美股，不必重新啟動；成交明細面板標題列的漏斗鈕是同一個設定（亮著＝一般成交）。
+            </span>
+        </>
+    );
+}
+
 function AgentSection() {
     const [enabled, setEnabled] = useState(isAgentHarnessEnabled());
     const [busy, setBusy] = useState(false);
@@ -784,6 +821,7 @@ export function SettingsDialog({
                         {tab === 'soundPrivacy' && <SoundPrivacySection />}
                         {tab === 'accounts' && <AccountsSection />}
                         {tab === 'risk' && <RiskSection />}
+                        {tab === 'quotes' && <QuotesSection />}
                         {tab === 'agent' && <AgentSection />}
                         {tab === 'layout' && (
                             <LayoutSection {...layoutProps} onClose={onClose} />

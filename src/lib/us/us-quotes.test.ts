@@ -123,3 +123,23 @@ describe('US extended-hours bars (live only)', () => {
         expect(getUsExtendedBars('US:NEW')).toHaveLength(1);
     });
 });
+
+describe('extended-hours memory bars follow the TICL price definition', () => {
+    beforeEach(() => resetUsQuotesForTest());
+    it('odd lots only add volume', () => {
+        const ms = (h: number, m: number, sec = 0) => Date.UTC(2026, 10, 18, h + 5, m, sec);
+        const rec = (h: number, m: number, price: string, volume: number, oddLot: boolean) =>
+            recordUsTick({ key: 'US:AAPL', price, session: 'PreMarket', freshness: null, ts: ms(h, m, 10), tsUs: ms(h, m, 10) * 1000, volume, updatesLast: false, oddLot });
+        rec(4, 0, '10', 100, true); // 還沒有整股成交：零股不開 K 棒
+        expect(getUsExtendedBars('US:AAPL')).toEqual([]);
+        rec(4, 0, '10', 100, false);
+        rec(4, 0, '12', 3, true);
+        rec(4, 1, '9', 2, true);
+        const bars = getUsExtendedBars('US:AAPL');
+        expect(bars.map(b => [b.open, b.high, b.low, b.close, b.volume])).toEqual([[10, 10, 10, 10, 103], [10, 10, 10, 10, 2]]);
+        // 零股開的那一分：第一筆整股成交到了，開高低收改從它開始
+        rec(4, 1, '11', 5, false);
+        rec(4, 1, '10.5', 1, false);
+        expect(getUsExtendedBars('US:AAPL').at(-1)).toMatchObject({ open: 11, high: 11, low: 10.5, close: 10.5, volume: 8 });
+    });
+});

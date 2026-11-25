@@ -23,7 +23,17 @@ import {
     registerCapabilitySubscription,
     registerSubscription,
     registerSubscriptionRaw,
+    getRegisteredSubscription,
+    resubscribeUsTicks,
     retainUsQuoteStreams,
+    withUsTickLock,
+    withStreamTimeout,
+    ensureUsTickKind,
+    isDefiniteStreamFailure,
+    dropUsTickKind,
+    otherUsTickKind,
+    scheduleUsTickReconcile,
+    setUsTickReconcile,
     unregisterCapabilitySubscription,
     unregisterSubscription,
 } from './stream';
@@ -65,7 +75,9 @@ import { contractMarket } from './contract-market';
 import { todayStr } from './utils/date';
 import { profitLossCacheKey, withProfitLossCache } from './profit-loss-cache-lock';
 import { usLinkKey } from './contract-key';
-import { usSubscriptionBody } from './us/us-quotes';
+import { ensureWarrantContracts, warrantContractsReady } from './warrant-preload';
+import { US_QUOTE_TYPES, usSubscriptionBody } from './us/us-quotes';
+import { isUsTickFullRejection, noteUsTickFullRejected, rememberedUsTickWire, rememberUsTickWire, usTickWire } from './us/us-tick-wire';
 
 export interface ServerInfo {
     name: string;
@@ -486,23 +498,125 @@ export interface QuoteSubscribeOptions {
 // 美股訂閱期間保持獨立的美股 SSE（key：US:CODE:quoteType）
 const usStreamHolds = new Map<string, () => void>();
 
+type UsQuoteType = (typeof US_QUOTE_TYPES)[number];
+
+async function postUsSubscription(path: 'subscribe' | 'unsubscribe', body: ReturnType<typeof usSubscriptionBody>, failure: string) {
+    // 逾時＝結果不確定（見 stream.ts withStreamTimeout）；success=false 是 sidecar 明確拒絕
+    const response = await withStreamTimeout(apiPost<SubscriptionResponse>(`/api/v1/stream/${path}`, body));
+    if (!response.success) throw Object.assign(new Error(response.message || failure), { streamRejected: true as const });
+    return response;
+}
+
+/**
+ * 美股訂閱：Tick 依設定（us-tick-prefs）與 sidecar 能力送 Tick 或 TickFull；registry 記要訂的 body
+ * （重連照它重播），sessionStorage 也記一份（重新整理後退訂／換種類用）。同一商品已經用另一種訂著
+ * （本頁或上一次載入）或要對帳時先退掉另一種；退不掉就不訂新的，避免 Tick 與 TickFull 同時在。
+ * 訂閱結果不確定（逾時、沒收到回應）時照樣登記並回成功：之後由對帳補訂，關閉時也找得到它來退。
+ */
+async function subscribeUsQuote(contract: ContractBase, quoteType: UsQuoteType): Promise<SubscriptionResponse> {
+    const key = usLinkKey(contract.code);
+    const holdKey = `${key}:${quoteType}`;
+    if (quoteType !== 'Tick') {
+        const body = usSubscriptionBody(contract, quoteType);
+        const response = await postUsSubscription('subscribe', body, '美股行情訂閱失敗');
+        registerSubscriptionRaw(key, quoteType, body);
+        if (!usStreamHolds.has(holdKey)) usStreamHolds.set(holdKey, retainUsQuoteStreams());
+        return response;
+    }
+    // 同一商品的逐筆操作排隊（見 stream.ts withUsTickLock），registry 才會是實際種類
+    return withUsTickLock(holdKey, async () => {
+        const base = getApiBase();
+        const before = getRegisteredSubscription(key, 'Tick');
+        const registered = before?.quote_type;
+        const current = registered === 'Tick' || registered === 'TickFull' ? registered : undefined;
+        let sent = false;
+        try {
+            const { wire, response } = await ensureUsTickKind({
+                key: holdKey, base, present: [current, rememberedUsTickWire(base, key)], wanted: usTickWire(),
+                post: (path, kind) => postUsSubscription(path, usSubscriptionBody(contract, kind),
+                    path === 'subscribe' ? '美股行情訂閱失敗' : '取消行情訂閱失敗'),
+                beforeSubscribe: (kind) => {
+                    sent = true;
+                    registerSubscriptionRaw(key, 'Tick', usSubscriptionBody(contract, kind));
+                    if (!usStreamHolds.has(holdKey)) usStreamHolds.set(holdKey, retainUsQuoteStreams());
+                },
+            });
+            // 訂閱途中使用者切換了美股成交資料設定：那一輪改訂看不到這筆，補跑一次
+            if (usTickWire() !== wire) void resubscribeUsTicks();
+            return response;
+        } catch (e) {
+            if (sent && !isDefiniteStreamFailure(e)) {
+                // 訂閱可能已送達：留著登記（關閉時會退、對帳會補訂），對呼叫端算訂上了
+                scheduleUsTickReconcile();
+                return { success: true, message: '美股行情訂閱結果未確認，稍後自動確認' } as SubscriptionResponse;
+            }
+            if (sent && !before) {
+                // 確定沒訂上、之前也沒有：收回這次的登記
+                unregisterSubscription(key, 'Tick');
+                usStreamHolds.get(holdKey)?.();
+                usStreamHolds.delete(holdKey);
+                rememberUsTickWire(base, key, null);
+                setUsTickReconcile(holdKey, false, base);
+            } else if (before) {
+                scheduleUsTickReconcile();
+            }
+            throw e;
+        }
+    });
+}
+
+/**
+ * 美股退訂：Tick 與 TickFull 兩種都退（sidecar 對沒訂的退訂回 200，冪等），兩種都 2xx 才清掉
+ * 登記、記錄與 SSE hold；任何一種失敗就整筆留著，讓呼叫端（quote-ownership）之後重試。
+ * 舊 sidecar 確定沒有 TickFull 時不送；版本不明時 TickFull 被 400 拒絕也算不在。
+ */
+async function unsubscribeUsQuote(contract: ContractBase, quoteType: UsQuoteType): Promise<SubscriptionResponse> {
+    const key = usLinkKey(contract.code);
+    const holdKey = `${key}:${quoteType}`;
+    if (quoteType !== 'Tick') {
+        const response = await postUsSubscription('unsubscribe', usSubscriptionBody(contract, quoteType), '取消行情訂閱失敗');
+        unregisterSubscription(key, quoteType);
+        usStreamHolds.get(holdKey)?.();
+        usStreamHolds.delete(holdKey);
+        return response;
+    }
+    // 排在同一商品進行中的改訂／訂閱之後
+    return withUsTickLock(holdKey, async () => {
+        const base = getApiBase();
+        const registered = getRegisteredSubscription(key, 'Tick')?.quote_type;
+        const known = registered === 'Tick' || registered === 'TickFull' ? registered : rememberedUsTickWire(base, key);
+        const first = known ?? usTickWire();
+        const post = (path: 'unsubscribe', kind: 'Tick' | 'TickFull') =>
+            postUsSubscription(path, usSubscriptionBody(contract, kind), '取消行情訂閱失敗');
+        try {
+            for (const kind of [first, otherUsTickKind(first)]) await dropUsTickKind(kind, base, post);
+        } catch (e) {
+            // 只退掉一部分（例如 Tick 已退、TickFull 429）：登記還在但實際可能沒有逐筆。
+            // 標記對帳，重新開啟的消費者（ownership 仍視為訂著）或 5 秒後的對帳會補訂要的種類
+            setUsTickReconcile(holdKey, true, base);
+            scheduleUsTickReconcile();
+            throw e;
+        }
+        setUsTickReconcile(holdKey, false, base);
+        rememberUsTickWire(base, key, null);
+        unregisterSubscription(key, quoteType);
+        usStreamHolds.get(holdKey)?.();
+        usStreamHolds.delete(holdKey);
+        return { success: true, message: '' } as SubscriptionResponse;
+    });
+}
+
 export function subscribeQuote(
     contract: ContractBase,
     quoteType: QuoteTypeName,
     options?: QuoteSubscribeOptions,
 ) {
     const oddLot = options?.oddLot === true;
-    // 美股（SDK 1.8.0b1）：只有 Tick／BidAsk，沒有零股分流
+    // 美股：只有 Tick／BidAsk，沒有零股分流。逐筆（Tick）預設訂 Tick（TICL）；使用者選
+    // 「完整成交」時訂 TickFull，舊 sidecar 拒收時退回 Tick（見 us/us-tick-wire.ts）
     if (isUsContract(contract)) {
         if (oddLot || quoteType === 'Quote') return Promise.reject(new Error(US_NO_QUOTES));
-        const body = usSubscriptionBody(contract, quoteType);
-        return apiPost<SubscriptionResponse>('/api/v1/stream/subscribe', body).then((response) => {
-            if (!response.success) throw new Error(response.message || '美股行情訂閱失敗');
-            const holdKey = `${usLinkKey(contract.code)}:${quoteType}`;
-            registerSubscriptionRaw(usLinkKey(contract.code), quoteType, body);
-            if (!usStreamHolds.has(holdKey)) usStreamHolds.set(holdKey, retainUsQuoteStreams());
-            return response;
-        });
+        return subscribeUsQuote(contract, quoteType);
     }
     // 組合商品走巢狀腳訂閱（flat code 如 TXFI6/J6 server 不認）
     const comboMeta = (contract as { combo?: unknown }).combo;
@@ -539,14 +653,7 @@ export function unsubscribeQuote(
     const oddLot = options?.oddLot === true;
     if (isUsContract(contract)) {
         if (oddLot || quoteType === 'Quote') return Promise.resolve({ success: true, message: '' } as SubscriptionResponse);
-        return apiPost<SubscriptionResponse>('/api/v1/stream/unsubscribe', usSubscriptionBody(contract, quoteType)).then((response) => {
-            if (!response.success) throw new Error(response.message || '取消行情訂閱失敗');
-            const holdKey = `${usLinkKey(contract.code)}:${quoteType}`;
-            unregisterSubscription(usLinkKey(contract.code), quoteType);
-            usStreamHolds.get(holdKey)?.();
-            usStreamHolds.delete(holdKey);
-            return response;
-        });
+        return unsubscribeUsQuote(contract, quoteType);
     }
     const comboMeta = (contract as { combo?: unknown }).combo;
     if (comboMeta && !oddLot) {
@@ -1208,8 +1315,7 @@ export interface AccountSelector {
 }
 
 function accountQueryPost<T>(path: string, type: AccountTypeName, selector?: AccountSelector, extra: Record<string, unknown> = {},
-    guard?: () => void): Promise<T> {
-    const query = createAccountQuery();
+    guard?: () => void, query = createAccountQuery()): Promise<T> {
     return query.read(type, selector, account => apiPost<T>(path, {
         ...extra,
         account_type: type,
@@ -1230,9 +1336,20 @@ export function fetchTrades(
     accountType: AccountTypeName,
     account?: AccountSelector,
     options?: FetchTradesOptions,
-) {
-    return accountQueryPost<Trade[]>('/api/v1/order/trades', accountType, account,
-        options?.refresh === undefined ? {} : { refresh: options.refresh });
+): Promise<Trade[]> {
+    // 查詢的伺服器／模式世代在等權證表之前就定下：等待期間換了伺服器，這次查詢作廢
+    // （不會對新伺服器送出沒預載過的查詢、也不會把它的回應當成這次的結果）
+    const generation = createAccountQuery();
+    const base = getApiBase();
+    const query = () => {
+        if (getApiBase() !== base) return Promise.reject(new Error('查詢期間伺服器已變更，已丟棄回應；請重新更新'));
+        return accountQueryPost<Trade[]>('/api/v1/order/trades', accountType, account,
+            options?.refresh === undefined ? {} : { refresh: options.refresh }, undefined, generation);
+    };
+    // 證券帳戶：這個 sidecar 第一次查委託成交前先載入權證合約表，權證委託才會
+    // 標 WRT（#409）；載過之後照原本同步送出
+    if (accountType === 'S' && !warrantContractsReady()) return ensureWarrantContracts().then(query);
+    return query();
 }
 
 /** Shioaji 1.7.6+: health of the sidecar's process-local Trade cache for one
@@ -1258,14 +1375,17 @@ export function fetchPositions(
 }
 
 /** 台股庫存明細（逐筆成交批次）：`detail_id` 是 sidecar 最近一次 position_unit 回傳的列 `id`。
- *  股票的 quantity 由券商以「張」計（SDK 不帶 unit，未滿 1 張的零股會是 0）；期貨為口數。
- *  模擬環境 SDK 直接回空陣列、不送出請求。 */
+ *  股票：`unit: 'Share'`（SDK 1.8.0b2 起支援）時 quantity 是股數；不帶 unit 時券商以「張」計，
+ *  未滿 1 張的零股會是 0。只有確定 sidecar 支援時才帶 unit（見 tw-account-detail.ts）。
+ *  期貨為口數。模擬環境 SDK 直接回空陣列、不送出請求。 */
 export function fetchPositionDetail(
     accountType: 'S' | 'F',
     account: AccountSelector,
     detailId: number,
+    unit?: 'Share',
 ) {
-    return accountQueryPost<unknown>('/api/v1/portfolio/position_detail', accountType, account, { detail_id: detailId });
+    return accountQueryPost<unknown>('/api/v1/portfolio/position_detail', accountType, account,
+        unit ? { detail_id: detailId, unit } : { detail_id: detailId });
 }
 
 export function fetchAccountBalance(account?: AccountSelector) {

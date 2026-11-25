@@ -19,6 +19,7 @@ export function PanelChrome({
     onRemove,
     onPopout,
     link,
+    actions,
     children,
 }: {
     title: string;
@@ -39,6 +40,8 @@ export function PanelChrome({
         onMode: (mode: LinkMode) => void;
         onGroupCode: (group: LinkGroupId, code: string) => void;
     };
+    /** 面板自己的標題列按鈕（例如成交明細的「完整」），放在連動鈕與彈出鈕之間 */
+    actions?: React.ReactNode;
     children?: React.ReactNode;
 }) {
     const group = link && link.mode !== 'main' && link.mode !== 'pin' ? link.mode : null;
@@ -211,6 +214,7 @@ export function PanelChrome({
                         </button>
                     </>
                 ))}
+            {actions}
             {onPopout && (
                 <button
                     className={`${styles.closeBtn} ${styles.popoutBtn}`}

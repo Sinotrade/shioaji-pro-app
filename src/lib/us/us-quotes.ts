@@ -31,7 +31,7 @@ export const US_STREAM_PATHS: Record<string, string> = {
     [US_TICK_EVENT]: '/api/v1/stream/data/us_tick',
     [US_BIDASK_EVENT]: '/api/v1/stream/data/us_bidask',
 };
-/** 美股可訂閱的 quote_type（沒有 Quote） */
+/** 美股可訂閱的 quote_type（沒有 Quote）。App 內一律叫 Tick；送出時依設定可能換成 TickFull（us-tick-wire.ts） */
 export const US_QUOTE_TYPES = ['Tick', 'BidAsk'] as const;
 
 /**
@@ -144,6 +144,10 @@ export interface UsTickMeta {
     totalVolume?: number;
     /** 1 外盤／2 內盤／0 不明 */
     tickType?: number;
+    /** 這筆有沒有更新一般盤最新價（SDK 有送才有；零股、特殊條件成交、延長時段是 false） */
+    updatesLast?: boolean;
+    /** 零股成交（SDK 有送才有） */
+    oddLot?: boolean;
 }
 
 const NY_PARTS = new Intl.DateTimeFormat('en-CA', {
@@ -315,6 +319,8 @@ export function normalizeUsTick(raw: RawUsTick): { tick: SseTick; meta: UsTickMe
             volume: tick.volume,
             totalVolume: tick.total_volume,
             tickType: tick.tick_type,
+            ...(typeof raw.updates_last === 'boolean' ? { updatesLast: raw.updates_last } : {}),
+            ...(typeof raw.odd_lot === 'boolean' ? { oddLot: raw.odd_lot } : {}),
         },
     };
 }
@@ -339,7 +345,7 @@ export function normalizeUsBidAsk(raw: RawUsBidAsk): SseBidAsk | null {
 /** 訂閱 body：與台股同一個 flat 形狀，exchange 決定 region；不帶 intraday_odd */
 export function usSubscriptionBody(
     contract: { code: string; exchange: string | null },
-    quoteType: (typeof US_QUOTE_TYPES)[number],
+    quoteType: (typeof US_QUOTE_TYPES)[number] | 'TickFull',
 ) {
     return {
         security_type: 'STK',
@@ -363,9 +369,10 @@ export function recordUsTick(meta: UsTickMeta) {
 
 // ---- 美股盤前／盤後成交（圖表「含盤前盤後」用） ----
 //
-// SDK 1.8.0b1 的歷史只有一般盤：kbars 只有 09:31–16:00，ticks 只有一般盤＋
-// 收盤競價（16:00:00–16:00:01，session=AfterHours）。盤前、盤後沒有歷史，
-// 只能用 App 開著時收到的即時逐筆。這裡把它們併成 1 分 K 留在記憶體（每個
+// SDK 1.8.0 起 kbars 帶 sessions 就有盤前、盤後的歷史（回應多一個 Session 欄，
+// 見 us-history fetchUsKbars）。更舊的 sidecar（≤1.8.0b3）不認 sessions、只回
+// 一般盤，盤前、盤後只能用 App 開著時收到的即時逐筆 — 這裡是那時的退路：
+// 把它們併成 1 分 K 留在記憶體（每個
 // 商品最多留 US_EXTENDED_KEEP_DAYS 個有成交的美東日期，最多記
 // US_EXTENDED_MAX_SYMBOLS 個商品，超過時丟最久沒更新的），圖表切到「含盤前盤後」
 // 時和一般盤歷史接在一起畫。App 重開前的盤前盤後成交就沒有。
@@ -405,6 +412,21 @@ export function isUsExtendedTrade(session: string | null | undefined, wallSec: n
 }
 
 /**
+ * 這筆成交算不算 K 線的價格（開高低收）：伺服器的美股 1 分 K 由一般成交
+ * （Tick／TICL 的定義）組成 — 一般盤是會更新最新價的成交（updates_last），
+ * 盤前、盤後、夜盤是整股成交；量則另外含零股。完整成交（TickFull）多出來的
+ * 零股與特殊條件成交只加量，不動價格，即時 K 棒才會和重新載入的歷史一致。
+ * 舊 sidecar 不送 updates_last／odd_lot：一律算（b1 的 Tick 就是全部成交）。
+ * 已知差異：延長時段的特殊條件整股成交 TickFull 沒有欄位可分辨，仍會算進價格。
+ */
+export function isUsTiclTrade(meta: Pick<UsTickMeta, 'session' | 'updatesLast' | 'oddLot'>): boolean {
+    if (meta.updatesLast === undefined) return meta.oddLot !== true;
+    if (meta.updatesLast) return true;
+    if (meta.session === 'Regular') return false;
+    return meta.oddLot !== true;
+}
+
+/**
  * 美股成交的 1 分 K 標籤（K 棒結束時間，close-label-right）：
  * - 一般盤 09:30–16:00：ceil，09:30:00 整的開盤成交歸 09:31（與歷史 1 分 K 相同）
  * - 收盤後：一般盤模式 CLOSE_GRACE 內都歸 16:00；含盤前盤後時只有收盤競價那
@@ -435,6 +457,9 @@ export function isUsRegularLabel(label: number): boolean {
 type ExtendedBook = { bars: Map<number, Candle>; days: number[] /* 由舊到新 */ };
 const extendedBars = new Map<string, ExtendedBook>();
 
+/** 只有只加量成交的盤前盤後 K 棒（價格借前一根收盤）；第一筆算價的成交到了改用它的價格 */
+const unpricedExtBars = new WeakSet<Candle>();
+
 function recordUsExtendedTrade(meta: UsTickMeta) {
     if (!(meta.volume > 0)) return;
     const price = Number(meta.price);
@@ -452,14 +477,30 @@ function recordUsExtendedTrade(meta: UsTickMeta) {
     }
     const bars = book.bars;
     const bar = bars.get(label);
+    // 零股、特殊條件成交只加量（見 isUsTiclTrade）；新的一根用前一根的收盤
+    const priced = isUsTiclTrade(meta);
     if (bar) {
         // 收盤取最後抵達的那筆（與即時 K 棒相同）
-        bar.high = Math.max(bar.high, price);
-        bar.low = Math.min(bar.low, price);
-        bar.close = price;
+        if (priced && unpricedExtBars.delete(bar)) {
+            // 這一分第一筆算價的成交：開高低收從它開始，不留借來的收盤
+            bar.open = bar.high = bar.low = bar.close = price;
+        } else if (priced) {
+            bar.high = Math.max(bar.high, price);
+            bar.low = Math.min(bar.low, price);
+            bar.close = price;
+        }
         bar.volume += meta.volume;
     } else {
-        bars.set(label, { time: label, open: price, high: price, low: price, close: price, volume: meta.volume });
+        let p = price;
+        if (!priced) {
+            let prev: Candle | undefined;
+            for (const b of bars.values()) if (b.time < label && (!prev || b.time > prev.time)) prev = b;
+            if (!prev) return;
+            p = prev.close;
+        }
+        const opened: Candle = { time: label, open: p, high: p, low: p, close: p, volume: meta.volume };
+        if (!priced) unpricedExtBars.add(opened);
+        bars.set(label, opened);
         // 只留最近 US_EXTENDED_KEEP_DAYS 個有成交的日期（週末、假日不算）
         const day = Math.floor(label / US_DAY);
         if (!book.days.includes(day)) {

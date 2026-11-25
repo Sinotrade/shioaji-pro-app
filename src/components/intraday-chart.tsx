@@ -33,6 +33,7 @@ import {
     getUsTickMeta,
     knownUsReference,
     getUsExtendedBars,
+    isUsRegularLabel,
     nyDateTime,
     subscribeUsSessionTicks,
 } from '../lib/us/us-quotes';
@@ -124,6 +125,9 @@ interface Readout {
     low: number;
     total: number; // 張/口 — for IND, 成交金額 (yuan)
 }
+
+/** 只有只加量成交的即時那一分（OHLC 借前一筆的價）：第一筆算價的成交到了改用它的價格 */
+const unpricedMinutes = new WeakSet<object>();
 
 const fmtVol = (v: number) =>
     v.toLocaleString('en-US', { maximumFractionDigits: 0 });
@@ -275,7 +279,7 @@ const US_SESSION_MODES: { key: IntradaySessionMode; label: string; title: string
     {
         key: 'ext',
         label: '含盤前盤後',
-        title: '美東時間・盤前 04:00 到盤後 20:00。盤前盤後沒有歷史資料，只畫 App 開著時收到的成交',
+        title: '美東時間・盤前 04:00 到盤後 20:00',
     },
 ];
 
@@ -339,6 +343,8 @@ export function IntradayChart({
     const drawnKeyRef = useRef('');
 
     const [loading, setLoading] = useState(false);
+    // 美股含盤前盤後但 sidecar 沒給延長時段歷史（≤1.8.0b3）：標「僅即時」
+    const [usExtLiveOnly, setUsExtLiveOnly] = useState(false);
     const [empty, setEmpty] = useState(false);
     const [historyError, setHistoryError] = useState(false);
     const [reloadSeq, setReloadSeq] = useState(0);
@@ -1056,15 +1062,18 @@ export function IntradayChart({
         // limits a kbars request to 30 calendar days, so the older chunk starts
         // 29 days back and overlaps the recent query at its boundary.
         const recentStart = dateStrOffset(4);
-        fetchChartHistory(contract, recentStart, dateStrOffset(-1), { revision: historyRevision })
+        const usExtended = sk === 'US_EXT';
+        fetchChartHistory(contract, recentStart, dateStrOffset(-1), { revision: historyRevision, usExtended })
             .then(async (k) => {
                 if (cancelled || !priceSeriesRef.current) return;
                 let all = kbarsToMinBars(k);
-                // 美股參考價一律取一般盤：在併入盤前盤後之前留一份一般盤歷史，
-                // 免得前一天盤後的最後一筆被當成昨收
-                const usRegular = all;
-                // 美股含盤前盤後：一般盤歷史接上記憶體裡的盤前盤後 1 分 K（分鐘標籤不重疊）
-                if (sk === 'US_EXT') all = withUsExtendedBars(all, getUsExtendedBars(quoteKey));
+                // 美股參考價一律取一般盤：只留一般盤的 K 棒（含盤前盤後時歷史本身
+                // 就有延長時段），免得前一天盤後的最後一筆被當成昨收
+                const usRegular = isUs ? all.filter((b) => isUsRegularLabel(b.time)) : all;
+                // 美股含盤前盤後：SDK 1.8.0 起歷史就含盤前盤後（kbars 帶 sessions）；
+                // 舊 sidecar 只回一般盤時接上記憶體裡的盤前盤後 1 分 K（分鐘標籤不重疊）
+                setUsExtLiveOnly(usExtended && !k.usExtendedHistory);
+                if (usExtended && !k.usExtendedHistory) all = withUsExtendedBars(all, getUsExtendedBars(quoteKey));
                 const lastRecent = all[all.length - 1];
                 const needNight = sessionMode === 'night' ||
                     (sessionMode === 'auto' && lastRecent !== undefined &&
@@ -1077,7 +1086,7 @@ export function IntradayChart({
                     if (!lastNight || sessionWindowFor(sk, lastNight.time).start < queryStart) {
                         const older = kbarsToMinBars(await fetchChartHistory(
                             contract, dateStrOffset(29), recentStart,
-                            { revision: historyRevision },
+                            { revision: historyRevision, usExtended },
                         ));
                         if (cancelled || !priceSeriesRef.current) return;
                         // The boundary date is intentionally queried twice.
@@ -1324,7 +1333,8 @@ export function IntradayChart({
     // 判斷過有沒有漏收（美股累計量的定義和走勢的一般盤量不同）
     // opts.sink：補畫載入期間的成交時用 — 圖表更新先收進 sink（每分鐘留最後
     // 一次），呼叫端最後一次畫出
-    type LiveOpts = { t?: number; missed?: boolean; sink?: Map<number, () => void> };
+    // opts.volumeOnly：只加量、不動價格（美股完整成交裡的零股、特殊條件成交，見 isUsTiclTrade）
+    type LiveOpts = { t?: number; missed?: boolean; sink?: Map<number, () => void>; volumeOnly?: boolean };
     type PendingLive = { lq: NonNullable<LiveTick>; tick: SseTick | undefined; index: NonNullable<typeof quote>['index']; opts?: LiveOpts };
     // 回傳 true＝這筆排了一次歷史重載而沒有入圖（補畫時要把它留給下一次載入）
     const processLiveRef = useRef<(lq: NonNullable<LiveTick>, tick: SseTick | undefined, index: NonNullable<typeof quote>['index'], opts?: LiveOpts) => boolean>(() => false);
@@ -1386,7 +1396,11 @@ export function IntradayChart({
             }
             return false;
         }
-        const p = Number(liveQuote.close);
+        const tradeP = Number(liveQuote.close);
+        if (!Number.isFinite(tradeP) || tradeP <= 0) return false;
+        // 只加量：價格沿用目前最新價（伺服器 1 分 K 的開高低收只看一般成交）；
+        // 還沒有最新價就不畫
+        const p = opts?.volumeOnly ? (liveRef.current?.price ?? NaN) : tradeP;
         if (!Number.isFinite(p) || p <= 0) return false;
         // 斷圖 >3 分鐘：僅在 total_volume 顯示真有漏量（睡醒/斷線補洞）
         // 時重載 — 冷門股每隔幾分鐘一筆成交是常態，不該筆筆重載
@@ -1422,10 +1436,14 @@ export function IntradayChart({
             lastLabelRef.current = label;
             minuteVolRef.current = size;
             minOhlcRef.current = { open: p, high: p, low: p, close: p };
+            // 只加量的成交開的這一分：價格是借來的，第一筆算價的成交到了再從它開始
+            if (opts?.volumeOnly) unpricedMinutes.add(minOhlcRef.current);
         } else {
             minuteVolRef.current += size;
             const m = minOhlcRef.current;
-            if (m) {
+            if (m && !opts?.volumeOnly && unpricedMinutes.delete(m)) {
+                m.open = m.high = m.low = m.close = p;
+            } else if (m) {
                 m.high = Math.max(m.high, p);
                 m.low = Math.min(m.low, p);
                 m.close = p;
@@ -1439,7 +1457,7 @@ export function IntradayChart({
             }
         }
         cumVRef.current += vol;
-        cumPVRef.current += p * vol;
+        cumPVRef.current += tradeP * vol;
 
         const tickAvg = Number(tick?.avg_price);
         const avg = isIndex
@@ -1531,7 +1549,7 @@ export function IntradayChart({
                 code: quoteKey, date, time, close: meta.price, open: '', high: '', low: '',
                 volume: meta.volume, total_volume: 0, tick_type: meta.tickType ?? 0, simtrade: false,
             } as SseTick;
-            processLiveRef.current(tick, tick, undefined, { t, missed });
+            processLiveRef.current(tick, tick, undefined, { t, missed, volumeOnly: trade.volumeOnly });
         });
     }, [isUs, quoteKey, sk]);
     // 快照晚到：當天的參考價補上（只在畫的就是快照那個交易日時）
@@ -1588,7 +1606,7 @@ export function IntradayChart({
     const chipLabel =
         sessionLabel ??
         (usContract
-            ? sessionMode === 'ext' ? '含盤前盤後・僅即時' : '一般盤'
+            ? sessionMode === 'ext' ? (usExtLiveOnly ? '含盤前盤後・僅即時' : '含盤前盤後') : '一般盤'
             : sessionMode === 'day'
             ? '日盤'
             : sessionMode === 'night'
@@ -1640,7 +1658,9 @@ export function IntradayChart({
                             title={
                                 usContract
                                     ? sessionMode === 'ext'
-                                        ? `時段：美東含盤前盤後 04:00–20:00（盤前盤後只畫 App 開著時收到的成交）— 點選切換`
+                                        ? usExtLiveOnly
+                                            ? '時段：美東含盤前盤後 04:00–20:00（這個 SDK 版本沒有盤前盤後歷史，只畫 App 開著時收到的成交）— 點選切換'
+                                            : '時段：美東含盤前盤後 04:00–20:00 — 點選切換'
                                         : '時段：美東一般盤 09:30–16:00 — 點選可改為含盤前盤後'
                                     : sessionMode === 'auto'
                                     ? '時段：自動（點選可固定日盤/夜盤）'

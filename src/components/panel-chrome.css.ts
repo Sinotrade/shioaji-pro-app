@@ -198,6 +198,40 @@ export const pinBtn = styleVariants({
     ],
 });
 
+// 面板自己的圖示開關鈕（成交明細漏斗＝一般成交過濾）：與彈出／關閉同尺寸的圖示鈕，按下＝accent 底
+const iconToggleBase = style({
+    ...compactControl,
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    alignSelf: 'center',
+    padding: 0,
+    lineHeight: 0,
+    width: '18px',
+    height: '18px',
+    cursor: 'pointer',
+    border: 'none',
+    borderRadius: vars.radius.sm,
+    flexShrink: 0,
+});
+export const iconToggleBtn = styleVariants({
+    off: [
+        iconToggleBase,
+        {
+            color: vars.color.mutedForeground,
+            background: 'transparent',
+            ':hover': { color: vars.color.foreground, background: vars.color.muted },
+        },
+    ],
+    on: [
+        iconToggleBase,
+        {
+            color: vars.color.accent,
+            background: vars.color.accentDim,
+        },
+    ],
+});
+
 export const pinInput = style({
     width: '4.2rem',
     '@container': {

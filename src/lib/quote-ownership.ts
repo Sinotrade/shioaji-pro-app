@@ -61,6 +61,18 @@ const oddOpts = (d: Desired) => (d.odd ? [{ oddLot: true }] as const : [] as con
 // top of the registry replay. Releases therefore wait briefly and only
 // unsubscribe what is still unwanted.
 export const RELEASE_GRACE_MS = 1500;
+// 退訂失敗（例如美股 Tick 退了、TickFull 429）時，沒人要的訂閱不能等到下一次有人
+// 開關面板才再退：隔一段時間自己重跑一次同步。期間有人又要了，就不會退。
+export const RELEASE_RETRY_MS = 10_000;
+let releaseRetry: ReturnType<typeof setTimeout> | undefined;
+function scheduleReleaseRetry() {
+    if (releaseRetry !== undefined) return;
+    releaseRetry = setTimeout(() => {
+        releaseRetry = undefined;
+        // 沒連上時不必空打：連線恢復（live）本來就會同步一次
+        if (getStreamStatus() === 'live') sync(true);
+    }, RELEASE_RETRY_MS);
+}
 // #201: quotes the App's background engine watches. A page going away
 // (reload, closed main window) never unsubscribes them: the engine keeps
 // watching while no window is open.
@@ -91,7 +103,7 @@ function sync(immediate = false) {
         const still = immediate ? desired : desiredNow();
         for (const [key, value] of active) if (!still.has(key)) {
             if (!canOwn()) return;
-            try { await unsubscribeQuote(value.contract, value.type, ...oddOpts(value)); active.delete(key); forget(key); } catch { /* preserve ownership for a later retry */ }
+            try { await unsubscribeQuote(value.contract, value.type, ...oddOpts(value)); active.delete(key); forget(key); } catch { scheduleReleaseRetry(); /* preserve ownership; retried by scheduleReleaseRetry or a later sync */ }
         }
     });
 }

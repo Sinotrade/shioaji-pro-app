@@ -1,7 +1,9 @@
 // 成交明細的美股資料轉接（lib/us/us-tape）：歷史／即時列、去重、跨日分隔
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+const m = vi.hoisted(() => ({ fetchTicks: vi.fn() }));
+vi.mock('./us-history', async (orig) => ({ ...(await orig<object>()), fetchUsTicks: m.fetchTicks }));
 import { parseUsTicks } from './us-history';
-import { mergeUsTape, usTapeDayBreaks, usTapeRowFromMeta, usTapeRowsFromHistory } from './us-tape';
+import { loadUsTapeHistory, mergeUsTape, usTapeDayBreaks, usTapeRowFromMeta, usTapeRowsFromHistory } from './us-tape';
 
 const MAX = 120;
 
@@ -66,5 +68,38 @@ describe('mergeUsTape', () => {
     it('keeps a live row that only shares the timestamp', () => {
         const other = usTapeRowFromMeta({ key: 'US:AAPL', price: '352.02', session: 'Regular', freshness: null, ts: t0 + 2, tsUs: (t0 + 2) * 1000, volume: 99 });
         expect(mergeUsTape([other], hist, MAX)).toHaveLength(4);
+    });
+});
+
+describe('loadUsTapeHistory', () => {
+    it('asks for every session with full following the funnel setting', async () => {
+        const now = Date.UTC(2026, 10, 25, 14, 0); // 週三
+        m.fetchTicks.mockReset().mockResolvedValue([{ ts: 1 }]);
+        await loadUsTapeHistory({ code: 'AAPL', exchange: 'NASDAQ' }, 120, 'Tick', now);
+        expect(m.fetchTicks).toHaveBeenLastCalledWith(expect.anything(), '2026-11-25', {
+            lastCnt: 120, full: false, sessions: ['PreMarket', 'Regular', 'AfterHours', 'Overnight'],
+        });
+        await loadUsTapeHistory({ code: 'AAPL', exchange: 'NASDAQ' }, 120, 'TickFull', now);
+        expect(m.fetchTicks.mock.lastCall![2]).toMatchObject({ full: true });
+    });
+
+    it('in the evening starts from the next trading date (overnight trades belong to it)', async () => {
+        const dates = () => m.fetchTicks.mock.calls.map((c) => c[1]);
+        // 週一 21:00 ET：今晚的夜盤成交記在週二
+        m.fetchTicks.mockReset().mockResolvedValue([{ ts: 1 }]);
+        await loadUsTapeHistory({ code: 'AAPL', exchange: 'NASDAQ' }, 120, 'Tick', Date.UTC(2026, 10, 24, 2, 0));
+        expect(dates()).toEqual(['2026-11-24']);
+        // 週二還沒有成交（夜盤沒開）：退回週一
+        m.fetchTicks.mockReset().mockResolvedValueOnce([]).mockResolvedValue([{ ts: 1 }]);
+        await loadUsTapeHistory({ code: 'AAPL', exchange: 'NASDAQ' }, 120, 'Tick', Date.UTC(2026, 10, 24, 2, 0));
+        expect(dates()).toEqual(['2026-11-24', '2026-11-23']);
+        // 週日 21:00 ET：查週一，沒有就往前到週五（跳過週末）
+        m.fetchTicks.mockReset().mockResolvedValueOnce([]).mockResolvedValue([{ ts: 1 }]);
+        await loadUsTapeHistory({ code: 'AAPL', exchange: 'NASDAQ' }, 120, 'Tick', Date.UTC(2026, 10, 23, 2, 0));
+        expect(dates()).toEqual(['2026-11-23', '2026-11-20']);
+        // 白天照舊從美東今天開始
+        m.fetchTicks.mockReset().mockResolvedValue([{ ts: 1 }]);
+        await loadUsTapeHistory({ code: 'AAPL', exchange: 'NASDAQ' }, 120, 'Tick', Date.UTC(2026, 10, 23, 15, 0));
+        expect(dates()).toEqual(['2026-11-23']);
     });
 });

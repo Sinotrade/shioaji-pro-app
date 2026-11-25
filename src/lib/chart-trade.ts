@@ -3,6 +3,8 @@
 // 一筆成交進圖前要做的事都在這裡，兩種圖表用同一套入口：
 // - 時間：牆鐘編碼秒數，保留小數秒（台股台北、美股紐約）
 // - 時段：美股只收一般盤＋收盤競價（isUsChartTrade）
+// - 價格：美股只用一般成交（TICL）算開高低收；完整成交多出來的零股、特殊條件
+//   成交只加量（volumeOnly），與伺服器 1 分 K 的定義一致
 // - 分鐘標籤（K 棒結束時間）：
 //   · 美股：close-label-right（ceil）；09:30 開盤那一刻歸 09:31，收盤後
 //     CLOSE_GRACE 內（16:00:01 的 closing cross）歸 16:00。美股時段固定
@@ -17,7 +19,7 @@
 //   台股照 main（N 分 floor+N、日 K 依成交時間的日期）
 
 import { isUsChartTrade, type SessionKind } from './intraday-session';
-import { isUsExtendedTrade, nyWallClockSec, usMinuteLabel, type UsTickMeta } from './us/us-quotes';
+import { isUsExtendedTrade, isUsTiclTrade, nyWallClockSec, usMinuteLabel, type UsTickMeta } from './us/us-quotes';
 import { wallClockToUtcPrecise } from './utils/kbars';
 
 export interface ChartTrade {
@@ -25,6 +27,8 @@ export interface ChartTrade {
     time: number;
     price: number;
     volume: number;
+    /** 只加量、不動開高低收（美股完整成交裡的零股、特殊條件成交；見 isUsTiclTrade） */
+    volumeOnly?: boolean;
 }
 
 /** 台股（行情 store 的 tick／指數 quote）：date＋time 字串，time 可帶小數秒 */
@@ -38,12 +42,13 @@ export function twChartTrade(date: string, time: string, price: number, volume: 
  * 美股逐筆：用 µs 時間。一般盤圖只收一般盤＋收盤競價；extended（含盤前
  * 盤後）另外收 04:00–20:00 的盤前、盤後成交。其餘回 null
  */
-export function usChartTrade(meta: Pick<UsTickMeta, 'ts' | 'tsUs' | 'session' | 'price' | 'volume'>, extended = false): ChartTrade | null {
+export function usChartTrade(meta: Pick<UsTickMeta, 'ts' | 'tsUs' | 'session' | 'price' | 'volume' | 'updatesLast' | 'oddLot'>, extended = false): ChartTrade | null {
     const t = nyWallClockSec(meta.tsUs !== undefined ? meta.tsUs / 1000 : meta.ts);
     const price = Number(meta.price);
     if (!Number.isFinite(t) || !Number.isFinite(price) || !(meta.volume > 0)) return null;
     if (!isUsChartTrade(meta.session, t) && !(extended && isUsExtendedTrade(meta.session, t))) return null;
-    return { time: t, price, volume: meta.volume };
+    // 與伺服器 1 分 K 同定義：價格只看一般成交（TICL），零股與特殊條件成交只加量
+    return isUsTiclTrade(meta) ? { time: t, price, volume: meta.volume } : { time: t, price, volume: meta.volume, volumeOnly: true };
 }
 
 /** 美股成交所屬的 1 分 K 標籤（含開盤／收盤夾回；extended＝含盤前盤後） */
