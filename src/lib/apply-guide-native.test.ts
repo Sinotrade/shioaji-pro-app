@@ -4,7 +4,7 @@ const mocks = vi.hoisted(() => ({ invoke: vi.fn(), openOrThrow: vi.fn(), open: v
 vi.mock('./runtime', () => ({ isTauri: true }));
 vi.mock('./tauri', () => ({ openExternalUrl: mocks.open, openExternalUrlOrThrow: mocks.openOrThrow }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke: mocks.invoke }));
-import { openApplyWindow } from './apply-guide-native';
+import { clearApplySiteData, openApplyWindow } from './apply-guide-native';
 
 beforeEach(() => { vi.clearAllMocks(); });
 
@@ -39,5 +39,23 @@ describe('openApplyWindow', () => {
         mocks.invoke.mockRejectedValue('無法建立申請視窗');
         await expect(openApplyWindow()).rejects.toThrow('無法建立申請視窗');
         expect(mocks.openOrThrow).not.toHaveBeenCalled();
+    });
+});
+
+describe('clearApplySiteData', () => {
+    it('asks the shell to close the apply window and wipe its site data', async () => {
+        mocks.invoke.mockResolvedValue(null);
+        await expect(clearApplySiteData()).resolves.toBe('cleared');
+        expect(mocks.invoke).toHaveBeenCalledWith('apply_window_clear_site_data');
+    });
+
+    it('treats an older shell (nothing kept) as unsupported, not as an error', async () => {
+        mocks.invoke.mockRejectedValue('Command apply_window_clear_site_data not found');
+        await expect(clearApplySiteData()).resolves.toBe('unsupported');
+    });
+
+    it('passes on why the wipe failed', async () => {
+        mocks.invoke.mockRejectedValue('清除官網資料逾時，請再試一次');
+        await expect(clearApplySiteData()).rejects.toThrow('清除官網資料逾時，請再試一次');
     });
 });

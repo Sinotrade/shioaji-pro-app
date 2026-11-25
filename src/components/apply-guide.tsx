@@ -5,7 +5,7 @@
 
 import {
     ALargeSmall, ArrowRight, Check, ChevronDown, ChevronLeft, ChevronRight, CircleCheckBig, Clock, Crosshair,
-    ExternalLink, Flag, FlaskConical, KeyRound, Loader2, Moon, OctagonAlert, Play, RotateCw, ShieldCheck,
+    ExternalLink, Flag, FlaskConical, KeyRound, Loader2, LogOut, Moon, OctagonAlert, Play, RotateCw, ShieldCheck,
     SquarePen, Sun, ThumbsUp, TriangleAlert, UserRound,
 } from 'lucide-react';
 import { useEffect, useRef, useState, type ReactNode, type Ref } from 'react';
@@ -14,7 +14,7 @@ import {
     type ApplyPageStep, type GuidePoint, type GuideStep,
 } from '../lib/apply-guide-config';
 import {
-    focusApplyTarget, listenApplyGuide, openApplyWindow, showApplyApiPage, type ApplyGuideEvent, type ApplyWindowPlacement, type DownloadStatus,
+    clearApplySiteData, focusApplyTarget, listenApplyGuide, openApplyWindow, showApplyApiPage, type ApplyGuideEvent, type ApplyWindowPlacement, type DownloadStatus,
 } from '../lib/apply-guide-native';
 import { openExternalUrl, type DesktopSettings } from '../lib/tauri';
 import { baseMode, setThemeSettings, useThemeSettings } from '../lib/theme-store';
@@ -36,7 +36,12 @@ export interface ApplyGuideController {
     opening: boolean;
     openError: string;
     open: () => Promise<void>;
+    /** 登出並清除官網資料：idle／進行中／完成／失敗訊息。 */
+    siteClear: SiteClearState;
+    clearSiteData: () => Promise<void>;
 }
+
+export type SiteClearState = { kind: 'idle' } | { kind: 'clearing' } | { kind: 'done' } | { kind: 'failed'; message: string };
 
 /** 導覽狀態放在 OnboardingSetup：切到手動設定時事件仍會收到。 */
 export function useApplyGuide(onImported?: (imported: ApplyImported) => void): ApplyGuideController {
@@ -49,6 +54,7 @@ export function useApplyGuide(onImported?: (imported: ApplyImported) => void): A
     const [downloaded, setDownloaded] = useState<ApplyGuideController['downloaded']>(null);
     const [opening, setOpening] = useState(false);
     const [openError, setOpenError] = useState('');
+    const [siteClear, setSiteClear] = useState<SiteClearState>({ kind: 'idle' });
     const importedRef = useRef(onImported);
     importedRef.current = onImported;
     useEffect(() => {
@@ -84,7 +90,7 @@ export function useApplyGuide(onImported?: (imported: ApplyImported) => void): A
         return () => { active = false; off?.(); };
     }, []);
     const open = async () => {
-        setOpening(true); setOpenError('');
+        setOpening(true); setOpenError(''); setSiteClear({ kind: 'idle' });
         try {
             const result = await openApplyWindow();
             if (result === 'browser') setWindowState('browser');
@@ -94,7 +100,48 @@ export function useApplyGuide(onImported?: (imported: ApplyImported) => void): A
             setOpenError(error instanceof Error ? error.message : String(error));
         } finally { setOpening(false); }
     };
-    return { step, setStep, windowState, placement, synced, imported, failure, downloaded, opening, openError, open };
+    const clearSiteData = async () => {
+        setSiteClear({ kind: 'clearing' });
+        try {
+            await clearApplySiteData();
+            // 原生端已關掉申請視窗；closed 事件也會到，這裡先把狀態對齊
+            setWindowState(current => current === 'open' ? 'closed' : current);
+            setSynced(null);
+            setSiteClear({ kind: 'done' });
+        } catch (error) {
+            setSiteClear({ kind: 'failed', message: error instanceof Error ? error.message : String(error) });
+        }
+    };
+    return { step, setStep, windowState, placement, synced, imported, failure, downloaded, opening, openError, open, siteClear, clearSiteData };
+}
+
+/** 「登出並清除官網資料」：先確認再清；用瀏覽器開官網時不顯示（那邊的登入由瀏覽器管）。 */
+function SiteLogout({ guide }: { guide: ApplyGuideController }) {
+    const [confirming, setConfirming] = useState(false);
+    const state = guide.siteClear;
+    if (guide.windowState === 'browser') return null;
+    if (state.kind === 'done') {
+        return <Callout tone="success" title="已登出官網">申請視窗保存的永豐登入與憑證資料已清除。下次打開官網要重新登入。</Callout>;
+    }
+    if (confirming || state.kind === 'clearing') {
+        const clearing = state.kind === 'clearing';
+        return <Callout tone="warn" title="要登出並清除官網資料嗎？"
+            actions={<>
+                <button className={g.secondaryButton} disabled={clearing} onClick={() => void guide.clearSiteData().then(() => setConfirming(false))}>
+                    {clearing ? <Loader2 size={18} className={g.spinner} aria-hidden /> : <LogOut size={18} aria-hidden />}
+                    {clearing ? '正在清除…' : '確認登出並清除'}
+                </button>
+                <button className={g.textButton} disabled={clearing} onClick={() => setConfirming(false)}>取消</button>
+            </>}>
+            會關掉官網視窗，並清除這台電腦上申請視窗保存的永豐登入、憑證與暫存資料。App 裡已載入的 API Key 不受影響。
+        </Callout>;
+    }
+    return <>
+        {state.kind === 'failed' && <Callout tone="danger" title="沒有清除完成">{state.message}</Callout>}
+        <div className={g.quietLinks}>
+            <button className={g.textButton} onClick={() => setConfirming(true)}><LogOut size={18} aria-hidden />登出並清除官網資料</button>
+        </div>
+    </>;
 }
 
 const SITE_STEPS: GuideStep[] = GUIDE_ORDER.filter(step => step !== 'start');
@@ -254,6 +301,7 @@ export function ApplyGuide({ guide, settings, busy, docked = false, contentRef, 
                     </button>
                 </div>
                 {manualLink}
+                <SiteLogout guide={guide} />
             </div>
         </section>;
     }
@@ -319,6 +367,7 @@ export function ApplyGuide({ guide, settings, busy, docked = false, contentRef, 
                         <p className={g.secondary}>帳號名稱、環境與 CA 憑證之後都可以在「伺服器設定 › 帳號」修改。</p>
                     </div>
                 </details>
+                <SiteLogout guide={guide} />
             </div>
         </section>;
     }
@@ -332,7 +381,7 @@ export function ApplyGuide({ guide, settings, busy, docked = false, contentRef, 
             <p className={g.lead}><Rich text={copy.lead} /></p>
             {windowState === 'closed' && <Callout tone="warn" title="官網視窗已關閉"
                 actions={<button className={g.secondaryButton} onClick={() => void guide.open()}><RotateCw size={18} aria-hidden />重新打開官網</button>}>
-                重新打開後要再登入一次。{step === 'success' ? '如果已經看到「新增成功」但還沒下載 .env，Secret Key 已經看不到了，請再新增一把金鑰。' : ''}
+                按「重新打開官網」繼續。{step === 'success' ? '如果已經看到「新增成功」但還沒下載 .env，Secret Key 已經看不到了，請再新增一把金鑰。' : ''}
             </Callout>}
             {guide.openError && <Callout tone="danger" title="打不開申請視窗">{guide.openError}</Callout>}
             {windowState === 'browser' && <Callout tone="warn" title="已改用瀏覽器打開官網"
@@ -351,6 +400,7 @@ export function ApplyGuide({ guide, settings, busy, docked = false, contentRef, 
             }[guide.downloaded.status]}</p>}
             {copy.note && <p className={g.secondary}>{copy.note}</p>}
             {manualLink}
+            <SiteLogout guide={guide} />
         </div>
         <div className={g.footer}>
             <button className={g.secondaryButton} disabled={step === 'login'} onClick={() => guide.setStep(previousGuideStep(step))}><ChevronLeft size={20} aria-hidden />上一步</button>

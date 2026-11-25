@@ -6,7 +6,7 @@ import type { ApplyGuideEvent } from '../lib/apply-guide-native';
 const mocks = vi.hoisted(() => ({
     panel: vi.fn(() => null), defaults: vi.fn(), load: vi.fn(), save: vi.fn(), select: vi.fn(), start: vi.fn(),
     reload: vi.fn(), stop: vi.fn(), logout: vi.fn(), openLogs: vi.fn(), external: vi.fn(),
-    open: vi.fn(), close: vi.fn(), apiPage: vi.fn(), focus: vi.fn(),
+    open: vi.fn(), close: vi.fn(), apiPage: vi.fn(), focus: vi.fn(), clearSite: vi.fn(),
     handler: null as ((event: ApplyGuideEvent) => void) | null,
 }));
 vi.mock('../lib/spawn-keys', () => ({ clearStoredSpawnKeyHash: vi.fn() }));
@@ -18,7 +18,7 @@ vi.mock('../lib/tauri', async () => ({
     serverStop: mocks.stop, logoutCredentialProfile: mocks.logout, openServerLogFolder: mocks.openLogs, openExternalUrl: mocks.external,
 }));
 vi.mock('../lib/apply-guide-native', () => ({
-    openApplyWindow: mocks.open, closeApplyWindow: mocks.close, showApplyApiPage: mocks.apiPage, focusApplyTarget: mocks.focus,
+    openApplyWindow: mocks.open, closeApplyWindow: mocks.close, clearApplySiteData: mocks.clearSite, showApplyApiPage: mocks.apiPage, focusApplyTarget: mocks.focus,
     listenApplyGuide: async (handler: (event: ApplyGuideEvent) => void) => { mocks.handler = handler; return () => { mocks.handler = null; }; },
 }));
 import { EMPTY_DESKTOP_SETTINGS, type DesktopSettings } from '../lib/desktop-credentials';
@@ -45,6 +45,36 @@ afterEach(async () => { if (view) { await act(async () => view!.unmount()); view
 const mount = async () => { await act(async () => { view = create(createElement(OnboardingSetup)); }); };
 
 describe('first-run apply guide', () => {
+    it('logs out of the site only after confirming, and says the login is kept until then', async () => {
+        mocks.clearSite.mockResolvedValue('cleared');
+        await mount();
+        expect(json()).toContain('關掉再打開通常不用重新登入');
+        expect(json()).not.toContain('自動登出');
+        await act(async () => button('開始申請')!.props.onClick());
+        await act(async () => button('登出並清除官網資料')!.props.onClick());
+        expect(mocks.clearSite).not.toHaveBeenCalled();
+        await act(async () => button('取消')!.props.onClick());
+        expect(button('確認登出並清除')).toBeUndefined();
+        await act(async () => button('登出並清除官網資料')!.props.onClick());
+        await act(async () => button('確認登出並清除')!.props.onClick());
+        expect(mocks.clearSite).toHaveBeenCalledOnce();
+        expect(json()).toContain('已登出官網');
+        expect(json()).toContain('官網視窗已關閉');
+        // 重新打開官網後回到一般狀態
+        await act(async () => button('重新打開官網')!.props.onClick());
+        expect(json()).not.toContain('已登出官網');
+        expect(button('登出並清除官網資料')).toBeDefined();
+    });
+
+    it('shows why the site data could not be cleared and lets the user retry', async () => {
+        mocks.clearSite.mockRejectedValueOnce(new Error('清除官網資料逾時，請再試一次'));
+        await mount();
+        await act(async () => button('登出並清除官網資料')!.props.onClick());
+        await act(async () => button('確認登出並清除')!.props.onClick());
+        expect(json()).toContain('清除官網資料逾時，請再試一次');
+        expect(button('登出並清除官網資料')).toBeDefined();
+    });
+
     it('is the default page without accounts and keeps the manual and AI fallbacks', async () => {
         await mount();
         expect(view!.root.findAllByType(ApplyGuide)).toHaveLength(1);

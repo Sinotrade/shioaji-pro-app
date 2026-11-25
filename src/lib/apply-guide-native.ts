@@ -1,6 +1,8 @@
 // src/lib/apply-guide-native.ts — 與原生申請視窗（label `sinopac-apply`）的橋接。
 //
 // 申請視窗是原生殼開的獨立視窗，載入永豐官網、沒有任何 IPC 權限；
+// 官網登入與憑證存在申請視窗自己的資料區（與主視窗分開、關掉後保留），
+// clearApplySiteData 會關掉申請視窗並清掉這個資料區。
 // 這裡只從主視窗呼叫 apply_window_* 指令，並接收原生殼送來的事件：
 // 步驟（step）、.env 已載入（只帶帳號 id 與金鑰名稱，不含金鑰）、
 // 載入失敗、其他下載、視窗關閉。舊版原生殼沒有這些指令時退回系統瀏覽器。
@@ -66,6 +68,23 @@ async function call(command: string, args?: Record<string, unknown>) {
 export const closeApplyWindow = () => call('apply_window_close');
 export const showApplyApiPage = () => call('apply_window_show_api_page');
 export const focusApplyTarget = (target: string) => call('apply_window_focus', { target });
+
+/**
+ * 登出官網：關掉申請視窗與它的彈出視窗，清除申請視窗保存的官網資料
+ * （cookie、localStorage 裡的憑證、快取）。舊版原生殼沒有這個指令，
+ * 那時申請視窗本來就不保存資料，回傳 'unsupported'。
+ */
+export async function clearApplySiteData(): Promise<'cleared' | 'unsupported'> {
+    if (!isTauri) return 'unsupported';
+    try {
+        const { invoke } = await core();
+        await invoke('apply_window_clear_site_data');
+        return 'cleared';
+    } catch (error) {
+        if (isMissingCommand(error)) return 'unsupported';
+        throw new Error(typeof error === 'string' ? error : error instanceof Error ? error.message : '無法清除官網資料');
+    }
+}
 
 /** 解析原生事件；格式不符就丟掉。 */
 export function parseApplyGuideEvent(name: string, payload: unknown): ApplyGuideEvent | null {
