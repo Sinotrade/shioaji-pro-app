@@ -2355,8 +2355,9 @@ export function CandleChart({
                         {sessionBtn.label}
                     </button>
                 )}
-                {usExtended && (
-                    // 盤前盤後沒有歷史：明白標出來，不讓人以為圖上就是完整的盤前盤後
+                {usExtended && usExtLiveOnly && (
+                    // SDK 沒回盤前盤後歷史時才標：明白標出來，不讓人以為圖上就是完整的盤前盤後；
+                    // 有歷史（usExtendedHistory）就不顯示，同 intraday-chart
                     <span
                         className={styles.tfBtn.normal}
                         style={{ cursor: 'default' }}
