@@ -25,6 +25,7 @@ import { EMPTY_DESKTOP_SETTINGS, type DesktopSettings } from '../lib/desktop-cre
 import { OnboardingSetup } from './onboarding-setup';
 import { CredentialProfiles } from './credential-profiles';
 import { ApplyGuide } from './apply-guide';
+import { AssistantFab } from './assistant-fab';
 
 let view: ReactTestRenderer | undefined;
 const label = (node: ReactTestInstance) => node.children.filter(x => typeof x === 'string').join('');
@@ -70,14 +71,14 @@ describe('first-run apply guide', () => {
         expect(json()).toContain('登入永豐金證券網站');
         await act(async () => button('回到 API 管理頁')!.props.onClick());
         expect(mocks.apiPage).toHaveBeenCalledOnce();
-        // 申請視窗開著時 AI 助理仍預設展開，移到導覽下方
+        // AI 助理面板一直掛著（收成浮鈕時只是 hidden），換步驟不會卸載
         mocks.panel.mockClear();
         await emit({ kind: 'step', step: 'form' });
         expect(json()).toContain('填寫「新增 API KEY」');
-        expect(json()).toContain('已同步官網畫面');
+        expect(json()).toContain('已連動官網');
         expect(mocks.panel).toHaveBeenCalled();
         expect(view!.root.findAllByType(ApplyGuide)).toHaveLength(1);
-        const locate = view!.root.findAllByProps({ 'aria-label': '在網頁上標示「API 權限：正式環境」' })[0]!;
+        const locate = view!.root.findAllByProps({ 'aria-label': '在網頁上標示：API 權限：正式環境' })[0]!;
         await act(async () => locate.props.onClick());
         expect(mocks.focus).toHaveBeenCalledWith('perm-prod');
         await act(async () => button('上一步')!.props.onClick());
@@ -88,8 +89,8 @@ describe('first-run apply guide', () => {
         mocks.open.mockResolvedValue('browser');
         await mount();
         await act(async () => button('開始申請')!.props.onClick());
-        expect(json()).toContain('已在瀏覽器開啟官網');
-        const locate = view!.root.findAllByProps({ 'aria-label': '在網頁上標示「客戶登入」' })[0]!;
+        expect(json()).toContain('已改用瀏覽器打開官網');
+        const locate = view!.root.findAllByProps({ 'aria-label': '在網頁上標示：按「客戶登入」' })[0]!;
         expect(locate.props.disabled).toBe(true);
     });
 
@@ -105,8 +106,8 @@ describe('first-run apply guide', () => {
         await mount();
         await act(async () => button('開始申請')!.props.onClick());
         await emit({ kind: 'closed' });
-        expect(json()).toContain('申請視窗已關閉');
-        await act(async () => button('重新開啟')!.props.onClick());
+        expect(json()).toContain('官網視窗已關閉');
+        await act(async () => button('重新打開官網')!.props.onClick());
         expect(mocks.open).toHaveBeenCalledTimes(2);
     });
 
@@ -116,7 +117,7 @@ describe('first-run apply guide', () => {
         await emit({ kind: 'step', step: 'success' });
         await emit({ kind: 'import-failed', message: '無法存取系統憑證庫' });
         expect(json()).toContain('無法存取系統憑證庫');
-        await act(async () => button('改用手動設定')!.props.onClick());
+        await act(async () => button('改用手動輸入')!.props.onClick());
         expect(view!.root.findAllByType(CredentialProfiles)).toHaveLength(1);
     });
 
@@ -196,40 +197,40 @@ describe('apply guide review fixes', () => {
     });
 
     it('keeps the guide centred when the apply window opens beside the main window', async () => {
+        const docked = () => view!.root.findByType(ApplyGuide).props.docked;
         mocks.open.mockResolvedValue('beside');
         await mount();
         await act(async () => button('開始申請')!.props.onClick());
         await emit({ kind: 'step', step: 'form' });
-        // 不靠左：AI 助理照常在導覽旁邊（沒有導覽欄位裡的「收合」）
-        expect(button('收合')).toBeUndefined();
-        expect(button('收合 AI 助理')).toBeDefined();
-        expect(mocks.panel).toHaveBeenCalled();
-        // 重新開啟時若改成蓋住主視窗，就靠左、AI 助理移到導覽下方
+        expect(docked()).toBe(false);
+        expect(view!.root.findByType(AssistantFab).props.docked).toBe(false);
+        // 重新開啟時若改成蓋住主視窗，就靠左，AI 浮鈕跟著停到導覽卡內
         await emit({ kind: 'closed' });
         mocks.open.mockResolvedValue('overlay');
-        await act(async () => button('重新開啟')!.props.onClick());
+        await act(async () => button('重新打開官網')!.props.onClick());
         await emit({ kind: 'step', step: 'form' });
-        expect(button('收合')).toBeDefined();
+        expect(docked()).toBe(true);
+        expect(view!.root.findByType(AssistantFab).props.docked).toBe(true);
     });
 
-    it('shows the AI assistant expanded by default, beside or under the guide, and lets it collapse', async () => {
+    it('collapses the AI assistant into a round button by default and keeps its chat mounted', async () => {
+        const fab = (label: string) => view!.root.findAllByProps({ 'aria-label': label }).find(n => n.type === 'button');
+        const panel = () => view!.root.findAllByProps({ role: 'dialog', 'aria-label': 'AI 助理' })[0]!;
         await mount();
-        // 首頁：導覽旁邊展開
+        // 預設收合：面板掛著但隱藏，浮鈕旁顯示提示
         expect(mocks.panel).toHaveBeenCalled();
-        expect(button('收合 AI 助理')!.props['aria-expanded']).toBe(true);
+        expect(panel().props.hidden).toBe(true);
+        expect(fab('打開 AI 助理')!.props['aria-expanded']).toBe(false);
+        expect(json()).toContain('有問題？問 AI 助理');
+        await act(async () => fab('打開 AI 助理')!.props.onClick());
+        expect(panel().props.hidden).toBe(false);
+        expect(json()).not.toContain('有問題？問 AI 助理');
+        await act(async () => button('收合')!.props.onClick());
+        expect(panel().props.hidden).toBe(true);
+        // 換步驟仍掛著同一個面板，導覽照常顯示
         await act(async () => button('開始申請')!.props.onClick());
-        await emit({ kind: 'step', step: 'form' });
-        // 申請視窗開著：導覽下方仍展開，導覽同時顯示
         mocks.panel.mockClear();
         await emit({ kind: 'step', step: 'verify' });
-        expect(mocks.panel).toHaveBeenCalled();
-        expect(view!.root.findAllByType(ApplyGuide)).toHaveLength(1);
-        await act(async () => button('收合')!.props.onClick());
-        mocks.panel.mockClear();
-        await emit({ kind: 'step', step: 'form' });
-        expect(mocks.panel).not.toHaveBeenCalled();
-        expect(button('問 AI 助理')!.props['aria-expanded']).toBe(false);
-        await act(async () => button('問 AI 助理')!.props.onClick());
         expect(mocks.panel).toHaveBeenCalled();
         expect(view!.root.findAllByType(ApplyGuide)).toHaveLength(1);
     });
@@ -240,7 +241,7 @@ describe('apply guide review fixes', () => {
         await emit({ kind: 'step', step: 'form' });
         await emit({ kind: 'closed' });
         mocks.open.mockRejectedValueOnce(new Error('無法建立申請視窗'));
-        await act(async () => button('重新開啟')!.props.onClick());
+        await act(async () => button('重新打開官網')!.props.onClick());
         expect(json()).toContain('填寫「新增 API KEY」');
         expect(json()).toContain('無法建立申請視窗');
     });
@@ -297,15 +298,15 @@ describe('apply guide review round 2', () => {
 
     it('says where the key is really stored', async () => {
         await importWith({ ...EMPTY_DESKTOP_SETTINGS, activeProfileId: 'p1', credentialBackend: 'plaintext-fallback', fallbackPath: '/fake/app/credentials.json', profiles: [{ ...profile, credentialBackend: 'plaintext-fallback' }] });
-        expect(json()).toContain('金鑰以檔案保存');
+        expect(json()).toContain('金鑰存成檔案');
         expect(json()).toContain('/fake/app/credentials.json');
-        expect(json()).not.toContain('已存進這台電腦的系統憑證庫');
+        expect(json()).not.toContain('這台電腦的系統憑證庫');
     });
 
     it('mentions the system credential store only when it is used', async () => {
         await importWith({ ...EMPTY_DESKTOP_SETTINGS, activeProfileId: 'p1', profiles: [profile] });
-        expect(json()).toContain('已存進這台電腦的系統憑證庫');
-        expect(json()).not.toContain('金鑰以檔案保存');
+        expect(json()).toContain('這台電腦的系統憑證庫');
+        expect(json()).not.toContain('金鑰存成檔案');
     });
 });
 
@@ -322,7 +323,7 @@ describe('apply guide review round 3', () => {
     it('shows a later import failure on the 完成 page', async () => {
         await toDone();
         await emit({ kind: 'import-failed', message: '無法存取系統憑證庫' });
-        expect(json()).toContain('無法載入下載的 .env');
+        expect(json()).toContain('App 沒有收到 .env 檔');
         expect(json()).toContain('無法存取系統憑證庫');
         expect(json()).toContain('ShioajiPro');
     });

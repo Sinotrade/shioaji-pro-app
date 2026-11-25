@@ -30,7 +30,7 @@ beforeEach(() => {
 afterEach(async () => { if (view) { await act(async () => view!.unmount()); view = undefined; } vi.unstubAllGlobals(); });
 describe('first-run credential profiles', () => {
     it('opts only the embedded guide into onboarding', () => {
-        expect(renderToStaticMarkup(createElement(OnboardingSetup))).toContain('引導申請 API Key');
+        expect(renderToStaticMarkup(createElement(OnboardingSetup))).toContain('打開 AI 助理');
         expect(mocks.panel).toHaveBeenCalledWith({ onboarding: true, initialPrompt: '我是第一次使用，還沒有永豐 Shioaji API Key，可以引導我怎麼申請嗎？', visibleTabs: ['chat', 'settings'] }, undefined);
     });
     it('starts with the native non-secret read model after saving a new account', async () => {

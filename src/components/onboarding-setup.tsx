@@ -1,5 +1,5 @@
-import { Bot, ChevronDown, KeyRound } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { KeyRound } from 'lucide-react';
+import { useEffect, useRef, useState, type ReactNode, type Ref } from 'react';
 import { registerOnboardingAppStateHost } from '../lib/agent-app-command';
 import { agentModule } from '../lib/features';
 import { validateDesktopSettings } from '../lib/server-diagnostics';
@@ -11,7 +11,9 @@ import { FeatureGate } from './feature-gate';
 import { CredentialProfiles } from './credential-profiles';
 import { timedOnboarding } from '../lib/server-actions';
 import { closeApplyWindow } from '../lib/apply-guide-native';
-import { ApplyGuide, useApplyGuide } from './apply-guide';
+import { ApplyGuide, useApplyGuide, type ApplyGuideController } from './apply-guide';
+import { tokens } from './apply-guide.css';
+import { AssistantFab } from './assistant-fab';
 import * as styles from './onboarding-setup.css';
 import * as dialog from './server-settings-dialog.css';
 
@@ -28,8 +30,10 @@ export function OnboardingSetup() {
     const logoutInFlight = useRef(false);
     // 首次設定預設走申請導覽；已有帳號（或待遷移）時直接顯示帳號設定
     const [mode, setMode] = useState<'guide' | 'manual'>('guide');
-    // AI 助理預設展開；申請視窗開著時改放在導覽下方（右側會被申請視窗蓋住）
-    const [agentOpen, setAgentOpen] = useState(true);
+    // AI 助理預設收成圓形浮鈕，導覽頁旁邊顯示一次「有問題？問 AI 助理」；面板一直掛著，收合不會清掉對話
+    const [agentOpen, setAgentOpen] = useState(false);
+    const [hint, setHint] = useState(true);
+    const contentRef = useRef<HTMLDivElement>(null);
     const refresh = () => { loadDesktopSettings().then(setSettings).catch(() => undefined); };
     const guide = useApplyGuide(refresh);
     const stopForChange = async () => {
@@ -142,11 +146,6 @@ export function OnboardingSetup() {
     const AgentPanel = agentModule?.Panel;
     agentModule?.ensureDefaultProvider('codex');
     const guiding = mode === 'guide' && loaded;
-    // 申請視窗蓋住主視窗右側時導覽貼齊左側、AI 助理移到導覽下方；
-    // 申請視窗放在主視窗旁邊（寬螢幕）時維持置中
-    const docked = guiding && guide.step !== 'start' && guide.windowState === 'open' && guide.placement === 'overlay';
-    const showAgent = !!AgentPanel && agentOpen && !docked;
-    const agentInColumn = !!AgentPanel && agentOpen && docked;
     const agentPanel = AgentPanel && <FeatureGate feature='agent'>
         <AgentPanel
             onboarding
@@ -154,29 +153,14 @@ export function OnboardingSetup() {
             visibleTabs={['chat', 'settings']}
         />
     </FeatureGate>;
-    const errors = <>
+    const errors = (error || startError) ? <>
         {error && <p className={styles.errorText} role="alert">{error}</p>}
         {startError && <ServerStartErrorPanel error={startError.error} logPath={startError.logPath} onOpenLogFolder={isTauri ? openServerLogFolder : undefined} />}
-    </>;
-    return (<div className={docked ? styles.shellDocked : styles.shell}><div className={docked ? styles.layoutDocked : styles.layout}>
-        {guiding ? <div className={styles.guideColumn}>
-            <ApplyGuide guide={guide} settings={settings} busy={busy}
-                agentAvailable={!!AgentPanel}
-                agentOpen={agentOpen}
-                onToggleAgent={() => setAgentOpen(open => !open)}
-                onManual={() => setMode('manual')}
-                onStart={startImported} />
-            {(error || startError) && <div className={styles.guideErrors}>{errors}</div>}
-            {agentInColumn && <div className={styles.agentCardDocked}>
-                <div className={styles.agentHeader}>
-                    <Bot size={14} />
-                    AI 助理 — 引導申請 API Key
-                    <span className={styles.agentHeaderSpacer} />
-                    <button className={dialog.smallButton} onClick={() => setAgentOpen(false)}><ChevronDown size={14} />收合</button>
-                </div>
-                <div className={styles.agentBody}>{agentPanel}</div>
-            </div>}
-        </div> : <div className={styles.card}>
+    </> : null;
+    // 申請視窗蓋住主視窗右側（overlay）時導覽貼左、AI 浮鈕停到導覽卡內
+    const docked = guiding && guide.step !== 'start' && guide.windowState === 'open' && guide.placement === 'overlay';
+    const manualCard = <div className={`${tokens} ${styles.shell}`}>
+        <div className={styles.card}>
             <div><div className={styles.logo}>Shioaji Pro</div><div className={styles.subtitle}>設定或選擇帳號以啟動交易伺服器</div></div>
             {errors}
             {loaded && <CredentialProfiles settings={settings} busy={busy} running={false} onSave={save} onAction={action} onImported={setSettings} onStart={start} onBusyChange={setBusy} />}
@@ -189,18 +173,43 @@ export function OnboardingSetup() {
             </div>}
             {busy && <p className={styles.hint}>啟動中 — 登入與載入合約約需 10–30 秒…</p>}
             <p className={styles.hint}>金鑰只存在這台電腦的系統憑證庫。</p>
-            <button className={styles.guideLink} onClick={() => setMode('guide')}><KeyRound size={14} />還沒有 API Key？跟著導覽申請</button>
-        </div>}
-                {showAgent && AgentPanel && (
-                    <div className={styles.agentCard}>
-                        <div className={styles.agentHeader}>
-                            <Bot size={14} />
-                            AI 助理 — 引導申請 API Key
-                        </div>
-                        <div className={styles.agentBody}>{agentPanel}</div>
-                    </div>
-                )}
-            </div>
+            <button className={styles.guideLink} onClick={() => setMode('guide')}><KeyRound size={18} />還沒有 API Key？跟著導覽申請</button>
         </div>
-    );
+    </div>;
+    // AI 助理放在同一個位置，切換導覽／手動設定時面板不重掛、對話保留
+    return <>
+        {guiding
+            ? <GuideScreen guide={guide} settings={settings} busy={busy} errors={errors} docked={docked} contentRef={contentRef}
+                onManual={() => setMode('manual')} onStart={startImported} />
+            : manualCard}
+        {agentPanel && <AssistantFab open={agentOpen} onOpenChange={open => { setAgentOpen(open); setHint(false); }}
+            docked={docked} anchorRef={contentRef}
+            showHint={hint && guiding && !docked} onDismissHint={() => setHint(false)}>
+            {agentPanel}
+        </AssistantFab>}
+    </>;
+}
+
+/**
+ * 申請導覽整頁（不含 AI 浮鈕，由 OnboardingSetup 放在固定位置）。
+ * docked：申請視窗蓋住主視窗右側時導覽貼左、縮成原生端保留的寬度；
+ * 放在主視窗旁邊（beside）或還沒開時置中。
+ */
+export function GuideScreen({ guide, settings, busy, errors, docked, contentRef, onManual, onStart }: {
+    guide: ApplyGuideController;
+    settings: DesktopSettings;
+    busy: boolean;
+    errors?: ReactNode;
+    docked: boolean;
+    contentRef?: Ref<HTMLDivElement>;
+    onManual: () => void;
+    onStart: (profileId: string) => Promise<void>;
+}) {
+    return <div className={`${tokens} ${docked ? styles.shellDocked : styles.shell}`}>
+        <div className={styles.guideColumn}>
+            <ApplyGuide guide={guide} settings={settings} busy={busy} docked={docked} contentRef={contentRef}
+                onManual={onManual} onStart={onStart} />
+            {errors && <div className={docked ? styles.guideErrorsDocked : styles.guideErrors}>{errors}</div>}
+        </div>
+    </div>;
 }

@@ -35,6 +35,14 @@ function migrateScale(scale: unknown): FontScale {
     return SCALES.includes(scale as FontScale) ? (scale as FontScale) : DEFAULT_SCALE;
 }
 
+function systemMode(): ThemeMode {
+    try {
+        return typeof matchMedia === 'function' && matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+    } catch {
+        return 'dark';
+    }
+}
+
 function load(): ThemeSettings {
     try {
         const raw = localStorage.getItem(STORAGE_KEY);
@@ -58,7 +66,8 @@ function load(): ThemeSettings {
     } catch {
         // corrupted settings — use defaults
     }
-    return { mode: 'dark', convention: 'tw', fontScale: DEFAULT_SCALE };
+    // 第一次啟動（沒有存過設定）跟隨系統外觀；之後以使用者的選擇為準
+    return { mode: systemMode(), convention: 'tw', fontScale: DEFAULT_SCALE };
 }
 
 let settings: ThemeSettings = load();

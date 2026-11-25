@@ -4,6 +4,7 @@
 
 import { style, styleVariants } from '@vanilla-extract/css';
 import { vars } from '../theme.css';
+import { DOCKED_WIDTH, GUIDE_FONT, g } from './apply-guide.css';
 
 export const shell = style({
     position: 'fixed',
@@ -15,24 +16,13 @@ export const shell = style({
     zIndex: 1000,
 });
 
-// 申請視窗開著時：導覽卡貼齊左側，右側留給原生申請視窗
+// 申請視窗蓋住右側時：導覽卡貼齊左側。原生端保留左側 540px（apply_window.rs guide），
+// 卡片 508px＋左邊 16px
 export const shellDocked = style([shell, {
     justifyContent: 'flex-start',
-    paddingLeft: vars.space.lg,
+    paddingLeft: 16,
 }]);
 
-// row of [setup card, agent side-panel] — wraps to a single column narrow
-// viewport since the agent panel needs real width to be usable
-export const layout = style({
-    display: 'flex',
-    flexWrap: 'wrap',
-    alignItems: 'stretch',
-    justifyContent: 'center',
-    gap: vars.space.lg,
-    maxWidth: '92vw',
-});
-
-export const layoutDocked = style([layout, { justifyContent: 'flex-start' }]);
 
 export const guideColumn = style({
     display: 'flex',
@@ -46,14 +36,17 @@ export const guideErrors = style({
     display: 'flex',
     flexDirection: 'column',
     gap: vars.space.sm,
-    width: 'min(28rem, 92vw)',
+    width: 'min(34rem, calc(100vw - 2rem))',
     boxSizing: 'border-box',
-    fontSize: '0.875rem',
+    fontSize: GUIDE_FONT,
+    color: g.text,
     padding: vars.space.md,
     background: vars.color.panelRaised,
     border: `1px solid ${vars.color.border}`,
     borderRadius: vars.radius.lg,
 });
+
+export const guideErrorsDocked = style([guideErrors, { width: `min(${DOCKED_WIDTH}, calc(100vw - 2rem))` }]);
 
 export const guideLink = style({
     display: 'inline-flex',
@@ -66,9 +59,12 @@ export const guideLink = style({
     color: vars.color.accent,
     cursor: 'pointer',
     fontFamily: vars.font.body,
-    fontSize: '0.78rem',
-    fontWeight: 600,
-    ':focus-visible': { outline: `2px solid ${vars.color.accent}`, outlineOffset: 2 },
+    minHeight: 44,
+    fontSize: '1em',
+    fontWeight: 650,
+    textDecoration: 'underline',
+    textUnderlineOffset: '0.2em',
+    ':focus-visible': { outline: `3px solid ${vars.color.accent}`, outlineOffset: 2 },
 });
 
 export const card = style({
@@ -76,11 +72,12 @@ export const card = style({
     flexDirection: 'column',
     gap: vars.space.md,
     // 帳號元件用 em 排版，卡片字級決定它在首次設定的大小
-    width: 'min(30rem, 92vw)',
+    width: 'min(34rem, calc(100vw - 2rem))',
     maxHeight: '92vh',
     overflowY: 'auto',
     boxSizing: 'border-box',
-    fontSize: '0.875rem',
+    // 2026-11 無障礙：與申請導覽同一個字級（標準約 17.7px、大字 20px）
+    fontSize: GUIDE_FONT,
     color: vars.color.foreground,
     background: vars.color.panelRaised,
     border: `1px solid ${vars.color.border}`,
@@ -89,58 +86,18 @@ export const card = style({
     padding: vars.space.xl,
 });
 
-export const agentCard = style({
-    display: 'flex',
-    flexDirection: 'column',
-    width: 'min(24rem, 92vw)',
-    height: 'min(38rem, 86vh)',
-    background: vars.color.panelRaised,
-    border: `1px solid ${vars.color.border}`,
-    borderRadius: vars.radius.lg,
-    boxShadow: '0 24px 64px rgba(0, 0, 0, 0.45)',
-    overflow: 'hidden',
-});
-
-// 申請視窗開著時，AI 助理放在導覽欄位（寬度與導覽卡相同）
-// 申請視窗開著時放在導覽下方：固定高度，導覽卡片自己縮短並捲動
-export const agentCardDocked = style([agentCard, {
-    width: 'min(28rem, 92vw)',
-    height: 'min(24rem, 44vh)',
-    flexShrink: 0,
-    boxShadow: 'none',
-}]);
-
-export const agentHeaderSpacer = style({ flex: 1 });
-
-export const agentHeader = style({
-    display: 'flex',
-    alignItems: 'center',
-    gap: '8px',
-    fontFamily: vars.font.display,
-    fontSize: '0.78rem',
-    fontWeight: 600,
-    color: vars.color.foreground,
-    padding: `${vars.space.sm} ${vars.space.md}`,
-    borderBottom: `1px solid ${vars.color.border}`,
-    flexShrink: 0,
-});
-
-export const agentBody = style({
-    flex: 1,
-    minHeight: 0,
-});
 
 export const logo = style({
     fontFamily: vars.font.display,
-    fontSize: '1.1rem',
+    fontSize: '1.3em',
     fontWeight: 700,
     color: vars.color.foreground,
 });
 
 export const subtitle = style({
     fontFamily: vars.font.body,
-    fontSize: '0.8125rem',
-    color: vars.color.mutedForeground,
+    fontSize: '0.9em',
+    color: g.text2,
     marginTop: '2px',
 });
 
@@ -277,18 +234,18 @@ export const importMessage = styleVariants({
 
 export const hint = style({
     fontFamily: vars.font.body,
-    fontSize: '0.75rem',
-    color: vars.color.mutedForeground,
+    fontSize: '0.88em',
+    color: g.text2,
     lineHeight: 1.6,
     margin: 0,
 });
 
 export const errorText = style({
     fontFamily: vars.font.body,
-    fontSize: '0.75rem',
+    fontSize: '0.95em',
     fontWeight: 600,
     margin: 0,
-    color: vars.color.danger,
+    color: g.danger,
     whiteSpace: 'pre-wrap',
 });
 
