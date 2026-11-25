@@ -33,6 +33,7 @@ vi.mock('./us-contracts', () => ({
 import fx from './__fixtures__/intl-order-events.json';
 import { normalizeOrderEvent } from '../order-report';
 import * as us from './us-trading-state';
+import { onUsDealSettled } from './us-account-events';
 import type { AccountedUsTrade } from '../types/us';
 import type { Account } from '../types/portfolio';
 
@@ -279,6 +280,48 @@ describe('positions refresh after US deals', () => {
         expect(us.getUsTradingState().positions[0]!.quantity).toBe('1.5');
         await vi.advanceTimersByTimeAsync(20_000);
         expect(m.positions).toHaveBeenCalledTimes(2);
+    });
+
+    it('tells the today-P&L panel on the same coalesced schedule, even when positions are unsupported', async () => {
+        us.resetUsTradingStateForTest({ trades: [row()], positionsStatus: 'unsupported' });
+        const seen: number[] = [];
+        const off = onUsDealSettled(() => seen.push(Date.now()));
+        const t0 = Date.now();
+        m.onEvent!(normalizeOrderEvent(fx.deal));
+        await vi.advanceTimersByTimeAsync(1000);
+        m.onEvent!(normalizeOrderEvent({ ...fx.deal, data: { IntlDeal: { ...fx.deal.data.IntlDeal, exchange_seq: '107283173' } } }));
+        await vi.advanceTimersByTimeAsync(10_000);
+        off();
+        expect(seen.map(t => t - t0)).toEqual([2500, 6000]);
+        // 委託回報（新單／刪單／減量）不觸發
+        seen.length = 0;
+        const off2 = onUsDealSettled(() => seen.push(Date.now()));
+        m.onEvent!(normalizeOrderEvent(fx.orderUpdateQty));
+        await vi.advanceTimersByTimeAsync(10_000);
+        off2();
+        expect(seen).toEqual([]);
+    });
+
+    it('still tells the today-P&L panel on both delays after a server mode change; the old schedule does not re-read positions', async () => {
+        const seen: number[] = [];
+        const off = onUsDealSettled(() => seen.push(Date.now()));
+        const t0 = Date.now();
+        m.onEvent!(normalizeOrderEvent(fx.deal));
+        await vi.advanceTimersByTimeAsync(500);
+        const info = await import('../server-info-store');
+        const before = info.getServerModeVersion();
+        // 模式版本前進（/info 失敗後恢復、sidecar 換模式）
+        info.observeServerInfo(info.beginServerInfoRequest(), { simulation: info.knownServerInfo()?.simulation !== true } as never);
+        expect(info.getServerModeVersion()).not.toBe(before);
+        await vi.advanceTimersByTimeAsync(400); // 模式切換自己 300 ms 後的重查
+        await flush();
+        const byModeSwitch = m.positions.mock.calls.length;
+        expect(byModeSwitch).toBe(1);
+        await vi.advanceTimersByTimeAsync(10_000);
+        off();
+        expect(seen.map(t => t - t0)).toEqual([1500, 5000]);
+        // 舊環境排的庫存重查不跑
+        expect(m.positions).toHaveBeenCalledTimes(byModeSwitch);
     });
 
     it('does not re-read positions for order reports (new／cancel／reduce)', async () => {

@@ -1,7 +1,7 @@
 // 美股帳務畫面：餘額／可下單／圈存／未交割、已實現損益＋明細、股利、庫存明細、尚未開放
 import { createElement } from 'react';
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer';
-import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const m = vi.hoisted(() => ({
     balance: vi.fn(), settlements: vi.fn(), pnl: vi.fn(), pnlDetail: vi.fn(), dividends: vi.fn(), posDetail: vi.fn(),
@@ -16,8 +16,10 @@ vi.mock('../lib/us/us-account-api', async () => {
     };
 });
 
-import { US_PARTIAL_FAILURE, US_POSITION_DETAIL_MISMATCH, UsAccountSection, UsPositionDetail, UsRealizedPnlSection } from './us-account-panels';
-import { requestUsAccountRefresh, resetUsAccountBatchForTest } from '../lib/us/us-account-batch';
+import { nyToday, US_PARTIAL_FAILURE, US_POSITION_DETAIL_MISMATCH, UsAccountSection, UsPositionDetail, UsRealizedPnlSection, UsTodayPnlSection } from './us-account-panels';
+import { notifyUsDealSettled, requestUsAccountRefresh, resetUsAccountBatchForTest } from '../lib/us/us-account-batch';
+import { beginServerInfoRequest, observeServerInfo } from '../lib/server-info-store';
+import { usAccountErrorKind } from '../lib/us/us-account-api';
 
 const H = { account_type: 'H', person_id: 'P', broker_id: '9A95', account_id: '0000001', signed: true, username: 'u' };
 const H2 = { ...H, account_id: '0000002' };
@@ -99,6 +101,21 @@ it('shows realized P&L with an expandable FIFO detail labelled as whole-order fe
     expect(t).toContain('原委託手續費');
     expect(t).toContain('不按本次股數分攤');
     expect(t).toContain('2026-11-03');
+});
+
+it('30-day P&L does not keep the other server mode\'s summary (same address)', async () => {
+    m.pnl.mockResolvedValue([{ account_type: 'H', detail_id: 'D1', code: 'AAPL', direction: 'Sell', date: '2026-11-17', quantity: '5', price: '231.2', cost: '1100', pnl: '56', pnl_pct: '5.09', currency: 'USD', base_currency: 'USD' }]);
+    m.dividends.mockResolvedValue([]);
+    await mount(createElement(UsRealizedPnlSection, { accounts: [acct()] }));
+    expect(all()).toContain('已實現損益合計+56.00 USD');
+    m.pnl.mockResolvedValue([]);
+    await act(async () => {
+        observeServerInfo(beginServerInfoRequest(), { simulation: seq % 2 === 0 } as never);
+        await new Promise(r => setTimeout(r, 0));
+    });
+    await act(async () => { await new Promise(r => setTimeout(r, 0)); });
+    expect(m.pnl).toHaveBeenCalledTimes(2);
+    expect(all()).not.toContain('+56.00 USD');
 });
 
 it('P&L section also shows the not-yet-open state instead of errors', async () => {
@@ -195,4 +212,204 @@ it('shows an error state, not 「無已實現損益」, when every account faile
     expect(t).toContain('美股現金股利查詢失敗');
     expect(t).not.toContain('無美股已實現損益');
     expect(t).not.toContain('已實現損益合計');
+});
+
+// ---- 帳務分頁：今日已實現損益（美東交易日） ----
+
+const pl = (over: Record<string, string>) => ({ account_type: 'H', detail_id: 'D1', code: 'AAPL', direction: 'Sell', date: '2026-11-20', quantity: '1', price: '352.69', cost: '352.98', pnl: '-0.58', pnl_pct: '-0.16', currency: 'USD', base_currency: 'USD', ...over });
+const findToggle = () => view!.root.findAll(n => n.type === 'button' && n.props.title === '展開明細')[0];
+
+it('today = America/New_York date: Taipei is already 11/21 but NY is still 11/20', () => {
+    // 2026-11-21 03:00 UTC = 台北 11:00 11/21 = 美東 22:00 11/20（EST）
+    expect(nyToday(Date.parse('2026-11-21T03:00:00Z'))).toBe('2026-11-20');
+    // 美東午夜過後才換日（EST UTC-5）
+    expect(nyToday(Date.parse('2026-11-21T04:59:59Z'))).toBe('2026-11-20');
+    expect(nyToday(Date.parse('2026-11-21T05:00:00Z'))).toBe('2026-11-21');
+    // 夏令（EDT UTC-4）
+    expect(nyToday(Date.parse('2026-07-01T03:59:00Z'))).toBe('2026-06-30');
+});
+
+describe('UsTodayPnlSection', () => {
+    beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date('2026-11-21T03:00:00Z')); });
+    afterEach(() => { vi.useRealTimers(); });
+
+    it('queries NY today only, keeps only rows of that trade date, USD total not mixed with TWD', async () => {
+        m.pnl.mockResolvedValue([
+            pl({ detail_id: 'A', pnl: '-0.19', code: 'VT' }),
+            pl({ detail_id: 'B', pnl: '12.5' }),
+            pl({ detail_id: 'OLD', date: '2026-11-19', pnl: '999' }),
+        ]);
+        m.pnlDetail.mockResolvedValue([{ account_type: 'H', acquired_date: '2026-11-03', quantity: '1', price: '340', cost: '340', fee: '3', tax: '0', other_fees: '0.02', currency: 'USD', base_currency: 'USD' }]);
+        await mount(createElement(UsTodayPnlSection, { accounts: [acct()] }));
+        expect(m.pnl).toHaveBeenCalledWith(expect.objectContaining({ account_type: 'H' }), '2026-11-20', '2026-11-20');
+        let t = all();
+        expect(t).toContain('今日已實現損益（USD，美東 11/20）');
+        expect(t).toContain('不和台幣合計');
+        expect(t).toContain('+12.31 USD');
+        expect(t).toContain('2 筆');
+        expect(t).not.toContain('999');
+        expect(t).not.toContain('TWD');
+        // 收合時不列明細；展開後每列可再展開沖銷明細（同台股）
+        expect(t).not.toContain('VT');
+        await act(async () => { findToggle()!.props.onClick(); });
+        t = all();
+        expect(t.indexOf('AAPL')).toBeLessThan(t.indexOf('VT')); // 依損益絕對值排序
+        const row = view!.root.findAll(n => n.type === 'tr' && n.props['aria-expanded'] === false)[0]!;
+        await act(async () => { row.props.onClick(); });
+        await act(async () => { await new Promise(r => setTimeout(r, 0)); });
+        expect(m.pnlDetail).toHaveBeenCalledWith(expect.objectContaining({ account_type: 'H' }), 'B');
+        expect(all()).toContain('原委託手續費');
+    });
+
+    it('shows 「今日無美股已實現損益」 when there is none', async () => {
+        m.pnl.mockResolvedValue([]);
+        await mount(createElement(UsTodayPnlSection, { accounts: [acct()] }));
+        expect(all()).toContain('今日無美股已實現損益');
+    });
+
+    it('re-queries after a US deal (debounced deal event) and after the dock refresh', async () => {
+        m.pnl.mockResolvedValue([]);
+        await mount(createElement(UsTodayPnlSection, { accounts: [acct()] }));
+        expect(m.pnl).toHaveBeenCalledTimes(1);
+        m.pnl.mockResolvedValue([pl({ pnl: '3' })]);
+        vi.setSystemTime(new Date('2026-11-21T03:00:05Z'));
+        await act(async () => { notifyUsDealSettled(); await new Promise(r => setTimeout(r, 0)); });
+        expect(m.pnl).toHaveBeenCalledTimes(2);
+        expect(all()).toContain('+3.00 USD');
+        vi.setSystemTime(new Date('2026-11-21T03:00:10Z'));
+        await act(async () => { requestUsAccountRefresh(); await new Promise(r => setTimeout(r, 0)); });
+        expect(m.pnl).toHaveBeenCalledTimes(3);
+    });
+
+    it('a temporary gtrade failure is a grey hint with retry, a real error is red', async () => {
+        m.pnl.mockRejectedValue(new Error('502 UPSTREAM_ERROR'));
+        await mount(createElement(UsTodayPnlSection, { accounts: [acct()] }));
+        let t = all();
+        expect(t).toContain('券商暫時查不到資料，稍後再試');
+        expect(t).not.toContain('查詢失敗');
+        expect(t).toContain('重試');
+        await act(async () => view?.unmount()); view = undefined;
+        seq++;
+        m.pnl.mockRejectedValue(new Error('400 INVALID_ACCOUNT'));
+        await mount(createElement(UsTodayPnlSection, { accounts: [acct()] }));
+        t = all();
+        expect(t).toContain('美股損益資訊查詢失敗：INVALID_ACCOUNT');
+    });
+
+    it('a failed account keeps its last rows marked, out of the total', async () => {
+        m.pnl.mockImplementation(async (a: typeof H) => [pl({ detail_id: a.account_id, pnl: a.account_id.startsWith('0000002') ? '100' : '1' })]);
+        await mount(createElement(UsTodayPnlSection, { accounts: [acct(), acct(H2)] }));
+        expect(all()).toContain('+101.00 USD');
+        m.pnl.mockImplementation(async (a: typeof H) => {
+            if (a.account_id.startsWith('0000002')) throw new Error('502 UPSTREAM_ERROR');
+            return [pl({ detail_id: a.account_id, pnl: '1' })];
+        });
+        vi.setSystemTime(new Date('2026-11-21T03:00:05Z'));
+        await act(async () => { requestUsAccountRefresh(); await new Promise(r => setTimeout(r, 0)); });
+        const t = all();
+        expect(t).toContain('+1.00 USD');
+        expect(t).toContain('2 筆');
+        expect(t).toContain(US_PARTIAL_FAILURE);
+        await act(async () => { findToggle()!.props.onClick(); });
+        expect(all()).toContain('（上次查詢）');
+    });
+
+    it('a deal arriving while a query is in flight gets a trailing query, so old data is not left as current', async () => {
+        let release!: (v: unknown) => void;
+        m.pnl.mockReturnValueOnce(new Promise(r => { release = r; }));
+        await mount(createElement(UsTodayPnlSection, { accounts: [acct()] }));
+        expect(m.pnl).toHaveBeenCalledTimes(1);
+        m.pnl.mockResolvedValue([pl({ pnl: '7' })]);
+        await act(async () => { notifyUsDealSettled(); });
+        expect(m.pnl).toHaveBeenCalledTimes(1); // 查詢中：去重，不另查
+        vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+        vi.setSystemTime(new Date('2026-11-21T03:00:01Z'));
+        await act(async () => { release([]); await vi.advanceTimersByTimeAsync(0); });
+        expect(all()).toContain('今日無美股已實現損益');
+        await act(async () => { await vi.advanceTimersByTimeAsync(1700); });
+        expect(m.pnl).toHaveBeenCalledTimes(2);
+        expect(all()).toContain('+7.00 USD');
+    });
+
+    it('re-queries on remount when a deal came while another dock tab was open', async () => {
+        m.pnl.mockResolvedValue([]);
+        const accounts = [acct()];
+        await mount(createElement(UsTodayPnlSection, { accounts }));
+        await act(async () => view?.unmount()); view = undefined;
+        notifyUsDealSettled();
+        vi.setSystemTime(new Date('2026-11-21T03:00:05Z'));
+        m.pnl.mockResolvedValue([pl({ pnl: '4' })]);
+        await mount(createElement(UsTodayPnlSection, { accounts }));
+        expect(m.pnl).toHaveBeenCalledTimes(2);
+        expect(all()).toContain('+4.00 USD');
+    });
+
+    it('a server mode change (same address) does not reuse the other mode\'s P&L', async () => {
+        m.pnl.mockResolvedValue([pl({ pnl: '5' })]);
+        const accounts = [acct()];
+        await mount(createElement(UsTodayPnlSection, { accounts }));
+        expect(all()).toContain('+5.00 USD');
+        m.pnl.mockResolvedValue([]);
+        await act(async () => {
+            observeServerInfo(beginServerInfoRequest(), { simulation: seq % 2 === 0 } as never);
+            await new Promise(r => setTimeout(r, 0));
+        });
+        await settle();
+        expect(m.pnl).toHaveBeenCalledTimes(2);
+        expect(all()).not.toContain('+5.00 USD');
+    });
+
+    it('after NY midnight a failed account does not show yesterday\'s rows as today\'s', async () => {
+        m.pnl.mockResolvedValue([pl({ pnl: '9' })]);
+        const accounts = [acct()];
+        await mount(createElement(UsTodayPnlSection, { accounts }));
+        expect(all()).toContain('+9.00 USD');
+        await act(async () => view?.unmount()); view = undefined;
+        vi.setSystemTime(new Date('2026-11-21T06:00:00Z')); // 美東 11/21 01:00
+        m.pnl.mockRejectedValue(new Error('502 UPSTREAM_ERROR'));
+        await mount(createElement(UsTodayPnlSection, { accounts }));
+        const t = all();
+        expect(m.pnl).toHaveBeenLastCalledWith(expect.anything(), '2026-11-21', '2026-11-21');
+        expect(t).toContain('美東 11/21');
+        expect(t).not.toContain('9.00');
+        expect(t).toContain('券商暫時查不到資料');
+    });
+
+    it('a genuine error on one account keeps its marked rows and is shown red, not as a quiet hint', async () => {
+        m.pnl.mockImplementation(async (a: typeof H) => [pl({ detail_id: a.account_id, pnl: '1' })]);
+        await mount(createElement(UsTodayPnlSection, { accounts: [acct(), acct(H2)] }));
+        m.pnl.mockImplementation(async (a: typeof H) => {
+            if (a.account_id.startsWith('0000002')) throw new Error('400 INVALID_ACCOUNT');
+            return [pl({ detail_id: a.account_id, pnl: '1' })];
+        });
+        vi.setSystemTime(new Date('2026-11-21T03:00:05Z'));
+        await act(async () => { requestUsAccountRefresh(); await new Promise(r => setTimeout(r, 0)); });
+        const t = all();
+        expect(t).toContain(`美股損益資訊查詢失敗：${US_PARTIAL_FAILURE}：INVALID_ACCOUNT`);
+        expect(t).toContain('+1.00 USD');
+    });
+
+    it('classifies the status-stripped bare 500 as temporary', () => {
+        expect(usAccountErrorKind('Internal Server Error')).toBe('temporary');
+        expect(usAccountErrorKind('400 INVALID_ACCOUNT')).toBeNull();
+        expect(usAccountErrorKind(Object.assign(new Error('503'), { status: 503 }))).toBe('unavailable');
+    });
+
+    it('503 everywhere is one calm not-yet-open line', async () => {
+        m.pnl.mockRejectedValue(unavailable());
+        await mount(createElement(UsTodayPnlSection, { accounts: [acct(), acct(H2)] }));
+        const t = all();
+        expect(t.match(/美股帳務服務尚未開放/g)).toHaveLength(1);
+    });
+
+    it('does not claim 「今日無」 when one account is empty and another failed with no earlier rows', async () => {
+        m.pnl.mockImplementation(async (a: typeof H) => {
+            if (a.account_id.startsWith('0000002')) throw new Error('502 UPSTREAM_ERROR');
+            return [];
+        });
+        await mount(createElement(UsTodayPnlSection, { accounts: [acct(), acct(H2)] }));
+        const t = all();
+        expect(t).not.toContain('今日無美股已實現損益');
+        expect(t).toContain(US_PARTIAL_FAILURE);
+    });
 });
