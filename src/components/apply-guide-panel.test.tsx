@@ -414,6 +414,31 @@ describe('in-app apply guide', () => {
         expect(mocks.caTarget).toHaveBeenLastCalledWith(null);
     });
 
+    it('does not hand a closed panel\'s task to the shell when its window open finishes late', async () => {
+        let opened!: (placement: string) => void;
+        mocks.open.mockImplementationOnce(() => new Promise<string>(resolve => { opened = resolve; }));
+        await mount(withProfiles(sim, prod), 'production');
+        await act(async () => view!.unmount());
+        await mount(withProfiles(sim, prod), 'ca');
+        expect(mocks.importEnvironment).toHaveBeenLastCalledWith('simulation');
+        const calls = mocks.importEnvironment.mock.calls.length;
+        await act(async () => opened('overlay'));
+        expect(mocks.importEnvironment.mock.calls.length).toBe(calls);
+        expect(mocks.importEnvironment).not.toHaveBeenCalledWith('production');
+    });
+
+    it('does not carry a refused production task\'s error into the next task', async () => {
+        await mount(withProfiles(sim, prod), 'sign');
+        await emit({ kind: 'step', step: 'list' });
+        await act(async () => button('換一件要做的事')!.props.onClick());
+        mocks.importEnvironment.mockRejectedValueOnce(new Error('這個版本無法把金鑰存成正式帳號，請更新 App'));
+        await act(async () => button('申請正式 API Key')!.props.onClick());
+        expect(json()).toContain('這個版本無法把金鑰存成正式帳號');
+        await act(async () => button('簽署 API 約定書')!.props.onClick());
+        expect(json()).not.toContain('這個版本無法把金鑰存成正式帳號');
+        expect(json()).not.toContain('打不開申請視窗');
+    });
+
     it('discloses plaintext storage for a production key like first-run setup', async () => {
         await mount({ ...withProfiles(sim), credentialBackend: 'plaintext-fallback', fallbackPath: '/fixture/credentials.json' }, 'production');
         await emit({ kind: 'imported', profileId: 'p2', name: 'ShioajiProProd', duplicate: false, environment: 'production' });

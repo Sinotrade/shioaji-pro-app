@@ -314,6 +314,8 @@ export function useApplyGuide(onImported?: (imported: ApplyImported) => void, op
         const turn = turnRef.current;
         try {
             const result = await openApplyWindow();
+            // 面板在開窗途中關掉了：不再把這件事交給原生端（之後叫出來的導覽自己同步）
+            if (!aliveRef.current) return null;
             // 原生端每次啟動都預設不存檔：開窗後把使用者記住的選擇帶過去
             if (result !== 'browser') {
                 void setApplySaveEnv(saveEnvRef.current);
@@ -422,7 +424,7 @@ export function useApplyGuide(onImported?: (imported: ApplyImported) => void, op
         taskRef.current = next; setTaskState(next);
         // 每件事都重新選憑證要給哪個帳號（上一次選的帳號可能已經刪掉或改成模擬）
         caProfileRef.current = null; setCaProfileState(null);
-        setCaError(''); setCaAttached(null); setFailure(null); setDownloaded(null);
+        setCaError(''); setCaAttached(null); setFailure(null); setDownloaded(null); setOpenError('');
         setImported(null); hasImportedRef.current = false;
         // 官網已經登入、停在某一頁：直接跳到這件事對應的步驟（不必重新登入）
         const site = syncedRef.current;
