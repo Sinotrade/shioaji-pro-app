@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 vi.mock('./tauri', () => ({ openExternalUrl: vi.fn() }));
 import {
-    APPLY_PAGE_RULES, GUIDE_COPY, GUIDE_ORDER, PRODUCTION_NEXT_STEPS, SIGN_STEPS, SIGNING_MARKETS,
-    guideStepOf, nextGuideStep, previousGuideStep, isApplyPageStep, signTargetId,
+    APPLY_PAGE_RULES, CARD_LIMITS, GUIDE_COPY, GUIDE_ORDER, PRODUCTION_NEXT_STEPS, SIGN_STEPS, SIGNING_MARKETS,
+    guideCardOf, guideProgressText, guideStepOf, nextGuideStep, previousGuideStep, isApplyPageStep, signTargetId,
 } from './apply-guide-config';
 import { SIGNING_URLS } from './account-signing';
 import { parseApplyGuideEvent } from './apply-guide-native';
@@ -156,6 +156,73 @@ describe('apply guide native events', () => {
         expect(parseApplyGuideEvent('apply-guide:downloaded', { fileName: 'qrcode.png' })).toBeNull();
         expect(parseApplyGuideEvent('apply-guide:closed', null)).toEqual({ kind: 'closed' });
         expect(parseApplyGuideEvent('other', {})).toBeNull();
+    });
+
+    it('takes only the three fixed card buttons from the page', () => {
+        for (const action of ['next', 'prev', 'hide'] as const) {
+            expect(parseApplyGuideEvent('apply-guide:nav', { action })).toEqual({ kind: 'nav', action });
+        }
+        for (const action of ['submit', 'click', 'NEXT', 'next.1', '', 1, null, undefined, { next: true }]) {
+            expect(parseApplyGuideEvent('apply-guide:nav', { action })).toBeNull();
+        }
+        expect(parseApplyGuideEvent('apply-guide:nav', null)).toBeNull();
+    });
+});
+
+// 與 Rust 端 GuideCard::validate 相同：不符合時原生殼拒絕整張卡
+const validCopy = (value: string, max: number) => value.trim().length > 0 && [...value].length <= max && !/\p{Cc}/u.test(value);
+
+describe('the guide card on the page', () => {
+    const options = { canPrev: true, canNext: true, theme: 'dark', large: false } as const;
+    const targetIds = new Set(APPLY_PAGE_RULES.targets.map(t => t.id));
+
+    it('passes the native validation for every step', () => {
+        for (const step of GUIDE_ORDER) {
+            const card = guideCardOf(step, options);
+            expect(validCopy(card.progress, CARD_LIMITS.progress), step).toBe(true);
+            expect(validCopy(card.title, CARD_LIMITS.title), step).toBe(true);
+            expect(validCopy(card.lead, CARD_LIMITS.lead), step).toBe(true);
+            expect(card.points.length).toBeLessThanOrEqual(CARD_LIMITS.points);
+            for (const point of card.points) {
+                expect(point.targets.length, point.title).toBeGreaterThan(0);
+                expect(point.targets.length, point.title).toBeLessThanOrEqual(CARD_LIMITS.targets);
+                for (const id of point.targets) expect(targetIds.has(id), id).toBe(true);
+                expect(validCopy(point.title, CARD_LIMITS.pointTitle), point.title).toBe(true);
+                expect(validCopy(point.body, CARD_LIMITS.pointBody), point.title).toBe(true);
+            }
+        }
+    });
+
+    it('uses the same copy and progress as the guide, keeping only points the page can point at', () => {
+        const login = guideCardOf('login', options);
+        expect(login.progress).toBe('第 1 步，共 6 步：登入');
+        expect(login.title).toBe(GUIDE_COPY.login.title);
+        expect(login.lead).toBe(GUIDE_COPY.login.lead);
+        expect(login.points.map(p => p.targets)).toEqual([['login-button'], ['login-submit']]);
+        expect(login.points[0]!.body).toBe(GUIDE_COPY.login.points[0]!.body);
+        expect(guideProgressText('success')).toBe('第 6 步，共 6 步：下載 .env');
+        expect(guideProgressText('imported')).toBe('全部完成');
+        const form = guideCardOf('form', { ...options, canNext: false, theme: 'light', large: true });
+        expect(form.points.find(p => p.targets[0] === 'perm-prod')!.tone).toBe('caution');
+        expect(form.points.some(p => p.title.includes('無限制 IP'))).toBe(false); // 沒有網頁目標
+        expect(form).toMatchObject({ canPrev: true, canNext: false, theme: 'light', large: true });
+    });
+
+    it('covers every signing page, including the controls without their own point', () => {
+        const sign = guideCardOf('sign', options);
+        const of = (title: string) => sign.points.find(p => p.title.startsWith(title))!.targets;
+        expect(of('逐條閱讀')).toEqual(['sign-s-terms', 'sign-f-terms', 'sign-h-terms']);
+        expect(of('下載約定書副本')).toEqual(expect.arrayContaining(['sign-s-download', 'sign-h-confirm']));
+        expect(of('勾選帳戶')).toEqual(expect.arrayContaining(['sign-f-button', 'sign-f-accounts']));
+        // 每個自動標示的簽署目標都有說明
+        const covered = new Set(sign.points.flatMap(p => p.targets));
+        for (const t of APPLY_PAGE_RULES.targets.filter(t => t.auto && t.step.startsWith('sign-'))) expect(covered.has(t.id), t.id).toBe(true);
+    });
+
+    it('explains the CA download on the finished page too', () => {
+        const done = guideCardOf('imported', options);
+        expect(done.points.map(p => p.targets)).toEqual([['download-ca']]);
+        expect(PRODUCTION_NEXT_STEPS.find(p => p.target === 'download-ca')!.title).toBe(done.points[0]!.title);
     });
 });
 

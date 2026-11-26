@@ -5,10 +5,16 @@
 // clearApplySiteData 會關掉申請視窗並清掉這個資料區。
 // 這裡只從主視窗呼叫 apply_window_* 指令，並接收原生殼送來的事件：
 // 步驟（step；簽署頁另帶讀到的簽署狀態）、.env 已載入（只帶帳號 id 與金鑰名稱，不含金鑰）、
-// 載入失敗、其他下載、視窗關閉。舊版原生殼沒有這些指令時退回系統瀏覽器。
+// 載入失敗、其他下載、視窗關閉、網頁說明卡上的按鈕（nav：只有 next／prev／hide 三種）。
+// 舊版原生殼沒有這些指令時退回系統瀏覽器。
+//
+// 網頁說明卡的按鈕是官網頁面上的東西，官網自己的程式也能假造這個回報，
+// 所以收到 nav 只能移動導覽步驟或關掉說明卡，不能做別的事。
 
 import { SIGNING_URLS, type SigningMarket } from './account-signing';
-import { APPLY_PAGE_RULES, APPLY_URL, isApplyPageStep, isSignState, signMarketOf, type ApplyPageStep, type SignState } from './apply-guide-config';
+import {
+    APPLY_PAGE_RULES, APPLY_URL, isApplyPageStep, isSignState, signMarketOf, type ApplyGuideCard, type ApplyPageStep, type SignState,
+} from './apply-guide-config';
 import { isTauri } from './runtime';
 import { openExternalUrlOrThrow } from './tauri';
 
@@ -17,7 +23,12 @@ export type ApplyGuideEvent =
     | { kind: 'imported'; profileId: string; name: string; duplicate: boolean }
     | { kind: 'import-failed'; message: string }
     | { kind: 'downloaded'; fileName: string; status: DownloadStatus }
-    | { kind: 'closed' };
+    | { kind: 'closed' }
+    | { kind: 'nav'; action: ApplyGuideNavAction };
+
+/** 網頁說明卡的按鈕：下一步、上一步、關掉說明卡。 */
+export type ApplyGuideNavAction = 'next' | 'prev' | 'hide';
+const NAV_ACTIONS: readonly unknown[] = ['next', 'prev', 'hide'];
 
 /** beside：申請視窗放在主視窗旁邊（不重疊）；overlay：蓋住主視窗右側，導覽要靠左。 */
 export type ApplyWindowPlacement = 'beside' | 'overlay';
@@ -90,6 +101,8 @@ export async function showApplySignPage(market: SigningMarket) {
     }
 }
 export const focusApplyTarget = (target: string) => call('apply_window_focus', { target });
+/** 在官網上顯示（或 null 移除）導覽這一步的說明卡；舊版原生殼沒有這個指令：只有 App 裡的導覽。 */
+export const setApplyGuideCard = (card: ApplyGuideCard | null) => call('apply_window_set_card', { card });
 /** 「下載 .env」時是否同時把檔案存到下載資料夾（預設不存，只匯入 App）。舊版原生殼沒有這個指令：照舊只匯入。 */
 export const setApplySaveEnv = (save: boolean) => call('apply_window_set_save_env', { save });
 
@@ -133,12 +146,14 @@ export function parseApplyGuideEvent(name: string, payload: unknown): ApplyGuide
                 : null;
         case 'apply-guide:closed':
             return { kind: 'closed' };
+        case 'apply-guide:nav':
+            return NAV_ACTIONS.includes(record.action) ? { kind: 'nav', action: record.action as ApplyGuideNavAction } : null;
         default:
             return null;
     }
 }
 
-const EVENTS = ['apply-guide:step', 'apply-guide:imported', 'apply-guide:import-failed', 'apply-guide:downloaded', 'apply-guide:closed'];
+const EVENTS = ['apply-guide:step', 'apply-guide:imported', 'apply-guide:import-failed', 'apply-guide:downloaded', 'apply-guide:closed', 'apply-guide:nav'];
 
 export async function listenApplyGuide(handler: (event: ApplyGuideEvent) => void): Promise<() => void> {
     if (!isTauri) return () => undefined;

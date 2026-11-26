@@ -4,7 +4,8 @@ const mocks = vi.hoisted(() => ({ invoke: vi.fn(), openOrThrow: vi.fn(), open: v
 vi.mock('./runtime', () => ({ isTauri: true }));
 vi.mock('./tauri', () => ({ openExternalUrl: mocks.open, openExternalUrlOrThrow: mocks.openOrThrow }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke: mocks.invoke }));
-import { clearApplySiteData, openApplyWindow, setApplySaveEnv, showApplySignPage } from './apply-guide-native';
+import { clearApplySiteData, openApplyWindow, setApplyGuideCard, setApplySaveEnv, showApplySignPage } from './apply-guide-native';
+import { guideCardOf } from './apply-guide-config';
 
 beforeEach(() => { vi.clearAllMocks(); });
 
@@ -72,6 +73,19 @@ describe('setApplySaveEnv', () => {
         expect(mocks.invoke).toHaveBeenCalledWith('apply_window_set_save_env', { save: true });
         mocks.invoke.mockRejectedValue('Command apply_window_set_save_env not found');
         await expect(setApplySaveEnv(false)).resolves.toBeUndefined();
+    });
+});
+
+describe('setApplyGuideCard', () => {
+    it('sends the card (or null to remove it) and ignores an older shell', async () => {
+        mocks.invoke.mockResolvedValue(null);
+        const card = guideCardOf('list', { canPrev: true, canNext: true, theme: 'dark', large: false });
+        await setApplyGuideCard(card);
+        expect(mocks.invoke).toHaveBeenCalledWith('apply_window_set_card', { card });
+        await setApplyGuideCard(null);
+        expect(mocks.invoke).toHaveBeenLastCalledWith('apply_window_set_card', { card: null });
+        mocks.invoke.mockRejectedValue('Command apply_window_set_card not found');
+        await expect(setApplyGuideCard(null)).resolves.toBeUndefined();
     });
 });
 
