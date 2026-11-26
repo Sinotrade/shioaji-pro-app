@@ -627,6 +627,10 @@ export function ApplyGuide({ guide, settings, busy, docked = false, contentRef, 
                                 <div className={g.itemText}>
                                     <p className={g.itemTitle}><Rich text={item.title} /></p>
                                     <p className={g.itemBody}><Rich text={item.body} /></p>
+                                    {item.target && guide.windowState === 'open' && <button className={g.locate}
+                                        title="在申請視窗中把這個位置框起來" aria-label={`在網頁上標示：${item.title}`}
+                                        onClick={() => void guide.locate(item.target!)}
+                                    ><Crosshair size={17} aria-hidden />在網頁上標示</button>}
                                     {item.links.length > 0 && <div className={g.linkRow}>
                                         {item.links.map(link => <button key={link.label} className={g.textButton} onClick={() => void openExternalUrl(link.url)}>
                                             {link.label}<ExternalLink size={16} aria-label="（在瀏覽器開啟）" />

@@ -202,6 +202,7 @@ export const GUIDE_COPY: Record<GuideStep, GuideStepCopy> = {
         points: [
             { title: '按「新增 API Key」', body: '按下後會先確認是本人（身份驗證）。', target: 'add-key' },
             { title: '已有金鑰？', body: '舊金鑰的 Secret Key 已經看不到了，App 需要完整的金鑰，所以請新增一把。舊的可以留著。' },
+            { title: '正式環境還要「下載憑證」', body: '模擬環境用不到，可以先略過。之後要在正式環境下單，回到這一頁按「下載憑證」取得 CA 憑證（Sinopac.pfx），再到 App 的「伺服器設定 › 帳號」選擇憑證檔並輸入憑證密碼，才能開始正式交易。', target: 'download-ca' },
         ],
     },
     verify: {
@@ -252,7 +253,7 @@ export const GUIDE_COPY: Record<GuideStep, GuideStepCopy> = {
 
 /** 完成後的下一步：正式交易另外需要的條件（只說明，不在這裡辦理）。 */
 export interface NextStepLink { label: string; url: string }
-export interface NextStep { title: string; body: string; links: NextStepLink[] }
+export interface NextStep { title: string; body: string; links: NextStepLink[]; /** 可在官網上標示的目標 */ target?: string }
 export const PRODUCTION_NEXT_STEPS: NextStep[] = [
     {
         title: '金鑰要有「正式環境」權限',
@@ -271,8 +272,9 @@ export const PRODUCTION_NEXT_STEPS: NextStep[] = [
     },
     {
         title: '下載 CA 憑證',
-        body: '在 API 管理頁按「下載憑證」取得 Sinopac.pfx，再到帳號設定選擇憑證檔並輸入密碼。',
+        body: '正式環境下單一定要有 CA 憑證。在 API 管理頁按「下載憑證」取得 Sinopac.pfx，再到「伺服器設定 › 帳號」選擇憑證檔並輸入憑證密碼，才能開始正式交易。',
         links: [],
+        target: 'download-ca',
     },
 ];
 
