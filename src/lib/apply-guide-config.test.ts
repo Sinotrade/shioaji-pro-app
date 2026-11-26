@@ -70,8 +70,12 @@ describe('apply guide page rules', () => {
 
     it('auto-highlights at most one target per step and every guide target exists on its step', () => {
         for (const step of APPLY_PAGE_RULES.steps) {
-            // 簽署頁依序標示好幾個（做完一個換下一個）；其他步驟最多一個
+            // 簽署頁依序標示好幾個（做完一個換下一個）；登入頁先標登入框的「登入」，沒有登入框才標「客戶登入」；其他步驟最多一個
             if (step.sign) continue;
+            if (step.id === 'login') {
+                expect(APPLY_PAGE_RULES.targets.filter(t => t.step === 'login' && t.auto).map(t => t.id)).toEqual(['login-submit', 'login-button']);
+                continue;
+            }
             expect(APPLY_PAGE_RULES.targets.filter(t => t.step === step.id && t.auto).length).toBeLessThanOrEqual(1);
         }
         for (const step of GUIDE_ORDER) {

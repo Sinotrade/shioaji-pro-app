@@ -85,6 +85,8 @@ export const APPLY_PAGE_RULES: ApplyPageRules = {
         { id: 'login', pathPrefix: '/' },
     ],
     targets: [
+        // 登入框（含憑證部署視窗關掉後回到的登入畫面）先標「登入」，沒有登入框才標右上角「客戶登入」
+        { id: 'login-submit', step: 'login', selector: '[class*="login__box"] button.ant-btn-primary', auto: true },
         { id: 'login-button', step: 'login', text: '客戶登入', auto: true },
         { id: 'add-key', step: 'list', text: '新增 API Key', auto: true },
         { id: 'download-ca', step: 'list', text: '下載憑證' },
@@ -178,6 +180,7 @@ export const GUIDE_COPY: Record<GuideStep, GuideStepCopy> = {
         lead: '在右邊的官網按「客戶登入」，用證券網路帳號和密碼登入。',
         points: [
             { title: '按「客戶登入」', body: '在官網右上角。按下後會跳出登入框。', target: 'login-button' },
+            { title: '輸入帳號密碼後按「登入」', body: '第一次在這台電腦登入會跳出電子憑證安裝視窗，裝好會自動關閉並回到登入畫面，這時要再按一次「登入」。', target: 'login-submit' },
             { title: '登入後到下一步', body: '登入後如果還停在首頁，按下面的「回到 API 管理頁」，或按「下一步」先看 API 約定書。' },
         ],
     },
