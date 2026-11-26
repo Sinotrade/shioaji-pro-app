@@ -224,8 +224,8 @@ export interface BroadcastTraceEntry {
     repeat: number;
 }
 
-// 200 筆在實測中只夠記 2.5 分鐘（冷卻／去重的雜訊佔絕大多數，
-// 見 broadcast-trace-20261126-211647.txt：匯出時已滿 200/200、最早只回到 2 分半前）。
+// 200 筆在實測中只夠記 2.5 分鐘（冷卻／去重的雜訊佔絕大多數：
+// 一次實測約 2 分半就把 200 筆寫滿，匯出時已滿 200/200、最早只回到 2 分半前）。
 // 1000 筆約 100KB，對記憶體無感，但足以覆蓋一次完整的實測流程。
 const TRACE_LIMIT = 1000;
 const TRACE_COLLAPSE_MS = 1000;
@@ -271,7 +271,7 @@ function pushTrace(kind: BroadcastTraceKind, text: string, code?: string) {
     // 折疊的判斷必須含 text：同商品同種類但**內容不同**的兩筆是兩件事。
     // 真實案例：21:14:52.169「不念（first-tick）」與 21:14:52.307「念 «…2160»」
     // 相隔 138ms；只看 (kind, code) 會把「念」吞進「不念」，匯出檔就出現
-    // 「只判定不念」卻又有 speak 的自相矛盾（broadcast-trace-20261126-211647）。
+    // 「只判定不念」卻又有 speak 的自相矛盾。
     if (
         last &&
         last.kind === kind &&
@@ -524,8 +524,7 @@ export function debugDecision(
         if (result.speak) {
             // 這裡刻意**不**計入 counters.spoke、也**不**寫 lastSpokeText：
             // 「判定要念」不等於「真的念了」——進佇列後還可能被去重擋下或過時丟棄。
-            // 實測（broadcast-trace-20261126-211647.txt，200 行窗口）：
-            // 判定要念 34 次，真正 speak 只有 7 次。若兩處都 +1，面板的「已播」
+            // 一次實測的 200 筆窗口中：判定要念 34 次，真正 speak 只有 7 次。若兩處都 +1，面板的「已播」
             // 會把「想播」加進「已播」，使用者看到的數字就不是事實。
             // 這兩個欄位只由 debugSpoke()（佇列真正發聲時）更新。
             if (!result.status) d.counters.generalQuotes += 1;
@@ -560,7 +559,7 @@ export function debugSpoke(text: string, code: string) {
  * 一句話念完。
  *
  * `elapsedMs` 是「從送出到真的結束」的時間，用來抓「假念完」：
- * 實測（broadcast-trace-20261126-213424.txt:28-29）出現過 speak → speak-done
+ * 一次實測中出現過 speak → speak-done
  * 只隔 **27ms**，而同一句話正常要 1.9 秒。那種情況多半是被中斷或根本沒發聲，
  * 但沒有秒數就完全看不出來，所以這裡把它寫進 trace。
  */
