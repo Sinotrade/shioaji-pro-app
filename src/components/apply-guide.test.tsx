@@ -429,19 +429,18 @@ describe('signing the API agreements', () => {
         .findByType('input');
     const rows = () => view!.root.findAllByProps({ 'aria-label': 'API 約定書簽署狀態' })[0]?.findAllByType('li') ?? [];
 
-    it('comes right after login, asks which markets to trade and shows only those (台股 by default)', async () => {
+    it('comes right after login, asks which markets to trade and shows only those (all three the first time)', async () => {
         await mount();
         await act(async () => button('開始申請')!.props.onClick());
         await act(async () => button('下一步')!.props.onClick());
         expect(json()).toContain('簽署 API 約定書');
         expect(json()).toContain('順序不限');
         expect(json()).toContain('第 2 步，共 6 步');
-        expect(marketBox('證券（台股）').props.checked).toBe(true);
-        expect(marketBox('期貨／選擇權').props.checked).toBe(false);
-        expect(rows()).toHaveLength(1);
+        for (const title of ['證券（台股）', '期貨／選擇權', '美股（複委託）']) expect(marketBox(title).props.checked).toBe(true);
+        expect(rows()).toHaveLength(3);
         expect(json()).toContain('未確認');
-        // 勾期貨：多一列，選擇記住
-        await act(async () => marketBox('期貨／選擇權').props.onChange({ currentTarget: { checked: true } }));
+        // 取消美股：少一列，選擇記住
+        await act(async () => marketBox('美股（複委託）').props.onChange({ currentTarget: { checked: false } }));
         expect(rows()).toHaveLength(2);
         expect(JSON.parse(store.get('sjpro.applyGuide.markets')!)).toEqual(['S', 'F']);
         await act(async () => byLabel('打開期貨／選擇權簽署頁')!.props.onClick());
@@ -475,6 +474,52 @@ describe('signing the API agreements', () => {
         await act(async () => button('上一步')!.props.onClick());
         expect(byLabel('打開美股（複委託）簽署頁')).toBeUndefined();
         expect(byLabel('打開證券（台股）簽署頁')).toBeDefined();
+    });
+
+    it('keeps a stored choice, including none', async () => {
+        store.set('sjpro.applyGuide.markets', JSON.stringify(['F']));
+        await mount();
+        await act(async () => button('開始申請')!.props.onClick());
+        await act(async () => button('下一步')!.props.onClick());
+        expect(marketBox('證券（台股）').props.checked).toBe(false);
+        expect(marketBox('期貨／選擇權').props.checked).toBe(true);
+        expect(rows()).toHaveLength(1);
+        await act(async () => view!.unmount()); view = undefined;
+        store.set('sjpro.applyGuide.markets', '[]');
+        await mount();
+        await act(async () => button('開始申請')!.props.onClick());
+        await act(async () => button('下一步')!.props.onClick());
+        expect(rows()).toHaveLength(0);
+        expect(json()).toContain('還沒選市場');
+    });
+
+    it('checks 簽署 in the progress bar only when every chosen market reads signed, and never blocks', async () => {
+        store.set('sjpro.applyGuide.markets', JSON.stringify(['S', 'F']));
+        const signStep = () => view!.root.findAllByProps({ 'aria-label': '申請進度' })[0]!.findAllByType('button')
+            .find(b => String(b.props['aria-label']).startsWith('簽署，'))!;
+        await mount();
+        await act(async () => button('開始申請')!.props.onClick());
+        expect(signStep().props['aria-label']).toBe('簽署，還沒開始');
+        // 跳過簽署直接到 API 管理：不擋，簽署不打勾也不是錯誤
+        await emit({ kind: 'step', step: 'list' });
+        expect(json()).toContain('按「新增 API Key」');
+        expect(signStep().props['aria-label']).toBe('簽署，勾選的市場還沒全部確認已簽署');
+        expect(button('下一步')!.props.disabled).toBe(false);
+        expect(button('上一步')!.props.disabled).toBe(false);
+        await emit({ kind: 'step', step: 'sign-s', sign: 'signed' });
+        await emit({ kind: 'step', step: 'sign-f', sign: 'pending' });
+        await emit({ kind: 'step', step: 'list' });
+        expect(signStep().props['aria-label']).toBe('簽署，勾選的市場還沒全部確認已簽署');
+        await emit({ kind: 'step', step: 'sign-f', sign: 'signed' });
+        expect(signStep().props['aria-label']).toBe('簽署，目前在這一步');
+        await emit({ kind: 'step', step: 'verify' });
+        expect(signStep().props['aria-label']).toBe('簽署，已完成');
+        // 多勾一個還沒確認的市場：又變回未打勾
+        await act(async () => signStep().props.onClick());
+        await act(async () => marketBox('美股（複委託）').props.onChange({ currentTarget: { checked: true } }));
+        await act(async () => button('下一步')!.props.onClick());
+        expect(signStep().props['aria-label']).toBe('簽署，勾選的市場還沒全部確認已簽署');
+        expect(button('前往 API 管理頁申請金鑰')).toBeUndefined(); // 已在 API 管理步驟
     });
 
     it('opens the signing page in the browser when the app could only use the browser', async () => {

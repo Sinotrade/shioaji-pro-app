@@ -63,8 +63,8 @@ function writeSaveEnvPref(save: boolean) {
 }
 
 const MARKETS_KEY = 'sjpro.applyGuide.markets';
-/** 預設只勾台股：最常見；之後可以改。 */
-const DEFAULT_MARKETS: SigningMarket[] = ['S'];
+/** 第一次（沒有記住的選擇）預設三個市場都勾；之後可以改。 */
+const DEFAULT_MARKETS: SigningMarket[] = ['S', 'F', 'H'];
 function readMarketsPref(): SigningMarket[] {
     try {
         const raw = localStorage.getItem(MARKETS_KEY);
@@ -396,7 +396,17 @@ function Callout({ tone, title, children, actions }: { tone: 'danger' | 'warn' |
     </div>;
 }
 
-function Progress({ step, imported, onSelect }: { step: GuideStep; imported: boolean; onSelect: (step: GuideStep) => void }) {
+/** 勾選的市場全部讀到「已簽署」（沒勾任何市場也算）：進度列的「簽署」才打勾。 */
+export function allChosenSigned(guide: Pick<ApplyGuideController, 'markets' | 'signs'>) {
+    return guide.markets.every(market => guide.signs[market] === 'signed');
+}
+
+function Progress({ step, imported, signDone, onSelect }: {
+    step: GuideStep; imported: boolean;
+    /** 「簽署」只在勾選的市場都已簽署時打勾；只是顯示，不擋任何步驟 */
+    signDone: boolean;
+    onSelect: (step: GuideStep) => void;
+}) {
     const index = SITE_STEPS.indexOf(step);
     const isDone = step === 'imported';
     return <nav className={g.progressWrap} aria-label="申請進度">
@@ -406,9 +416,11 @@ function Progress({ step, imported, onSelect }: { step: GuideStep; imported: boo
         </p>
         <ol className={g.progress}>
             {SITE_STEPS.map((item, i) => {
-                const state = i < index || (isDone && i === index) ? 'done' : i === index ? 'current' : 'todo';
+                const passed = i < index || (isDone && i === index);
+                const state = i === index && !isDone ? 'current' : passed && (item !== 'sign' || signDone) ? 'done' : 'todo';
                 const last = item === 'imported';
-                const stateText = state === 'done' ? '已完成' : state === 'current' ? '目前在這一步' : '還沒開始';
+                const stateText = state === 'done' ? '已完成' : state === 'current' ? '目前在這一步'
+                    : passed ? '勾選的市場還沒全部確認已簽署' : '還沒開始';
                 return <li key={item} className={g.progressItem}>
                     {i > 0 && <span className={g.stepLine[i <= index ? 'done' : 'todo']} aria-hidden />}
                     <button className={g.step[state]} aria-current={state === 'current' ? 'step' : undefined}
@@ -505,7 +517,7 @@ export function ApplyGuide({ guide, settings, busy, docked = false, contentRef, 
         const plaintext = (profile?.credentialBackend ?? settings.credentialBackend) === 'plaintext-fallback';
         return <section className={cardClass} aria-label="申請 API Key 導覽">
             {header}
-            <Progress step={step} imported={!!guide.imported} onSelect={guide.setStep} />
+            <Progress step={step} imported={!!guide.imported} signDone={allChosenSigned(guide)} onSelect={guide.setStep} />
             <div className={bodyClass} ref={contentRef}>
                 <div className={g.doneHero}>
                     <span className={g.doneIcon}><Check size={34} strokeWidth={3} aria-hidden /></span>
@@ -567,7 +579,7 @@ export function ApplyGuide({ guide, settings, busy, docked = false, contentRef, 
     return <section className={cardClass} aria-label="申請 API Key 導覽">
         {header}
         {syncBanner}
-        <Progress step={step} imported={!!guide.imported} onSelect={guide.setStep} />
+        <Progress step={step} imported={!!guide.imported} signDone={allChosenSigned(guide)} onSelect={guide.setStep} />
         <div className={bodyClass} ref={contentRef}>
             <h2 className={g.title}>{copy.title}</h2>
             <p className={g.lead}><Rich text={copy.lead} /></p>
