@@ -142,6 +142,7 @@ export function useApplyGuide(onImported?: (imported: ApplyImported) => void, op
     const [task, setTaskState] = useState<ApplyGuideTask>(options.task ?? 'apply');
     const taskRef = useRef(task);
     taskRef.current = task;
+    const inAppRef = useRef(options.task !== undefined);
     const [caProfileId, setCaProfileState] = useState<string | null>(null);
     const caProfileRef = useRef<string | null>(null);
     const caRequestRef = useRef(0);
@@ -214,7 +215,8 @@ export function useApplyGuide(onImported?: (imported: ApplyImported) => void, op
                     }
                     // 載入後關掉「新增成功」會回到列表、從完成頁打開簽署頁：都留在完成頁；
                     // 開始申請另一把（身份驗證以後）才跟著官網走，完成頁仍可從進度列回去
-                    setStep(current => followSiteStep(current, event.step, taskRef.current));
+                    // App 裡的導覽停在「選擇要做的事」時，官網換頁不帶走畫面（首次設定照舊）
+                    setStep(current => current === 'start' && inAppRef.current ? current : followSiteStep(current, event.step, taskRef.current));
                     break;
                 }
                 case 'imported': {
@@ -391,6 +393,8 @@ export function useApplyGuide(onImported?: (imported: ApplyImported) => void, op
         if (!result && next === 'production') setStep('start');
     };
     const backToTasks = () => {
+        // 選擇畫面不屬於任何一件事：原生端照首次設定（模擬、一般下載），官網換頁也不離開選擇畫面
+        taskRef.current = 'sign'; setTaskState('sign');
         setStep('start');
         // 不再攔截下載：回到選擇時原生端照首次設定（模擬、一般下載）
         if (windowRef.current === 'open') void syncTask('sign').catch(() => undefined);

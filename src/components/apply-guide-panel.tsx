@@ -13,27 +13,32 @@ import type { DesktopSettings } from '../lib/tauri';
 import { ApplyGuide, useApplyGuide } from './apply-guide';
 import * as g from './apply-guide.css';
 
-export function ApplyGuidePanel({ settings, task, onClose, onChanged, onOpenAccount }: {
+export function ApplyGuidePanel({ settings, request, onClose, onChanged, onOpenAccount }: {
     settings: DesktopSettings;
-    /** 直接做這件事；null：先選要做的事 */
-    task: InAppGuideTask | null;
+    /** 要做的事（null：先選要做的事）；seq 每次要求都不同，同一件事再要求一次也會切過去 */
+    request: { task: InAppGuideTask | null; seq: number };
     onClose: () => void;
     /** 金鑰或憑證存進帳號了：重新讀取帳號清單 */
     onChanged: () => void;
     /** 到帳號設定編輯這個帳號（輸入憑證密碼） */
     onOpenAccount: (profileId: string) => void;
 }) {
-    const guide = useApplyGuide(() => onChanged(), { task: task ?? 'sign', onChanged });
-    // 從捷徑直接指定要做的事：掛上後就開始（之後再要求別的任務時也切過去）
-    const started = useRef<InAppGuideTask | null>(null);
+    const guide = useApplyGuide(() => onChanged(), { task: request.task ?? 'sign', onChanged });
+    // 每次要求（捷徑或設定裡的按鈕）都照做：指定的事直接開始，null 回到選擇
+    const handled = useRef(0);
     useEffect(() => {
-        if (task && started.current !== task) { started.current = task; void guide.chooseTask(task); }
-    }, [task]); // eslint-disable-line react-hooks/exhaustive-deps
+        if (handled.current === request.seq) return;
+        handled.current = request.seq;
+        if (request.task) void guide.chooseTask(request.task);
+        else if (guide.step !== 'start') guide.backToTasks();
+    }, [request.seq]); // eslint-disable-line react-hooks/exhaustive-deps
     const close = () => { void closeApplyWindow(); onClose(); };
+    // 到帳號設定輸入憑證密碼：申請視窗是原生視窗、會蓋在設定上面，先關掉（官網登入保留）
+    const openAccount = (profileId: string) => { void closeApplyWindow(); onOpenAccount(profileId); };
     const panel = <div className={`${g.tokens} ${g.panel}`} data-testid="apply-guide-panel">
         <ApplyGuide guide={guide} settings={settings} busy={false} docked inApp fab={false}
-            onClose={close} onOpenAccount={onOpenAccount}
-            onManual={() => onOpenAccount('')} onStart={async () => undefined} />
+            onClose={close} onOpenAccount={openAccount}
+            onManual={() => openAccount('')} onStart={async () => undefined} />
     </div>;
     return typeof document === 'undefined' ? panel : createPortal(panel, document.body);
 }

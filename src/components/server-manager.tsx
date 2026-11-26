@@ -143,14 +143,15 @@ export function ServerManager({
     const [settingsOpen, setSettingsOpen] = useState(false);
     const settingsButton = useRef<HTMLButtonElement>(null);
     // App 裡的「申請／下載憑證導覽」面板：undefined＝關著；null＝先選要做的事
-    const [guideTask, setGuideTask] = useState<InAppGuideTask | null | undefined>(undefined);
+    // 每次要求都是新的一次（同一件事再按一次也要切過去）；undefined：面板關著
+    const [guideRequest, setGuideRequest] = useState<{ task: InAppGuideTask | null; seq: number } | undefined>(undefined);
     // 從導覽「到帳號設定」：打開伺服器設定並直接編輯這個帳號
     const [editProfileId, setEditProfileId] = useState<string | undefined>(undefined);
     const toggleRef = useRef(onToggle);
     toggleRef.current = onToggle;
     useEffect(() => onApplyGuideRequest(task => {
         setSettingsOpen(false); toggleRef.current(false);
-        setGuideTask(task);
+        setGuideRequest(current => ({ task, seq: (current?.seq ?? 0) + 1 }));
     }), []);
     const [settingsLoaded, setSettingsLoaded] = useState(false);
     const [settingsLoadError, setSettingsLoadError] = useState('');
@@ -1191,8 +1192,8 @@ export function ServerManager({
 
                 </>
             )}
-            {guideTask !== undefined && <ApplyGuidePanel settings={settings} task={guideTask}
-                onClose={() => setGuideTask(undefined)}
+            {guideRequest && <ApplyGuidePanel settings={settings} request={guideRequest}
+                onClose={() => setGuideRequest(undefined)}
                 onChanged={() => { void loadDesktopSettings().then(setSettings).catch(() => undefined); }}
                 onOpenAccount={profileId => {
                     setEditProfileId(profileId || undefined); setReadyLines([]);

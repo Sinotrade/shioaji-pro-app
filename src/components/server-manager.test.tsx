@@ -352,7 +352,7 @@ describe('credential profiles in server settings', () => {
         await click('申請／下載憑證導覽');
         // 設定對話框讓位給導覽面板；開始頁先選要做的事，還沒打開官網
         expect(view.root.findAllByType(ServerSettingsDialog)).toHaveLength(0);
-        expect(view.root.findByType(ApplyGuidePanel).props.task).toBeNull();
+        expect(view.root.findByType(ApplyGuidePanel).props.request.task).toBeNull();
         expect(text()).toContain('要在官網上做什麼？');
         expect(mocks.guideOpen).not.toHaveBeenCalled();
         // 導覽要求到帳號設定輸入憑證密碼：直接打開那個帳號的編輯畫面
@@ -367,7 +367,7 @@ describe('credential profiles in server settings', () => {
         mocks.guideOpen.mockResolvedValue('overlay');
         await act(async () => { view = create(createElement(ServerManager, { open: true, onToggle: vi.fn() })); });
         await act(async () => { expect(requestApplyGuide('production')).toBe(true); });
-        expect(view.root.findByType(ApplyGuidePanel).props.task).toBe('production');
+        expect(view.root.findByType(ApplyGuidePanel).props.request.task).toBe('production');
         expect(mocks.guideOpen).toHaveBeenCalledOnce();
         expect(text()).toContain('登入永豐金證券網站');
     });

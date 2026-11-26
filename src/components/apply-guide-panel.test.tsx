@@ -30,11 +30,16 @@ const button = (text: string) => view!.root.findAllByType('button').find(b => la
 const json = () => JSON.stringify(view!.toJSON());
 const emit = async (event: ApplyGuideEvent) => act(async () => mocks.handler!(event));
 const props = { onClose: vi.fn(), onChanged: vi.fn(), onOpenAccount: vi.fn() };
+let seq = 0;
+let request: { task: 'production' | 'ca' | 'sign' | null; seq: number } = { task: null, seq: 0 };
 const mount = async (settings: DesktopSettings, task: 'production' | 'ca' | 'sign' | null = null) => {
-    await act(async () => { view = create(createElement(ApplyGuidePanel, { settings, task, ...props })); });
+    request = { task, seq: ++seq };
+    await act(async () => { view = create(createElement(ApplyGuidePanel, { settings, request, ...props })); });
 };
-const rerender = async (settings: DesktopSettings, task: 'production' | 'ca' | 'sign' | null = null) => {
-    await act(async () => { view!.update(createElement(ApplyGuidePanel, { settings, task, ...props })); });
+/** 同一個要求、只換帳號資料；ask：送出一次新的要求 */
+const rerender = async (settings: DesktopSettings, ask?: { task: 'production' | 'ca' | 'sign' | null }) => {
+    if (ask) request = { task: ask.task, seq: ++seq };
+    await act(async () => { view!.update(createElement(ApplyGuidePanel, { settings, request, ...props })); });
 };
 
 beforeEach(() => {
@@ -75,7 +80,7 @@ describe('in-app apply guide', () => {
         expect(json()).toContain('ShioajiProProd');
         await emit({ kind: 'step', step: 'success' });
         expect(json()).toContain('存成正式帳號');
-        await rerender(withProfiles(sim, prod), 'production');
+        await rerender(withProfiles(sim, prod));
         await emit({ kind: 'imported', profileId: 'p2', name: 'ShioajiProProd', duplicate: false, environment: 'production' });
         expect(json()).toContain('正式金鑰已載入');
         expect(json()).toContain('正式環境');
@@ -196,6 +201,40 @@ describe('in-app apply guide', () => {
         await act(async () => refuse(new Error('憑證要設定的帳號已經改變，請重新選擇')));
         expect(json()).not.toContain('憑證沒有存成');
         expect(radios().map(r => r.props.checked)).toEqual([false, true]);
+    });
+
+    it('stays on the task list while the site changes pages, with native back to first-run defaults', async () => {
+        await mount(withProfiles(sim), 'production');
+        await emit({ kind: 'step', step: 'list' });
+        await act(async () => button('換一件要做的事')!.props.onClick());
+        expect(mocks.importEnvironment).toHaveBeenLastCalledWith('simulation');
+        expect(mocks.caTarget).toHaveBeenLastCalledWith(null);
+        await emit({ kind: 'step', step: 'form' });
+        expect(json()).toContain('要在官網上做什麼？');
+    });
+
+    it('follows every new request while the panel stays open', async () => {
+        await mount(withProfiles(sim, prod), 'production');
+        await emit({ kind: 'step', step: 'list' });
+        await act(async () => button('換一件要做的事')!.props.onClick());
+        await act(async () => button('下載 CA 憑證')!.props.onClick());
+        expect(json()).toContain('按「下載憑證」交給 App');
+        // 再按一次「申請正式 API Key」捷徑：同一件事也要切過去
+        await rerender(withProfiles(sim, prod), { task: 'production' });
+        expect(mocks.importEnvironment).toHaveBeenLastCalledWith('production');
+        expect(json()).not.toContain('按「下載憑證」交給 App');
+        // 設定裡的導覽按鈕：回到選擇
+        await rerender(withProfiles(sim, prod), { task: null });
+        expect(json()).toContain('要在官網上做什麼？');
+    });
+
+    it('closes the apply window before handing over to account settings', async () => {
+        await mount(withProfiles(sim, prod), 'ca');
+        await emit({ kind: 'step', step: 'list' });
+        await emit({ kind: 'ca-attached', profileId: 'p2', name: 'ShioajiProProd', fileName: 'Sinopac.pfx', hasCaPassword: false });
+        await act(async () => button('到帳號設定輸入憑證密碼')!.props.onClick());
+        expect(mocks.close).toHaveBeenCalledOnce();
+        expect(props.onOpenAccount).toHaveBeenCalledWith('p2');
     });
 
     it('only signs in the signing task', async () => {
