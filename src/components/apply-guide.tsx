@@ -285,11 +285,13 @@ export function useApplyGuide(onImported?: (imported: ApplyImported) => void, op
         const closes = closedRef.current;
         try { await setApplyImportEnvironment(current === 'production' ? 'production' : 'simulation'); } catch (error) {
             // 存不成正式帳號，這件事做不下去：上一件事留下的憑證帳號也不再攔截
-            if (sync === syncRef.current) { ++caRequestRef.current; void setApplyCaTarget(null).catch(() => undefined); }
+            if (sync === syncRef.current && aliveRef.current) { ++caRequestRef.current; void setApplyCaTarget(null).catch(() => undefined); }
             throw error;
         }
         // 等待中又開始了另一件事（或回到選擇畫面）：由較新的那一次決定憑證帳號
         if (sync !== syncRef.current) return;
+        // 面板已經關掉：之後叫出來的導覽自己決定憑證帳號
+        if (!aliveRef.current) return;
         // 等待中視窗被關掉：原生端已清掉憑證帳號，重新打開時再送
         if (closes !== closedRef.current) return;
         const target = current === 'production' || current === 'ca' ? caProfileRef.current : null;
@@ -309,6 +311,7 @@ export function useApplyGuide(onImported?: (imported: ApplyImported) => void, op
     };
     const openWindow = async (): Promise<ApplyWindowOpenResult | null> => {
         setOpening(true); setOpenError(''); setSiteClear({ kind: 'idle' });
+        const turn = turnRef.current;
         try {
             const result = await openApplyWindow();
             // 原生端每次啟動都預設不存檔：開窗後把使用者記住的選擇帶過去
@@ -340,7 +343,8 @@ export function useApplyGuide(onImported?: (imported: ApplyImported) => void, op
             }
             if (result === 'browser') setWindowState('browser');
             else { setPlacement(result); setWindowState('open'); }
-            setStep(current => current === 'start' ? 'login' : current);
+            // 開窗途中使用者回到「選擇要做的事」：留在選擇畫面，不自己進到某件事
+            setStep(current => current === 'start' && turn === turnRef.current ? 'login' : current);
             return result;
         } catch (error) {
             setOpenError(error instanceof Error ? error.message : String(error));

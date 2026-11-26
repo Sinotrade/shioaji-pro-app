@@ -380,6 +380,40 @@ describe('in-app apply guide', () => {
         expect(mocks.caTarget).not.toHaveBeenCalled();
     });
 
+    it('does not let a hand-over from a closed panel clear the CA recipient chosen in the reopened one', async () => {
+        const other: CredentialProfile = { ...prod, id: 'p3', name: '第二正式' };
+        await mount(withProfiles(sim, prod, other), 'ca');
+        await emit({ kind: 'step', step: 'list' });
+        await act(async () => button('換一件要做的事')!.props.onClick());
+        let finish!: () => void;
+        mocks.importEnvironment.mockImplementationOnce(() => new Promise<void>(resolve => { finish = resolve; }));
+        await act(async () => { void button('簽署 API 約定書')!.props.onClick(); });
+        await act(async () => view!.unmount());
+        // 導覽再叫出來、選好憑證帳號以後，舊面板等的那一次才回來
+        await mount(withProfiles(sim, prod, other), 'ca');
+        await emit({ kind: 'step', step: 'list' });
+        const radios = () => view!.root.findAll(n => n.type === 'input' && n.props.type === 'radio');
+        await act(async () => radios()[0]!.props.onChange());
+        const calls = mocks.caTarget.mock.calls.length;
+        await act(async () => finish());
+        expect(mocks.caTarget.mock.calls.length).toBe(calls);
+        expect(mocks.caTarget).toHaveBeenLastCalledWith('p2');
+    });
+
+    it('stays on the task list when the user went back while the window was still opening', async () => {
+        await mount(withProfiles(sim, prod));
+        let finish!: () => void;
+        mocks.importEnvironment.mockImplementationOnce(() => new Promise<void>(resolve => { finish = resolve; }));
+        await act(async () => { void button('下載 CA 憑證')!.props.onClick(); });
+        await act(async () => button('換一件要做的事')!.props.onClick());
+        expect(json()).toContain('要在官網上做什麼？');
+        await act(async () => finish());
+        expect(json()).toContain('要在官網上做什麼？');
+        // 原生端照選擇畫面：模擬、不攔截憑證
+        expect(mocks.importEnvironment).toHaveBeenLastCalledWith('simulation');
+        expect(mocks.caTarget).toHaveBeenLastCalledWith(null);
+    });
+
     it('discloses plaintext storage for a production key like first-run setup', async () => {
         await mount({ ...withProfiles(sim), credentialBackend: 'plaintext-fallback', fallbackPath: '/fixture/credentials.json' }, 'production');
         await emit({ kind: 'imported', profileId: 'p2', name: 'ShioajiProProd', duplicate: false, environment: 'production' });
