@@ -66,6 +66,7 @@ import {
     getAppUpdateState,
     isTauri,
     loadDesktopSettings,
+    reloadDesktopSettings,
     openLatestRelease,
     reloadWhenHealthy,
     restartAndInstallUpdate,
@@ -157,7 +158,7 @@ export function ServerManager({
         let off: (() => void) | undefined;
         void listenApplyGuide(event => {
             if (event.kind === 'imported' || event.kind === 'ca-attached') {
-                void loadDesktopSettings().then(fresh => { if (active) setSettings(fresh); }).catch(() => undefined);
+                void reloadDesktopSettings().then(fresh => { if (active) setSettings(fresh); }).catch(() => undefined);
             }
         }).then(unlisten => { if (active) off = unlisten; else unlisten(); });
         return () => { active = false; off?.(); };
@@ -1207,11 +1208,11 @@ export function ServerManager({
             )}
             {guideRequest && <ApplyGuidePanel settings={settings} request={guideRequest}
                 onClose={() => setGuideRequest(undefined)}
-                onChanged={() => { void loadDesktopSettings().then(setSettings).catch(() => undefined); }}
+                onChanged={() => { void reloadDesktopSettings().then(setSettings).catch(() => undefined); }}
                 onOpenAccount={profileId => {
                     // 先讀最新的帳號資料（剛設定的憑證路徑），編輯畫面才不會帶著舊的路徑存回去；
                     // 讀不到就不打開，請使用者再按一次
-                    void loadDesktopSettings().then(fresh => {
+                    void reloadDesktopSettings().then(fresh => {
                         setSettings(fresh);
                         setEditProfileId(profileId || undefined); setReadyLines([]);
                         toggleRef.current(true); setSettingsOpen(true);

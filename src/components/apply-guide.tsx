@@ -146,6 +146,8 @@ export function useApplyGuide(onImported?: (imported: ApplyImported) => void, op
     const [caProfileId, setCaProfileState] = useState<string | null>(null);
     const caProfileRef = useRef<string | null>(null);
     const caRequestRef = useRef(0);
+    /** 交接任務時送出憑證帳號的那一次（之後使用者又改選，就不是同一次） */
+    const syncCaRequestRef = useRef(0);
     /** 每次把任務交給原生端算一次：較新的一次開始後，舊的不再往下送（不會蓋掉新任務選好的憑證帳號） */
     const syncRef = useRef(0);
     /** 每選一件事或回到選擇畫面算一次：等待中的舊切換不再動畫面、不再打開視窗 */
@@ -295,7 +297,7 @@ export function useApplyGuide(onImported?: (imported: ApplyImported) => void, op
         // 等待中視窗被關掉：原生端已清掉憑證帳號，重新打開時再送
         if (closes !== closedRef.current) return;
         const target = current === 'production' || current === 'ca' ? caProfileRef.current : null;
-        ++caRequestRef.current;
+        syncCaRequestRef.current = ++caRequestRef.current;
         await setApplyCaTarget(target);
     };
     const selectCa = async (profileId: string | null) => {
@@ -437,7 +439,11 @@ export function useApplyGuide(onImported?: (imported: ApplyImported) => void, op
                 if (stale()) return;
                 const message = error instanceof Error ? error.message : String(error);
                 if (next === 'production') { setOpenError(message); setStep('start'); }
-                else setCaError(message);
+                else {
+                    // 交接途中選的帳號被原生端拒絕：取消選取（原生端沒有在攔截）；之後又改選的不動
+                    if (caRequestRef.current === syncCaRequestRef.current) { caProfileRef.current = null; setCaProfileState(null); }
+                    setCaError(message);
+                }
             }
             // 視窗在等待中被關掉：不自己重開（原生端已回到模擬、不攔截憑證），
             // 由使用者按「重新打開官網」走完整的開窗同步

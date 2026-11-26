@@ -439,6 +439,22 @@ describe('in-app apply guide', () => {
         expect(json()).not.toContain('打不開申請視窗');
     });
 
+    it('unselects a CA recipient the shell refuses while the task is handed over', async () => {
+        await mount(withProfiles(sim, prod), 'sign');
+        await emit({ kind: 'step', step: 'list' });
+        await act(async () => button('換一件要做的事')!.props.onClick());
+        let finish!: () => void;
+        mocks.importEnvironment.mockImplementationOnce(() => new Promise<void>(resolve => { finish = resolve; }));
+        // 交接還在等，畫面已經自動選了唯一的正式帳號
+        await act(async () => { void button('下載 CA 憑證')!.props.onClick(); });
+        const radios = () => view!.root.findAll(n => n.type === 'input' && n.props.type === 'radio');
+        expect(radios().map(r => r.props.checked)).toEqual([true]);
+        mocks.caTarget.mockRejectedValueOnce(new Error('這個帳號有未完成的憑證操作，請先到帳號設定修復'));
+        await act(async () => finish());
+        expect(json()).toContain('憑證沒有存成');
+        expect(radios().map(r => r.props.checked)).toEqual([false]);
+    });
+
     it('discloses plaintext storage for a production key like first-run setup', async () => {
         await mount({ ...withProfiles(sim), credentialBackend: 'plaintext-fallback', fallbackPath: '/fixture/credentials.json' }, 'production');
         await emit({ kind: 'imported', profileId: 'p2', name: 'ShioajiProProd', duplicate: false, environment: 'production' });

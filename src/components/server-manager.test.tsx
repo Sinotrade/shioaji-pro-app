@@ -1,11 +1,11 @@
 import { createElement, type ReactElement } from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-const mocks = vi.hoisted(() => ({ load: vi.fn(), save: vi.fn(), profile: vi.fn(), select: vi.fn(), remove: vi.fn(), logout: vi.fn(), start: vi.fn(), stop: vi.fn(), status: vi.fn(), env: vi.fn(), envCandidate: vi.fn(), ca: vi.fn(), notify: vi.fn(), info: vi.fn(), prepare: vi.fn(), reload: vi.fn(), guideOpen: vi.fn(), guideClose: vi.fn(), guideHandlers: [] as ((event: { kind: string }) => void)[] }));
+const mocks = vi.hoisted(() => ({ load: vi.fn(), reread: vi.fn(), save: vi.fn(), profile: vi.fn(), select: vi.fn(), remove: vi.fn(), logout: vi.fn(), start: vi.fn(), stop: vi.fn(), status: vi.fn(), env: vi.fn(), envCandidate: vi.fn(), ca: vi.fn(), notify: vi.fn(), info: vi.fn(), prepare: vi.fn(), reload: vi.fn(), guideOpen: vi.fn(), guideClose: vi.fn(), guideHandlers: [] as ((event: { kind: string }) => void)[] }));
 vi.mock('../lib/tauri', async () => ({
     ...await import('../lib/desktop-credentials'),
     isTauri: true, appVersion: async () => 'dev · test',
-    loadDesktopSettings: mocks.load, saveDesktopSettings: mocks.save,
+    loadDesktopSettings: mocks.load, reloadDesktopSettings: mocks.reread, saveDesktopSettings: mocks.save,
     saveCredentialProfile: mocks.profile, selectCredentialProfile: mocks.select,
     deleteCredentialProfile: mocks.remove, logoutCredentialProfile: mocks.logout,
     stopAgentsForServerChange: mocks.prepare,
@@ -51,7 +51,7 @@ describe('credential profiles in server settings', () => {
         const storage = new Map<string, string>();
         vi.stubGlobal('localStorage', { getItem: (key: string) => storage.get(key) ?? null, setItem: (key: string, value: string) => storage.set(key, value), removeItem: (key: string) => storage.delete(key) });
         vi.clearAllMocks();
-        mocks.load.mockResolvedValue(structuredClone(initial)); mocks.save.mockResolvedValue(initial); mocks.profile.mockResolvedValue(initial);
+        mocks.load.mockResolvedValue(structuredClone(initial)); mocks.reread.mockImplementation(() => mocks.load()); mocks.save.mockResolvedValue(initial); mocks.profile.mockResolvedValue(initial);
         mocks.select.mockResolvedValue({ ...initial, activeProfileId: 'two', production: true, credentialRevision: 'two-rev', caPath: two.caPath, hasCaPassword: true });
         mocks.remove.mockResolvedValue({ ...initial, profiles: [two], activeProfileId: null, configured: false });
         mocks.logout.mockResolvedValue({ ...initial, activeProfileId: null, configured: false });
@@ -359,10 +359,10 @@ describe('credential profiles in server settings', () => {
         expect(text()).toContain('要在官網上做什麼？');
         expect(mocks.guideOpen).not.toHaveBeenCalled();
         // 導覽要求到帳號設定輸入憑證密碼：直接打開那個帳號的編輯畫面
-        const reads = mocks.load.mock.calls.length;
+        const reads = mocks.reread.mock.calls.length;
         await act(async () => view.root.findByType(ApplyGuidePanel).props.onOpenAccount('two'));
         // 先重新讀帳號資料（剛設定的憑證路徑）再打開編輯畫面
-        expect(mocks.load.mock.calls.length).toBeGreaterThan(reads);
+        expect(mocks.reread.mock.calls.length).toBeGreaterThan(reads);
         expect(view.root.findByType(ServerSettingsDialog).props.initialEditId).toBe('two');
         expect(view.root.findByType(CredentialProfiles).findAllByType('input').length).toBeGreaterThan(0);
         expect(view.root.findByType(ApplyGuidePanel)).toBeDefined();
@@ -378,9 +378,10 @@ describe('credential profiles in server settings', () => {
     it('reloads the profiles when the apply window saves a key or certificate, even with the panel closed', async () => {
         await act(async () => { view = create(createElement(ServerManager, { open: true, onToggle: vi.fn() })); });
         expect(view.root.findAllByType(ApplyGuidePanel)).toHaveLength(0);
-        const reads = mocks.load.mock.calls.length;
+        const reads = mocks.reread.mock.calls.length;
         await act(async () => { for (const handler of [...mocks.guideHandlers]) handler({ kind: 'ca-attached' }); });
-        expect(mocks.load.mock.calls.length).toBeGreaterThan(reads);
+        // 一定重新讀一次（不沿用存檔前就開始的讀取）
+        expect(mocks.reread.mock.calls.length).toBeGreaterThan(reads);
     });
     it('saves the certificate attached in the background, not the path the open editor started with', async () => {
         await open(); await click('編輯 備用帳號');
