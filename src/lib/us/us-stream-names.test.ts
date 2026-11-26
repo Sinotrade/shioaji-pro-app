@@ -148,4 +148,45 @@ describe('probeUsStreamPath', () => {
         await expect(probeUsStreamPath('tick', 'http://a.invalid')).resolves.toBe(false);
         expect(usStreamUsesLegacyNames('http://a.invalid')).toBe(false);
     });
+
+    it('drops a probe result that arrives after /info was cleared (Codex P2)', async () => {
+        let reject!: (e: unknown) => void;
+        m.get.mockReturnValue(new Promise((_, r) => { reject = r; }));
+        const pending = probeUsStreamPath('tick');
+        // sidecar 被換掉：/info 清掉，記錄作廢
+        m.info = null;
+        m.infoListener?.();
+        reject(notFound());
+        await expect(pending).resolves.toBe(false);
+        expect(usStreamUsesLegacyNames()).toBe(false);
+    });
+});
+
+describe('postUsStreamAction invalidation (Codex P2)', () => {
+    it('does not record a fallback that completes after /info was cleared', async () => {
+        let resolve!: (v: unknown) => void;
+        m.post.mockImplementation((path: string) => {
+            if (path.endsWith('halt_stk_us')) return Promise.reject(notFound());
+            return new Promise((r) => { resolve = r; });
+        });
+        const pending = postUsStreamAction('subscribe', 'halt', {});
+        await vi.waitFor(() => expect(m.post).toHaveBeenCalledTimes(2));
+        m.info = null;
+        m.infoListener?.();
+        resolve({ success: true });
+        await expect(pending).resolves.toEqual({ success: true });
+        expect(usStreamUsesLegacyNames()).toBe(false);
+    });
+
+    it('does not try the other name when /info was cleared while the first attempt was in flight', async () => {
+        let reject!: (e: unknown) => void;
+        m.post.mockImplementationOnce(() => new Promise((_, r) => { reject = r; }));
+        const pending = postUsStreamAction('subscribe', 'halt', {});
+        m.info = null;
+        m.infoListener?.();
+        reject(notFound());
+        await expect(pending).rejects.toThrow('404');
+        expect(m.post).toHaveBeenCalledTimes(1);
+        expect(usStreamUsesLegacyNames()).toBe(false);
+    });
 });

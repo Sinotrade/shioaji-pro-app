@@ -48,12 +48,23 @@ export function usStreamEventNames(kind: UsStreamKind): readonly [string, string
 
 /** 確定用舊名稱的 sidecar（API base） */
 const legacyBases = new Set<string>();
+/**
+ * 每個 API base 的記錄世代：作廢時加一。探測／退回送出時記下世代，回來時世代變了
+ * （sidecar 已換掉，或 A→B→A 切換）就丟掉結果，不讓舊 sidecar 的答案蓋回記錄。
+ */
+const generations = new Map<string, number>();
+const generationOf = (base: string) => generations.get(base) ?? 0;
+
+function invalidateAll() {
+    legacyBases.clear();
+    for (const [base, gen] of generations) generations.set(base, gen + 1);
+}
 
 // /info 被清掉＝sidecar 可能重啟成別的版本：記錄作廢，下一次重新從新名稱試
 // （測試若整個 mock 掉 server-info-store 可能沒有 subscribeServerInfo：略過即可）
 try {
     subscribeServerInfo(() => {
-        if (!knownServerInfo()) legacyBases.clear();
+        if (!knownServerInfo()) invalidateAll();
     });
 } catch {
     // no server-info store in this context
@@ -100,15 +111,18 @@ export async function postUsStreamAction<T>(
     base = getApiBase(),
 ): Promise<T> {
     const legacy = legacyBases.has(base);
+    generations.set(base, generationOf(base));
+    const gen = generationOf(base);
     const first = (legacy ? US_STREAM_LEGACY_NAMES : US_STREAM_NAMES)[kind];
     try {
         return await apiPost<T>(`/api/v1/stream/${action}/${first}`, body);
     } catch (e) {
-        if (!isNotFoundError(e) || getApiBase() !== base) throw e;
+        // 記錄已作廢（sidecar 換了）或換了位址：這個 404 不代表目前的 sidecar，不換名稱
+        if (!isNotFoundError(e) || getApiBase() !== base || generationOf(base) !== gen) throw e;
     }
     const other = (legacy ? US_STREAM_NAMES : US_STREAM_LEGACY_NAMES)[kind];
     const result = await apiPost<T>(`/api/v1/stream/${action}/${other}`, body);
-    noteUsStreamNames(base, !legacy);
+    if (generationOf(base) === gen) noteUsStreamNames(base, !legacy);
     return result;
 }
 
@@ -121,6 +135,8 @@ export const US_STREAM_PROBE_TIMEOUT_MS = 3000;
  */
 export async function probeUsStreamPath(kind: UsStreamKind, base = getApiBase()): Promise<boolean> {
     const legacy = legacyBases.has(base);
+    generations.set(base, generationOf(base));
+    const gen = generationOf(base);
     const path = usStreamDataPath(kind, base);
     const ctrl = typeof AbortController === 'undefined' ? null : new AbortController();
     const timer = ctrl ? setTimeout(() => ctrl.abort(), US_STREAM_PROBE_TIMEOUT_MS) : null;
@@ -128,7 +144,8 @@ export async function probeUsStreamPath(kind: UsStreamKind, base = getApiBase())
         await apiGet<unknown>(path, ctrl ? { signal: ctrl.signal } : undefined);
         return false;
     } catch (e) {
-        if (!isNotFoundError(e) || getApiBase() !== base || legacyBases.has(base) !== legacy) return false;
+        if (!isNotFoundError(e) || getApiBase() !== base || generationOf(base) !== gen
+            || legacyBases.has(base) !== legacy) return false;
         noteUsStreamNames(base, !legacy);
         return true;
     } finally {
@@ -138,5 +155,5 @@ export async function probeUsStreamPath(kind: UsStreamKind, base = getApiBase())
 }
 
 export function resetUsStreamNamesForTest() {
-    legacyBases.clear();
+    invalidateAll();
 }

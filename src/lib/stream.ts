@@ -232,6 +232,12 @@ export function onUsTickStreamReset(listener: () => void) {
 }
 
 const US_QUOTE_STREAM_KINDS = ['tick', 'bidask'] as const;
+/**
+ * 這一輪斷線已經用掉「換名稱後馬上重開」：新舊路徑都 404（例如代理兩個都沒有）時，
+ * 之後只照 3 秒重連計時，不會一直互換名稱馬上重開。任一條美股 SSE 開成功或關掉美股
+ * 串流時重置。
+ */
+let usNameFallbackReopened = false;
 
 function openUsStreams() {
     if (!usWanted() || typeof EventSource === 'undefined') return;
@@ -257,13 +263,16 @@ function openUsStreams() {
             // 從沒開成功：可能是 sidecar 不認得這套名稱（404），查一次，換了名稱就馬上重開
             if (!opened) {
                 void probeUsStreamPath(kind, base).then((switched) => {
-                    if (switched && usWanted() && !usSources.has(kind)) openUsStreams();
+                    if (!switched || usNameFallbackReopened || !usWanted() || usSources.has(kind)) return;
+                    usNameFallbackReopened = true;
+                    openUsStreams();
                 });
             }
             scheduleUsReopen();
         };
         source.onopen = () => {
             opened = true;
+            usNameFallbackReopened = false;
             if (kind !== 'tick' || !usTickStreamDropped) return;
             usTickStreamDropped = false;
             broadcastUsTickStreamReset();
@@ -297,6 +306,7 @@ export function retainUsQuoteStreams(): () => void {
 function closeUsStreams() {
     usSources.forEach(source => source.close());
     usSources.clear();
+    usNameFallbackReopened = false;
     if (usReopenTimer) { clearTimeout(usReopenTimer); usReopenTimer = null; }
 }
 

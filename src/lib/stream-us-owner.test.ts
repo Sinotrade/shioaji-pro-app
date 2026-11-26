@@ -262,3 +262,28 @@ it('a follower dispatches US quotes relayed under either event name', async () =
     expect(ticks).toHaveBeenCalledTimes(2);
     off();
 });
+
+it('when both US path variants 404, only one immediate fallback reopen; later ones wait for the reconnect timer (Codex P1)', async () => {
+    m.apiGet.mockRejectedValue(Object.assign(new Error('404 Not Found'), { status: 404 }));
+    const stream = await import('./stream');
+    stream.ensureStream();
+    stream.retainUsQuoteStreams();
+    const flush = async () => { for (let i = 0; i < 10; i++) await Promise.resolve(); };
+    // 新路徑 404 → 馬上改開舊路徑（一次）
+    for (const s of openUs()) s.onerror?.();
+    await flush();
+    expect(openUs().map(s => s.url).every(u => /us_(tick|bidask)$/.test(u))).toBe(true);
+    expect(openUs()).toHaveLength(2);
+    // 舊路徑也 404：不再馬上重開，等 3 秒重連
+    const created = usSources().length;
+    for (const s of openUs()) s.onerror?.();
+    await flush();
+    expect(usSources().length).toBe(created);
+    expect(openUs()).toHaveLength(0);
+    vi.advanceTimersByTime(3000);
+    expect(openUs()).toHaveLength(2);
+    // 這次又失敗：仍然只走計時器，不會在同一個 tick 裡一直重開
+    for (const s of openUs()) s.onerror?.();
+    await flush();
+    expect(openUs()).toHaveLength(0);
+});
