@@ -27,6 +27,8 @@ interface LoadOptions {
     /** 元素的位置（沒給的元素都當成左上角 10×10） */
     rect?: (el: Element) => Box | null;
     viewport?: { width: number; height: number };
+    /** 注入前改 window（例如包住內建函式） */
+    before?: (win: Window) => void;
 }
 
 const clause = (n: number, checked = false) =>
@@ -92,6 +94,7 @@ function load(url: string, html: string, debug = false, options: LoadOptions = {
         return root as never;
     };
     win.HTMLElement.prototype.scrollIntoView = () => undefined;
+    options.before?.(win);
     win.document.title = '簽署中心';
     win.document.body.innerHTML = html;
     const source = fs.readFileSync(SCRIPT, 'utf8')
@@ -431,7 +434,18 @@ describe.skipIf(!hasScript)('apply window guide card', () => {
     });
 
     it("never hands card buttons to getters the site replaced, while keeping focus", () => {
-        const page = load(LIST_URL, listPage(), false, { rect: layout, viewport: VIEW });
+        // happy-dom 的 focus() 是 JS、自己會讀 disabled；瀏覽器的 focus() 不經過頁面的 getter：標出這段不算
+        let inFocus = 0;
+        const page = load(LIST_URL, listPage(), false, {
+            rect: layout, viewport: VIEW,
+            before: win => {
+                const focus = win.HTMLElement.prototype.focus;
+                win.HTMLElement.prototype.focus = function (this: HTMLElement, ...args: unknown[]) {
+                    inFocus++;
+                    try { return focus.apply(this, args as never); } finally { inFocus--; }
+                };
+            },
+        });
         page.guide.card(CARD_KEY, guideCardOf("list", options));
         const root = page.roots[0]!;
         (page.card()!.querySelectorAll(".foot button")[1] as unknown as HTMLButtonElement).focus();
@@ -441,8 +455,7 @@ describe.skipIf(!hasScript)('apply window guide card', () => {
         try {
             // 官網換掉 disabled 的 getter，想在卡片重畫時拿到卡片裡的按鈕
             Object.defineProperty(proto, "disabled", { configurable: true, get(this: Element) {
-                // happy-dom 的 focus() 是 JS、自己會讀 disabled；瀏覽器的 focus() 不經過頁面的 getter，這裡不算
-                if (this.getRootNode() !== this.ownerDocument && !(new Error().stack ?? "").includes("HTMLElementUtility.focus")) leaked.push(this);
+                if (this.getRootNode() !== this.ownerDocument && inFocus === 0) leaked.push(this);
                 return false;
             } });
             page.focus("download-ca");
