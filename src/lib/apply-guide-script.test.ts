@@ -430,6 +430,40 @@ describe.skipIf(!hasScript)('apply window guide card', () => {
         expect(root.activeElement).toBeNull();
     });
 
+    it("never hands card buttons to getters the site replaced, while keeping focus", () => {
+        const page = load(LIST_URL, listPage(), false, { rect: layout, viewport: VIEW });
+        page.guide.card(CARD_KEY, guideCardOf("list", options));
+        const root = page.roots[0]!;
+        (page.card()!.querySelectorAll(".foot button")[1] as unknown as HTMLButtonElement).focus();
+        const proto = page.win.HTMLButtonElement.prototype;
+        const saved = Object.getOwnPropertyDescriptor(proto, "disabled");
+        const leaked: unknown[] = [];
+        try {
+            // 官網換掉 disabled 的 getter，想在卡片重畫時拿到卡片裡的按鈕
+            Object.defineProperty(proto, "disabled", { configurable: true, get(this: Element) {
+                // happy-dom 的 focus() 是 JS、自己會讀 disabled；瀏覽器的 focus() 不經過頁面的 getter，這裡不算
+                if (this.getRootNode() !== this.ownerDocument && !(new Error().stack ?? "").includes("HTMLElementUtility.focus")) leaked.push(this);
+                return false;
+            } });
+            page.focus("download-ca");
+        } finally {
+            if (saved) Object.defineProperty(proto, "disabled", saved); else delete (proto as unknown as Record<string, unknown>).disabled;
+        }
+        expect(leaked).toHaveLength(0);
+        expect(root.activeElement).toBe(page.card()!.querySelectorAll(".foot button")[1]);
+    });
+
+    it("still shows the card when the site adds get or set to Object.prototype", () => {
+        const page = load(LIST_URL, listPage(), false, { rect: layout, viewport: VIEW });
+        try {
+            Object.defineProperty(Object.prototype, "get", { configurable: true, get: () => undefined });
+            page.guide.card(CARD_KEY, guideCardOf("list", options));
+        } finally {
+            delete (Object.prototype as unknown as Record<string, unknown>).get;
+        }
+        expect(text(page.card()!.querySelector(".title"))).toBe("按「新增APIKey」");
+    });
+
     it("measures new content again instead of staying folded from an earlier card", () => {
         const small = { width: 640, height: 520 };
         // 卡片高度跟著內容：長的放不下、短的放得下

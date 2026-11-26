@@ -272,12 +272,13 @@ export function useApplyGuide(onImported?: (imported: ApplyImported) => void): A
     };
     const canPrevious = canGoPrevious(step, !!imported);
     const canNext = canGoNext(step, !!imported);
-    const goPrevious = () => setStep(previousGuideStep(step));
+    // 從排隊中的最新步驟算：同一批裡網頁卡片的按鈕先到也不會被蓋掉（和 pageNavStep 同一套限制）
+    const goPrevious = () => setStep(current => pageNavStep(current, 'prev', hasImportedRef.current));
     // 從簽署到 API 管理：官網還停在簽署頁時一起切回 API 管理頁（固定網址），和「前往 API 管理頁申請金鑰」相同
     const goNext = () => {
-        const next = nextGuideStep(step);
-        if (step === 'sign' && next === 'list' && windowRef.current === 'open' && signMarketOf(syncedRef.current)) void showApplyApiPage();
-        setStep(next);
+        // 切頁是副作用，留在 updater 外面，照畫面上這一步決定
+        if (step === 'sign' && windowRef.current === 'open' && signMarketOf(syncedRef.current)) void showApplyApiPage();
+        setStep(current => pageNavStep(current, 'next', hasImportedRef.current));
     };
     const setPageCard = (on: boolean) => { pageCardRef.current = on; setPageCardState(on); writePageCardPref(on); };
     setPageCardRef.current = setPageCard;

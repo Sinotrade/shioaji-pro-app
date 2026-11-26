@@ -807,6 +807,16 @@ describe('the guide card on the page', () => {
         expect(json()).toContain('金鑰已載入');
     });
 
+    it('adds up page and app presses that arrive in the same batch', async () => {
+        await open();
+        // 從登入：網頁「下一步」＋ App「下一步」＝前進兩步
+        await act(async () => { mocks.handler!({ kind: 'nav', action: 'next' }); button('下一步')!.props.onClick(); });
+        expect(json()).toContain('按「新增 API Key」');
+        // 網頁「下一步」＋ App「上一步」＝留在原地
+        await act(async () => { mocks.handler!({ kind: 'nav', action: 'next' }); button('上一步')!.props.onClick(); });
+        expect(json()).toContain('按「新增 API Key」');
+    });
+
     it('ignores page presses that arrive after the card was closed in the same batch', async () => {
         await open();
         await act(async () => { mocks.handler!({ kind: 'nav', action: 'hide' }); mocks.handler!({ kind: 'nav', action: 'next' }); });
