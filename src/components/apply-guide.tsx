@@ -752,8 +752,13 @@ export function ApplyGuide({ guide, settings, busy, docked = false, fab = docked
             <p className={g.brand}>{inApp ? '申請／下載憑證' : '申請 API Key'}</p>
             {!docked && <span className={g.brandSub}>Shioaji Pro</span>}
         </div>
-        <DisplayControls guide={windowOpen && step !== 'start' ? guide : undefined} />
-        {onClose && <button className={g.closeButton} aria-label="關閉導覽" title="關閉導覽" onClick={onClose}><X size={20} aria-hidden /></button>}
+        {onClose
+            // 顯示設定和關閉鈕一起換行：窄的面板裡關閉鈕不會單獨落到下一行
+            ? <div className={g.headerEnd}>
+                <DisplayControls guide={windowOpen && step !== 'start' ? guide : undefined} />
+                <button className={g.closeButton} aria-label="關閉導覽" title="關閉導覽" onClick={onClose}><X size={20} aria-hidden /></button>
+            </div>
+            : <DisplayControls guide={windowOpen && step !== 'start' ? guide : undefined} />}
     </div>;
     if (inApp && step === 'start') {
         return <section className={cardClass} aria-label={label}>

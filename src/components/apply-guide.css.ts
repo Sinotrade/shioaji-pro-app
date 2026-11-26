@@ -366,6 +366,7 @@ export const signSection = style({
 });
 
 // ── App 裡叫出的導覽（申請／下載憑證） ─────────────────────────────────
+export const headerEnd = style({ display: 'flex', alignItems: 'center', gap: '0.375em', flexShrink: 0, marginLeft: 'auto' });
 export const closeButton = style({
     display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 44, height: 44, flexShrink: 0,
     border: `1px solid ${g.control}`, borderRadius: 999, background: 'transparent', color: g.text, cursor: 'pointer',
