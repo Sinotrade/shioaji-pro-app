@@ -643,6 +643,12 @@ export function ApplyGuide({ guide, settings, busy, docked = false, contentRef, 
         </section>;
     }
 
+    // 從簽署到 API 管理：官網還停在簽署頁時一起切回 API 管理頁，和「前往 API 管理頁申請金鑰」相同
+    const goNext = () => {
+        const next = nextGuideStep(step);
+        if (step === 'sign' && next === 'list' && windowState === 'open' && signMarketOf(guide.synced)) void showApplyApiPage();
+        guide.setStep(next);
+    };
     return <section className={cardClass} aria-label="申請 API Key 導覽">
         {header}
         {syncBanner}
@@ -675,7 +681,7 @@ export function ApplyGuide({ guide, settings, busy, docked = false, contentRef, 
         </div>
         <div className={g.footer}>
             <button className={g.secondaryButton} disabled={step === 'login'} onClick={() => guide.setStep(previousGuideStep(step))}><ChevronLeft size={20} aria-hidden />上一步</button>
-            <button className={g.secondaryButton} disabled={step === 'success' && !guide.imported} onClick={() => guide.setStep(nextGuideStep(step))}>下一步<ChevronRight size={20} aria-hidden /></button>
+            <button className={g.secondaryButton} disabled={step === 'success' && !guide.imported} onClick={() => goNext()}>下一步<ChevronRight size={20} aria-hidden /></button>
         </div>
     </section>;
 }

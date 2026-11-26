@@ -577,6 +577,22 @@ describe('signing the API agreements', () => {
         expect(mocks.focus).toHaveBeenCalledWith('add-key');
     });
 
+    it('switches the site back to the API page when 下一步 leaves the signing step', async () => {
+        await mount();
+        await act(async () => button('開始申請')!.props.onClick());
+        await emit({ kind: 'step', step: 'sign-h', sign: 'unknown' });
+        mocks.apiPage.mockClear();
+        await act(async () => button('下一步')!.props.onClick());
+        expect(mocks.apiPage).toHaveBeenCalledTimes(1);
+        expect(json()).toContain('按「新增 API Key」');
+        // 官網已在 API 管理頁時不必再切
+        await act(async () => button('上一步')!.props.onClick());
+        await emit({ kind: 'step', step: 'list' });
+        mocks.apiPage.mockClear();
+        await act(async () => button('下一步')!.props.onClick());
+        expect(mocks.apiPage).not.toHaveBeenCalled();
+    });
+
     it('drops a pending highlight when the site falls back to its login page', async () => {
         await mount();
         await act(async () => button('開始申請')!.props.onClick());
