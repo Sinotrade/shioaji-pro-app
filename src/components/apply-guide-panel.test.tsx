@@ -313,6 +313,73 @@ describe('in-app apply guide', () => {
         expect(mocks.open.mock.calls.length).toBe(opens);
     });
 
+    it('does not let a reset still waiting on the shell clear the CA recipient of the next task', async () => {
+        const other: CredentialProfile = { ...prod, id: 'p3', name: '第二正式' };
+        await mount(withProfiles(sim, prod, other), 'ca');
+        await emit({ kind: 'step', step: 'list' });
+        let finish!: () => void;
+        mocks.importEnvironment.mockImplementationOnce(() => new Promise<void>(resolve => { finish = resolve; }));
+        // 回到選擇畫面的重設還在等原生端，使用者就開始下載憑證並選好帳號
+        await act(async () => button('換一件要做的事')!.props.onClick());
+        await act(async () => button('下載 CA 憑證')!.props.onClick());
+        const radios = () => view!.root.findAll(n => n.type === 'input' && n.props.type === 'radio');
+        await act(async () => radios()[0]!.props.onChange());
+        expect(mocks.caTarget).toHaveBeenLastCalledWith('p2');
+        const calls = mocks.caTarget.mock.calls.length;
+        await act(async () => finish());
+        // 舊的重設不再送「不攔截」：畫面選著的帳號和原生端一致
+        expect(mocks.caTarget.mock.calls.length).toBe(calls);
+        expect(mocks.caTarget).toHaveBeenLastCalledWith('p2');
+        expect(radios().map(r => r.props.checked)).toEqual([true, false]);
+    });
+
+    it('does not show a refused production task after the user moved on to another task', async () => {
+        await mount(withProfiles(sim, prod), 'sign');
+        await emit({ kind: 'step', step: 'list' });
+        await act(async () => button('換一件要做的事')!.props.onClick());
+        let refuse!: (error: Error) => void;
+        mocks.importEnvironment.mockImplementationOnce(() => new Promise<void>((_resolve, reject) => { refuse = reject; }));
+        await act(async () => { void button('申請正式 API Key')!.props.onClick(); });
+        await act(async () => button('換一件要做的事')!.props.onClick());
+        await act(async () => button('下載 CA 憑證')!.props.onClick());
+        await act(async () => refuse(new Error('這個版本無法把金鑰存成正式帳號，請更新 App')));
+        expect(json()).toContain('按「下載憑證」交給 App');
+        expect(json()).not.toContain('這個版本無法把金鑰存成正式帳號');
+        expect(mocks.caTarget).toHaveBeenLastCalledWith('p2');
+    });
+
+    it('does not reopen the apply window when the user closed it during a task switch', async () => {
+        await mount(withProfiles(sim, prod), 'ca');
+        await emit({ kind: 'step', step: 'list' });
+        await act(async () => button('換一件要做的事')!.props.onClick());
+        let finish!: () => void;
+        mocks.importEnvironment.mockImplementationOnce(() => new Promise<void>(resolve => { finish = resolve; }));
+        await act(async () => { void button('簽署 API 約定書')!.props.onClick(); });
+        const opens = mocks.open.mock.calls.length;
+        // 原生視窗被使用者關掉（原生端已回到模擬、不攔截憑證），面板還開著
+        await emit({ kind: 'closed' });
+        await act(async () => finish());
+        expect(mocks.open.mock.calls.length).toBe(opens);
+        expect(json()).toContain('官網視窗已關閉');
+        // 使用者自己按才重開，而且走完整的開窗同步
+        mocks.importEnvironment.mockClear(); mocks.caTarget.mockClear();
+        await act(async () => button('重新打開官網')!.props.onClick());
+        expect(mocks.open.mock.calls.length).toBe(opens + 1);
+        expect(mocks.importEnvironment).toHaveBeenCalledWith('simulation');
+        expect(mocks.caTarget).toHaveBeenCalledWith(null);
+    });
+
+    it('does not show the window as open when it was closed while the task was being handed over', async () => {
+        await mount(withProfiles(sim, prod));
+        let finish!: () => void;
+        mocks.importEnvironment.mockImplementationOnce(() => new Promise<void>(resolve => { finish = resolve; }));
+        await act(async () => { void button('簽署 API 約定書')!.props.onClick(); });
+        await emit({ kind: 'closed' });
+        await act(async () => finish());
+        expect(json()).toContain('官網視窗已關閉');
+        expect(mocks.caTarget).not.toHaveBeenCalled();
+    });
+
     it('discloses plaintext storage for a production key like first-run setup', async () => {
         await mount({ ...withProfiles(sim), credentialBackend: 'plaintext-fallback', fallbackPath: '/fixture/credentials.json' }, 'production');
         await emit({ kind: 'imported', profileId: 'p2', name: 'ShioajiProProd', duplicate: false, environment: 'production' });

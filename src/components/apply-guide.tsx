@@ -146,6 +146,12 @@ export function useApplyGuide(onImported?: (imported: ApplyImported) => void, op
     const [caProfileId, setCaProfileState] = useState<string | null>(null);
     const caProfileRef = useRef<string | null>(null);
     const caRequestRef = useRef(0);
+    /** 每次把任務交給原生端算一次：較新的一次開始後，舊的不再往下送（不會蓋掉新任務選好的憑證帳號） */
+    const syncRef = useRef(0);
+    /** 每選一件事或回到選擇畫面算一次：等待中的舊切換不再動畫面、不再打開視窗 */
+    const turnRef = useRef(0);
+    /** 申請視窗每關一次算一次：關掉以後原生端已重設，等待中的切換不能把視窗再打開 */
+    const closedRef = useRef(0);
     const [caAttached, setCaAttached] = useState<ApplyCaAttached | null>(null);
     const [caError, setCaError] = useState('');
     const [saveCaFile, setSaveCaState] = useState(readSaveCaPref);
@@ -251,6 +257,8 @@ export function useApplyGuide(onImported?: (imported: ApplyImported) => void, op
                     setDownloaded({ fileName: event.fileName, status: event.status });
                     break;
                 case 'closed':
+                    // 同步記下來：還在等原生端回應的切換（還沒重畫）也看得到視窗已經關掉
+                    ++closedRef.current; windowRef.current = 'closed';
                     setWindowState('closed'); setSynced(null);
                     break;
                 case 'nav': {
@@ -273,7 +281,17 @@ export function useApplyGuide(onImported?: (imported: ApplyImported) => void, op
     }, []);
     /** 把這次任務交給原生端：.env 存成哪個環境、憑證設定到哪個帳號（視窗關掉後原生端會重設）。 */
     const syncTask = async (current: ApplyGuideTask) => {
-        await setApplyImportEnvironment(current === 'production' ? 'production' : 'simulation');
+        const sync = ++syncRef.current;
+        const closes = closedRef.current;
+        try { await setApplyImportEnvironment(current === 'production' ? 'production' : 'simulation'); } catch (error) {
+            // 存不成正式帳號，這件事做不下去：上一件事留下的憑證帳號也不再攔截
+            if (sync === syncRef.current) { ++caRequestRef.current; void setApplyCaTarget(null).catch(() => undefined); }
+            throw error;
+        }
+        // 等待中又開始了另一件事（或回到選擇畫面）：由較新的那一次決定憑證帳號
+        if (sync !== syncRef.current) return;
+        // 等待中視窗被關掉：原生端已清掉憑證帳號，重新打開時再送
+        if (closes !== closedRef.current) return;
         const target = current === 'production' || current === 'ca' ? caProfileRef.current : null;
         ++caRequestRef.current;
         await setApplyCaTarget(target);
@@ -298,9 +316,12 @@ export function useApplyGuide(onImported?: (imported: ApplyImported) => void, op
                 void setApplySaveEnv(saveEnvRef.current);
                 void setApplySaveCa(saveCaRef.current);
                 windowRef.current = 'open';
+                const closes = closedRef.current;
                 const request = caRequestRef.current;
                 const sent = caProfileRef.current;
                 try { await syncTask(taskRef.current); } catch (error) {
+                    // 同步途中視窗被關掉：原生端已重設，這次的失敗不算
+                    if (closes !== closedRef.current) return null;
                     // 正式金鑰存不成正式帳號、或憑證帳號設定失敗：不能讓使用者照著做下去
                     if (taskRef.current === 'production') throw error;
                     // 等待中使用者已經改選帳號：這次的結果不算（syncTask 自己只算一次）
@@ -309,6 +330,8 @@ export function useApplyGuide(onImported?: (imported: ApplyImported) => void, op
                         setCaError(error instanceof Error ? error.message : String(error));
                     }
                 }
+                // 同步途中視窗被關掉：不能當成開著（畫面留在「官網視窗已關閉」，重新打開會再同步一次）
+                if (closes !== closedRef.current) return null;
                 // 開窗途中改選了帳號（那時還送不出去）：把最新的選擇送過去
                 if (caProfileRef.current !== sent && (taskRef.current === 'ca' || taskRef.current === 'production')) {
                     windowRef.current = 'open';
@@ -391,6 +414,7 @@ export function useApplyGuide(onImported?: (imported: ApplyImported) => void, op
         setStep(current => pageNavStep(current, 'next', hasImportedRef.current, taskRef.current));
     };
     const chooseTask = async (next: InAppGuideTask) => {
+        const turn = ++turnRef.current;
         taskRef.current = next; setTaskState(next);
         // 每件事都重新選憑證要給哪個帳號（上一次選的帳號可能已經刪掉或改成模擬）
         caProfileRef.current = null; setCaProfileState(null);
@@ -399,23 +423,30 @@ export function useApplyGuide(onImported?: (imported: ApplyImported) => void, op
         // 官網已經登入、停在某一頁：直接跳到這件事對應的步驟（不必重新登入）
         const site = syncedRef.current;
         setStep(site && windowRef.current === 'open' ? followSiteStep('login', site, next) : 'login');
+        const closes = closedRef.current;
+        // 等待中使用者換了另一件事、或關掉申請視窗：這一次的結果不算
+        const stale = () => turn !== turnRef.current || closes !== closedRef.current;
         if (windowRef.current === 'open') {
             try { await syncTask(next); } catch (error) {
+                if (stale()) return;
                 const message = error instanceof Error ? error.message : String(error);
                 if (next === 'production') { setOpenError(message); setStep('start'); }
                 else setCaError(message);
             }
-            if (!aliveRef.current) return;
+            // 視窗在等待中被關掉：不自己重開（原生端已回到模擬、不攔截憑證），
+            // 由使用者按「重新打開官網」走完整的開窗同步
+            if (!aliveRef.current || stale()) return;
             const result = await openApplyWindow().catch(() => null); // 帶到前面
-            if (result === 'beside' || result === 'overlay') setPlacement(result);
+            if ((result === 'beside' || result === 'overlay') && !stale()) setPlacement(result);
             return;
         }
         if (!aliveRef.current) return;
         const result = await openWindow();
-        if (!result && next === 'production') setStep('start');
+        if (!result && next === 'production' && !stale()) setStep('start');
     };
     const backToTasks = () => {
         // 選擇畫面不屬於任何一件事：原生端照首次設定（模擬、一般下載），官網換頁也不離開選擇畫面
+        ++turnRef.current;
         taskRef.current = 'sign'; setTaskState('sign');
         setStep('start');
         // 不再攔截下載：回到選擇時原生端照首次設定（模擬、一般下載）

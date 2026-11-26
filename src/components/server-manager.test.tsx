@@ -382,6 +382,26 @@ describe('credential profiles in server settings', () => {
         await act(async () => { for (const handler of [...mocks.guideHandlers]) handler({ kind: 'ca-attached' }); });
         expect(mocks.load.mock.calls.length).toBeGreaterThan(reads);
     });
+    it('saves the certificate attached in the background, not the path the open editor started with', async () => {
+        await open(); await click('編輯 備用帳號');
+        // 編輯畫面開著時，申請視窗替這個帳號收下新憑證（原生端已刪掉舊檔）
+        const attached = { ...two, caPath: '/fixture/ca/two/Sinopac-0123456789abcdef.pfx', hasCaPassword: false, revision: 'two-rev-2' };
+        mocks.load.mockResolvedValue({ ...initial, profiles: [one, attached] });
+        await act(async () => { for (const handler of [...mocks.guideHandlers]) handler({ kind: 'ca-attached' }); });
+        expect(text()).toContain('Sinopac-0123456789abcdef.pfx');
+        await change(3, 'fixture-ca-password'); await click('僅儲存');
+        // 送出的密碼在存檔後就從物件清掉，這裡只看路徑
+        expect(mocks.profile).toHaveBeenCalledWith({ id: 'two', name: '備用帳號', environment: 'production', caPath: attached.caPath });
+    });
+    it('keeps a certificate file the user picked in the editor over one attached in the background', async () => {
+        mocks.ca.mockResolvedValue('/fixture/picked.pfx');
+        await open(); await click('編輯 備用帳號'); await click('更換');
+        mocks.load.mockResolvedValue({ ...initial, profiles: [one, { ...two, caPath: '/fixture/ca/two/Sinopac-0123456789abcdef.pfx', revision: 'two-rev-2' }] });
+        await act(async () => { for (const handler of [...mocks.guideHandlers]) handler({ kind: 'ca-attached' }); });
+        expect(text()).toContain('picked.pfx');
+        await click('僅儲存');
+        expect(mocks.profile).toHaveBeenCalledWith({ id: 'two', name: '備用帳號', environment: 'production', caPath: '/fixture/picked.pfx' });
+    });
     it('starts the production key task directly from the shortcut request', async () => {
         mocks.guideOpen.mockResolvedValue('overlay');
         await act(async () => { view = create(createElement(ServerManager, { open: true, onToggle: vi.fn() })); });
