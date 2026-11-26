@@ -58,6 +58,8 @@ describe('US stream names', () => {
     it('detects a 404 from either the status field or the message', () => {
         expect(isNotFoundError(notFound())).toBe(true);
         expect(isNotFoundError(new Error('404 Not Found'))).toBe(true);
+        // POST 未知的 subscribe/<name>：salvo 回 405
+        expect(isNotFoundError(Object.assign(new Error('405 Method Not Allowed'), { status: 405 }))).toBe(true);
         expect(isNotFoundError(Object.assign(new Error('400 bad'), { status: 400 }))).toBe(false);
         expect(isNotFoundError(new TypeError('Failed to fetch'))).toBe(false);
         expect(isNotFoundError(undefined)).toBe(false);
@@ -86,6 +88,18 @@ describe('postUsStreamAction', () => {
         m.post.mockClear();
         await postUsStreamAction('unsubscribe', 'halt', {});
         expect(m.post.mock.calls.map(c => c[0])).toEqual(['/api/v1/stream/unsubscribe/us_halt']);
+    });
+
+    it('treats a 405 on the new subscribe path as unknown (salvo answer for an unrouted POST)', async () => {
+        m.post.mockImplementation(async (path: string) => {
+            if (path.endsWith('halt_stk_us')) throw Object.assign(new Error('405 Method Not Allowed'), { status: 405 });
+            return { success: true };
+        });
+        await postUsStreamAction('subscribe', 'halt', {});
+        expect(m.post.mock.calls.map(c => c[0])).toEqual([
+            '/api/v1/stream/subscribe/halt_stk_us', '/api/v1/stream/subscribe/us_halt',
+        ]);
+        expect(usStreamUsesLegacyNames()).toBe(true);
     });
 
     it('switches back to the new names when a remembered legacy path 404s', async () => {

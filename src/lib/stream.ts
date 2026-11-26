@@ -801,7 +801,7 @@ async function replayOnce(onlyCapabilities = false) {
     for (const { path, body } of [...capabilityRegistry.values()]) {
         await pace();
         try {
-            // 美股停牌：依 sidecar 用新（halt_stk_us）或舊（us_halt）名稱，404 自動換
+            // 美股停牌：依 sidecar 用新（halt_stk_us）或舊（us_halt）名稱，404／405 自動換
             const response = usStreamKindOfEvent(path) === 'halt'
                 ? await postUsStreamAction<{ success: boolean; message: string }>('subscribe', 'halt', body)
                 : await apiPost<{ success: boolean; message: string }>(

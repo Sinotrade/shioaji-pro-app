@@ -1,7 +1,7 @@
 // src/lib/us/us-halts.ts — 美股停牌（halt book）
 //
 // SDK 1.8.0：POST /api/v1/stream/subscribe/halt_stk_us 開始收停牌事件（1.8.0b1–b3 叫
-// subscribe/us_halt；新路徑 404 就退回舊路徑，見 us-stream-names.ts）；
+// subscribe/us_halt；新路徑 404／405 就退回舊路徑，見 us-stream-names.ts）；
 // GET /api/v1/stream/us_halts 回目前停牌中的項目（全市場、交易所、個股）。
 // halt book 只知道訂閱之後收到的事件。這裡用輪詢 us_halts（不多開一條
 // SSE 連線），所以狀態最多慢 US_HALT_POLL_MS。

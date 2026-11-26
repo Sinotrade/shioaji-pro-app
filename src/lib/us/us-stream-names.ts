@@ -10,7 +10,7 @@
 //
 // 內建的是 1.8.0（新名稱），但外接的 1.8.0b1–b3 與開發版 sidecar 還是舊名稱：
 //   - 事件名稱：兩套都收（同一則事件只會用其中一個名字送）。
-//   - 路徑：先用新路徑，被 404 拒絕就記下這個 sidecar（API base）用舊名稱，之後直接走舊路徑；
+//   - 路徑：先用新路徑，被 404／405 拒絕就記下這個 sidecar（API base）用舊名稱，之後直接走舊路徑；
 //     舊路徑也 404（sidecar 換成新版）就改回新名稱。記錄在 /info 被清掉（斷線、換位址，
 //     sidecar 可能換了版本重啟）時作廢，與 us-tick-wire.ts 的 TickFull 退回同一個模式。
 
@@ -78,16 +78,20 @@ export function usStreamDataPath(kind: UsStreamKind, base = getApiBase()): strin
     return `/api/v1/stream/data/${usStreamName(kind, base)}`;
 }
 
-/** apiGet／apiPost 丟出的錯誤是不是 404（路徑不存在） */
+/**
+ * apiGet／apiPost 丟出的錯誤是不是「sidecar 沒有這個路徑」：GET 未知路徑回 404；
+ * POST 未知的 /stream/subscribe/<name> 回 405（實測 !525 sidecar 對 subscribe/us_halt）。
+ */
 export function isNotFoundError(reason: unknown): boolean {
     if (!reason || typeof reason !== 'object') return false;
-    if ((reason as { status?: unknown }).status === 404) return true;
-    return reason instanceof Error && /^404\b/.test(reason.message);
+    const status = (reason as { status?: unknown }).status;
+    if (status === 404 || status === 405) return true;
+    return reason instanceof Error && /^40[45]\b/.test(reason.message);
 }
 
 /**
  * POST /api/v1/stream/{subscribe,unsubscribe}/<halt 名稱>：先用目前記錄的名稱，
- * 404 就換另一套名稱再送一次並記下。其他錯誤照原樣丟出。
+ * 404／405 就換另一套名稱再送一次並記下。其他錯誤照原樣丟出。
  */
 export async function postUsStreamAction<T>(
     action: 'subscribe' | 'unsubscribe',
