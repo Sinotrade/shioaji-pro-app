@@ -122,7 +122,7 @@ export function useApplyGuide(onImported?: (imported: ApplyImported) => void): A
                     }
                     // 載入後關掉「新增成功」會回到列表、從完成頁打開簽署頁：都留在完成頁；
                     // 開始申請另一把（身份驗證以後）才跟著官網走，完成頁仍可從進度列回去
-                    setStep(current => current === 'imported' && (event.step === 'list' || event.step === 'login' || market) ? current : guideStepOf(event.step));
+                    setStep(current => followSiteStep(current, event.step));
                     break;
                 }
                 case 'imported': {
@@ -412,6 +412,19 @@ function Callout({ tone, title, children, actions }: { tone: 'danger' | 'warn' |
 }
 
 /** 勾選的市場全部讀到「已簽署」（沒勾任何市場也算）：進度列的「簽署」才打勾。 */
+/**
+ * 官網換頁時導覽要停在哪一步。
+ * - 完成頁：關掉「新增成功」回到列表、登出、打開簽署頁都留在完成頁；開始申請另一把（身份驗證以後）才跟著官網走。
+ * - 登入後官網會直接進 API 管理列表：導覽先停在「簽署」，使用者按「前往 API 管理頁申請金鑰」或「下一步」才往下；
+ *   已在簽署步驟時官網停在列表也不往前跳。
+ */
+export function followSiteStep(current: GuideStep, site: ApplyPageStep): GuideStep {
+    const next = guideStepOf(site);
+    if (current === 'imported' && (site === 'list' || site === 'login' || signMarketOf(site))) return current;
+    if (next === 'list' && (current === 'start' || current === 'login' || current === 'sign')) return 'sign';
+    return next;
+}
+
 export function allChosenSigned(guide: Pick<ApplyGuideController, 'markets' | 'signs'>) {
     return guide.markets.every(market => guide.signs[market] === 'signed');
 }

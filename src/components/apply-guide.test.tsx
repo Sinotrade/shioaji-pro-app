@@ -24,7 +24,7 @@ vi.mock('../lib/apply-guide-native', () => ({
 import { EMPTY_DESKTOP_SETTINGS, type DesktopSettings } from '../lib/desktop-credentials';
 import { OnboardingSetup } from './onboarding-setup';
 import { CredentialProfiles } from './credential-profiles';
-import { ApplyGuide } from './apply-guide';
+import { ApplyGuide, followSiteStep } from './apply-guide';
 import { AssistantFab } from './assistant-fab';
 
 let view: ReactTestRenderer | undefined;
@@ -469,9 +469,9 @@ describe('signing the API agreements', () => {
         await emit({ kind: 'step', step: 'sign-h', sign: 'unknown' });
         expect(json()).toContain('已簽署');
         expect(rows()).toHaveLength(2);
-        // 已簽署的市場仍可再打開簽署頁查看
+        // 已簽署的市場仍可再打開簽署頁查看；官網回到 API 管理列表時導覽仍停在簽署
         await emit({ kind: 'step', step: 'list' });
-        await act(async () => button('上一步')!.props.onClick());
+        expect(json()).toContain('簽署 API 約定書');
         expect(byLabel('打開美股（複委託）簽署頁')).toBeDefined();
         expect(byLabel('打開證券（台股）簽署頁')).toBeDefined();
     });
@@ -500,8 +500,11 @@ describe('signing the API agreements', () => {
         await mount();
         await act(async () => button('開始申請')!.props.onClick());
         expect(signStep().props['aria-label']).toBe('簽署，還沒開始');
-        // 跳過簽署直接到 API 管理：不擋，簽署不打勾也不是錯誤
+        // 登入後官網直接進 API 管理列表：導覽先停在簽署
         await emit({ kind: 'step', step: 'list' });
+        expect(json()).toContain('簽署 API 約定書');
+        // 跳過簽署直接到 API 管理：不擋，簽署不打勾也不是錯誤
+        await act(async () => button('下一步')!.props.onClick());
         expect(json()).toContain('按「新增 API Key」');
         expect(signStep().props['aria-label']).toBe('簽署，勾選的市場還沒全部確認已簽署');
         expect(button('下一步')!.props.disabled).toBe(false);
@@ -509,6 +512,7 @@ describe('signing the API agreements', () => {
         await emit({ kind: 'step', step: 'sign-s', sign: 'signed' });
         await emit({ kind: 'step', step: 'sign-f', sign: 'pending' });
         await emit({ kind: 'step', step: 'list' });
+        await act(async () => button('前往 API 管理頁申請金鑰')!.props.onClick());
         expect(signStep().props['aria-label']).toBe('簽署，勾選的市場還沒全部確認已簽署');
         await emit({ kind: 'step', step: 'sign-f', sign: 'signed' });
         expect(signStep().props['aria-label']).toBe('簽署，目前在這一步');
@@ -541,15 +545,18 @@ describe('signing the API agreements', () => {
         await act(async () => button('開始申請')!.props.onClick());
         await emit({ kind: 'step', step: 'sign-s', sign: 'signed' });
         await emit({ kind: 'step', step: 'list' });
+        await act(async () => button('下一步')!.props.onClick());
         const signStep = () => view!.root.findAllByProps({ 'aria-label': '申請進度' })[0]!.findAllByType('button')
             .find(b => String(b.props['aria-label']).startsWith('簽署，'))!;
         expect(signStep().props['aria-label']).toBe('簽署，已完成');
         await emit({ kind: 'step', step: 'login' });
         await emit({ kind: 'step', step: 'list' });
-        expect(signStep().props['aria-label']).toBe('簽署，勾選的市場還沒全部確認已簽署');
-        await act(async () => button('上一步')!.props.onClick());
+        // 重新登入後回到簽署步驟，先前讀到的狀態不沿用
+        expect(json()).toContain('簽署 API 約定書');
         expect(json()).not.toContain('已簽署');
         expect(json()).toContain('未確認');
+        await act(async () => button('下一步')!.props.onClick());
+        expect(signStep().props['aria-label']).toBe('簽署，勾選的市場還沒全部確認已簽署');
     });
 
     it('shows why the signing page could not open and lets the user press again', async () => {
@@ -632,5 +639,27 @@ describe('signing the API agreements', () => {
         expect(json()).toContain('你選的市場都已簽署');
         expect(rows()).toHaveLength(2);
         expect(byLabel('打開美股（複委託）簽署頁')).toBeUndefined();
+    });
+});
+
+describe('followSiteStep', () => {
+    it('stops at the signing step after login even though the site lands on the API list', () => {
+        expect(followSiteStep('login', 'list')).toBe('sign');
+        expect(followSiteStep('start', 'list')).toBe('sign');
+        expect(followSiteStep('sign', 'list')).toBe('sign');
+    });
+    it('follows the site once the user moved on from signing', () => {
+        expect(followSiteStep('list', 'list')).toBe('list');
+        expect(followSiteStep('sign', 'verify')).toBe('verify');
+        expect(followSiteStep('list', 'verify')).toBe('verify');
+        expect(followSiteStep('form', 'list')).toBe('list');
+        expect(followSiteStep('list', 'sign-h')).toBe('sign');
+        expect(followSiteStep('sign', 'login')).toBe('login');
+    });
+    it('keeps the finished page for list, login and signing pages', () => {
+        expect(followSiteStep('imported', 'list')).toBe('imported');
+        expect(followSiteStep('imported', 'login')).toBe('imported');
+        expect(followSiteStep('imported', 'sign-s')).toBe('imported');
+        expect(followSiteStep('imported', 'verify')).toBe('verify');
     });
 });
