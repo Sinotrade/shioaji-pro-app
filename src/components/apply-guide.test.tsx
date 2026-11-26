@@ -24,7 +24,7 @@ vi.mock('../lib/apply-guide-native', () => ({
 import { EMPTY_DESKTOP_SETTINGS, type DesktopSettings } from '../lib/desktop-credentials';
 import { OnboardingSetup } from './onboarding-setup';
 import { CredentialProfiles } from './credential-profiles';
-import { ApplyGuide, followSiteStep } from './apply-guide';
+import { ApplyGuide, followSiteStep, pageNavStep } from './apply-guide';
 import { AssistantFab } from './assistant-fab';
 
 let view: ReactTestRenderer | undefined;
@@ -792,6 +792,36 @@ describe('the guide card on the page', () => {
         await open();
         expect(mocks.card).toHaveBeenLastCalledWith(null);
         expect(button('網頁說明')!.props['aria-pressed']).toBe(false);
+    });
+
+    it('moves from the latest step when several page presses arrive before a redraw', async () => {
+        await open();
+        await act(async () => { mocks.handler!({ kind: 'nav', action: 'next' }); mocks.handler!({ kind: 'nav', action: 'next' }); });
+        expect(json()).toContain('按「新增 API Key」');
+        await emit({ kind: 'step', step: 'success' });
+        // 金鑰剛載入、同一批又來一個「上一步」：完成頁不被蓋掉
+        await act(async () => {
+            mocks.handler!({ kind: 'imported', profileId: 'p1', name: 'ShioajiPro', duplicate: false });
+            mocks.handler!({ kind: 'nav', action: 'prev' });
+        });
+        expect(json()).toContain('金鑰已載入');
+    });
+
+    it('ignores page presses that arrive after the card was closed in the same batch', async () => {
+        await open();
+        await act(async () => { mocks.handler!({ kind: 'nav', action: 'hide' }); mocks.handler!({ kind: 'nav', action: 'next' }); });
+        expect(json()).toContain('登入永豐金證券網站');
+        expect(lastCard()).toBeNull();
+    });
+
+    it('keeps the same limits as the app buttons', () => {
+        expect(pageNavStep('login', 'prev', false)).toBe('login');
+        expect(pageNavStep('login', 'next', false)).toBe('sign');
+        expect(pageNavStep('success', 'next', false)).toBe('success');
+        expect(pageNavStep('success', 'next', true)).toBe('imported');
+        expect(pageNavStep('imported', 'prev', true)).toBe('imported');
+        expect(pageNavStep('start', 'next', false)).toBe('start');
+        expect(pageNavStep('form', 'prev', false)).toBe('verify');
     });
 
     it('carries the app theme and text size', async () => {

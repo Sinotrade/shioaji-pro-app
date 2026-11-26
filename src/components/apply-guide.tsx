@@ -118,11 +118,17 @@ export function useApplyGuide(onImported?: (imported: ApplyImported) => void): A
     const [signs, setSigns] = useState(UNKNOWN_SIGNS);
     const [signError, setSignError] = useState('');
     const [pageCard, setPageCardState] = useState(readPageCardPref);
+    // 給事件處理用的最新值（同一批事件內也正確）
+    const pageCardRef = useRef(pageCard);
+    pageCardRef.current = pageCard;
+    const setPageCardRef = useRef<(on: boolean) => void>(() => undefined);
+    const hasImportedRef = useRef(false);
     const theme = useThemeSettings();
     const windowRef = useRef<ApplyWindowState>('idle');
     windowRef.current = windowState;
     const saveEnvRef = useRef(saveEnvFile);
     saveEnvRef.current = saveEnvFile;
+    hasImportedRef.current = !!imported;
     const importedRef = useRef(onImported);
     importedRef.current = onImported;
     const syncedRef = useRef<ApplyPageStep | null>(null);
@@ -163,6 +169,7 @@ export function useApplyGuide(onImported?: (imported: ApplyImported) => void): A
                 case 'imported': {
                     const value = { profileId: event.profileId, name: event.name };
                     setImported(value); setFailure(null); setStep('imported');
+                    hasImportedRef.current = true;
                     importedRef.current?.(value);
                     break;
                 }
@@ -178,11 +185,13 @@ export function useApplyGuide(onImported?: (imported: ApplyImported) => void): A
                 case 'nav': {
                     // 官網頁面送來的（官網自己的程式也能假造）：只移動導覽步驟或關掉說明卡，條件和 App 裡的按鈕相同；
                     // 不像 App 的「下一步」會把官網切回 API 管理頁，官網視窗一律不動
-                    const nav = navRef.current;
-                    if (!nav.pageCard) break;
-                    if (event.action === 'next' && nav.canNext) setStep(nextGuideStep(nav.step));
-                    else if (event.action === 'prev' && nav.canPrevious) setStep(previousGuideStep(nav.step));
-                    else if (event.action === 'hide') nav.setPageCard(false);
+                    // 同一批事件（React 還沒重畫）也要從最新的步驟算：用 functional update 與同步更新的 ref
+                    if (!pageCardRef.current) break;
+                    if (event.action === 'hide') setPageCardRef.current(false);
+                    else {
+                        const action = event.action;
+                        setStep(current => pageNavStep(current, action, hasImportedRef.current));
+                    }
                     break;
                 }
             }
@@ -261,10 +270,8 @@ export function useApplyGuide(onImported?: (imported: ApplyImported) => void): A
         setSaveEnvState(save); writeSaveEnvPref(save);
         void setApplySaveEnv(save);
     };
-    // 「上一步」「下一步」：開始頁與完成頁沒有；第一步沒有上一步，載入金鑰前「下載 .env」是最後一步
-    const stepped = step !== 'start' && !(step === 'imported' && imported);
-    const canPrevious = stepped && step !== 'login';
-    const canNext = stepped && !(step === 'success' && !imported);
+    const canPrevious = canGoPrevious(step, !!imported);
+    const canNext = canGoNext(step, !!imported);
     const goPrevious = () => setStep(previousGuideStep(step));
     // 從簽署到 API 管理：官網還停在簽署頁時一起切回 API 管理頁（固定網址），和「前往 API 管理頁申請金鑰」相同
     const goNext = () => {
@@ -272,9 +279,8 @@ export function useApplyGuide(onImported?: (imported: ApplyImported) => void): A
         if (step === 'sign' && next === 'list' && windowRef.current === 'open' && signMarketOf(syncedRef.current)) void showApplyApiPage();
         setStep(next);
     };
-    const setPageCard = (on: boolean) => { setPageCardState(on); writePageCardPref(on); };
-    const navRef = useRef({ step, pageCard, canNext, canPrevious, setPageCard });
-    navRef.current = { step, pageCard, canNext, canPrevious, setPageCard };
+    const setPageCard = (on: boolean) => { pageCardRef.current = on; setPageCardState(on); writePageCardPref(on); };
+    setPageCardRef.current = setPageCard;
     // 官網上的說明卡跟著導覽這一步走；關掉時送 null 把卡片拿掉
     const cardTheme = baseMode(theme);
     const cardLarge = theme.fontScale === 1.3;
@@ -500,6 +506,19 @@ function Callout({ tone, title, children, actions }: { tone: 'danger' | 'warn' |
             {actions && <div className={g.calloutActions}>{actions}</div>}
         </div>
     </div>;
+}
+
+/** 「上一步」「下一步」：開始頁與載入金鑰後的完成頁沒有；第一步沒有上一步，載入金鑰前「下載 .env」是最後一步。 */
+export function canGoPrevious(step: GuideStep, imported: boolean) {
+    return step !== 'start' && !(step === 'imported' && imported) && step !== 'login';
+}
+export function canGoNext(step: GuideStep, imported: boolean) {
+    return step !== 'start' && !(step === 'imported' && imported) && !(step === 'success' && !imported);
+}
+/** 官網上說明卡的按鈕：只換導覽步驟（不切換官網頁面）；不能動就停在原地。 */
+export function pageNavStep(step: GuideStep, action: 'next' | 'prev', imported: boolean): GuideStep {
+    if (action === 'next') return canGoNext(step, imported) ? nextGuideStep(step) : step;
+    return canGoPrevious(step, imported) ? previousGuideStep(step) : step;
 }
 
 /** 勾選的市場全部讀到「已簽署」（沒勾任何市場也算）：進度列的「簽署」才打勾。 */

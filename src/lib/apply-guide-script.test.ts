@@ -243,7 +243,7 @@ describe.skipIf(!hasScript)('apply window guide card', () => {
         page.guide.card(CARD_KEY, card);
         expect(page.roots).toHaveLength(1);
         const host = page.win.document.documentElement.lastElementChild!;
-        expect(host.tagName.toLowerCase()).toBe('sjpro-guide-card');
+        expect(host.tagName.toLowerCase()).toBe('div'); // 不用自訂標籤：官網可能先註冊同名元素
         expect(host.shadowRoot).toBeNull(); // closed
         expect(page.win.document.body.textContent).not.toContain('Shioaji Pro 導覽');
         // 框起「新增 API Key」：卡片顯示那一項
@@ -383,6 +383,51 @@ describe.skipIf(!hasScript)('apply window guide card', () => {
         expect(text(page.card()!.querySelector(".title"))).toBe("按「新增APIKey」");
         expect(text(page.card())).not.toContain("偽造");
         expect(caught).toHaveLength(0); // 卡片的節點沒有經過官網換掉的函式
+    });
+
+    it("keeps the app copy when the site adds index setters or default fields to the prototypes", () => {
+        const page = load(LIST_URL, listPage(), false, { rect: layout, viewport: VIEW });
+        const card = guideCardOf("list", options);
+        const point = { ...card.points[0]! };
+        delete (point as { tone?: string }).tone;
+        const caught = new Set<unknown>(); // 不用陣列：陣列本身也會經過這個 setter
+        try {
+            // 官網在 Array.prototype 放索引 setter、在 Object.prototype 放預設欄位
+            Object.defineProperty(Array.prototype, "0", {
+                configurable: true,
+                set(this: unknown[], value: unknown) {
+                    if (typeof value === "string" || (value && typeof value === "object" && "body" in value)) caught.add(value);
+                    Object.defineProperty(this, "0", { value, writable: true, enumerable: true, configurable: true });
+                },
+            });
+            Object.defineProperty(Object.prototype, "tone", { configurable: true, get: () => "caution" });
+            page.guide.card(CARD_KEY, { ...card, points: [point, ...card.points.slice(1)] });
+        } finally {
+            delete (Array.prototype as unknown as Record<string, unknown>)["0"];
+            delete (Object.prototype as unknown as Record<string, unknown>).tone;
+        }
+        expect([...caught].filter(value => value === "add-key" || (typeof value === "object" && value !== null && "targets" in value))).toEqual([]); // 卡片內容沒有經過官網的 setter
+        expect(text(page.card()!.querySelector(".title"))).toBe("按「新增APIKey」");
+        expect(page.card()!.querySelector(".tag")).toBeNull(); // 沒有的欄位不從原型讀
+    });
+
+    it("keeps keyboard focus on the same button when the card is drawn again", () => {
+        const page = load(LIST_URL, listPage(), false, { rect: layout, viewport: VIEW });
+        page.guide.card(CARD_KEY, guideCardOf("list", options));
+        const root = page.roots[0]!;
+        (page.card()!.querySelectorAll(".foot button")[1] as unknown as HTMLButtonElement).focus();
+        expect((root.activeElement as HTMLElement | null)?.textContent).toContain("下一步");
+        // App 換了標示的項目：卡片重畫，焦點留在新的「下一步」
+        page.focus("download-ca");
+        expect(text(page.card()!.querySelector(".title"))).toBe("正式環境還要「下載憑證」");
+        expect(root.activeElement).toBe(page.card()!.querySelectorAll(".foot button")[1]);
+        // 縮小：「下一步」不見了，焦點交給展開鈕，不掉回官網
+        (page.card()!.querySelector("button[aria-label=\"縮小說明\"]") as unknown as HTMLButtonElement).click();
+        expect(root.activeElement).toBe(page.card()!.querySelector("button[aria-label=\"展開說明\"]"));
+        // 焦點不在卡片上：重畫不搶焦點
+        (page.win.document.querySelector("button") as unknown as HTMLButtonElement).focus();
+        page.guide.card(CARD_KEY, guideCardOf("form", options));
+        expect(root.activeElement).toBeNull();
     });
 
     it("measures new content again instead of staying folded from an earlier card", () => {
