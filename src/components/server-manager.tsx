@@ -154,11 +154,17 @@ export function ServerManager({
     // 申請視窗存好金鑰或憑證：不管導覽面板還開著沒，都重新讀帳號資料
     // （面板關掉後原生端才存完時，設定畫面也不會拿舊的資料）
     // 重新讀取可能重疊（連續存兩次）：只有最後發出的那一次能更新畫面，較舊的結果晚到也不蓋掉
-    const settingsRead = useRef(0);
-    const refreshSettings = useCallback(async () => {
-        const read = ++settingsRead.current;
-        const fresh = await reloadDesktopSettings();
-        if (read === settingsRead.current) setSettings(fresh);
+    // 被後來的讀取取代的那一次改等最新的：回來時畫面上一定已經是最新的帳號資料
+    const settingsRead = useRef<Promise<void> | null>(null);
+    const refreshSettings = useCallback(async (): Promise<void> => {
+        const read: Promise<void> = reloadDesktopSettings().then(fresh => { if (settingsRead.current === read) setSettings(fresh); });
+        settingsRead.current = read;
+        for (let current = read; ;) {
+            await current;
+            const latest: Promise<void> = settingsRead.current ?? current;
+            if (latest === current) return;
+            current = latest;
+        }
     }, []);
     useEffect(() => {
         let active = true;

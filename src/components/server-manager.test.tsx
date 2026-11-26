@@ -415,6 +415,23 @@ describe('credential profiles in server settings', () => {
         await act(async () => finishOld(withCa('Sinopac-first')));
         expect(text()).toContain('Sinopac-second.pfx');
     });
+    it('opens the account editor only after the newest profile refresh has arrived', async () => {
+        await act(async () => { view = create(createElement(ServerManager, { open: true, onToggle: vi.fn() })); });
+        await act(async () => { requestApplyGuide(null); });
+        const withCa = (name: string) => ({ ...initial, profiles: [one, { ...two, caPath: `/fixture/ca/two/${name}.pfx` }] });
+        let finishOld!: (value: DesktopSettings) => void; let finishNew!: (value: DesktopSettings) => void;
+        mocks.reread.mockImplementationOnce(() => new Promise<DesktopSettings>(resolve => { finishOld = resolve; }));
+        // 憑證事件會讓伺服器設定和導覽面板各要求一次重新讀取：都還沒回來
+        const pending = new Promise<DesktopSettings>(resolve => { finishNew = resolve; });
+        mocks.reread.mockImplementation(() => pending);
+        await act(async () => view.root.findByType(ApplyGuidePanel).props.onOpenAccount('two'));
+        await act(async () => { for (const handler of [...mocks.guideHandlers]) handler({ kind: 'ca-attached' }); });
+        await act(async () => finishOld(withCa('Sinopac-first')));
+        expect(view.root.findAllByType(ServerSettingsDialog)).toHaveLength(0);
+        await act(async () => finishNew(withCa('Sinopac-second')));
+        expect(view.root.findByType(ServerSettingsDialog).props.initialEditId).toBe('two');
+        expect(text()).toContain('Sinopac-second.pfx');
+    });
     it('starts the production key task directly from the shortcut request', async () => {
         mocks.guideOpen.mockResolvedValue('overlay');
         await act(async () => { view = create(createElement(ServerManager, { open: true, onToggle: vi.fn() })); });

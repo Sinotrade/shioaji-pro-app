@@ -339,6 +339,8 @@ export function useApplyGuide(onImported?: (imported: ApplyImported) => void, op
                 }
                 // 同步途中視窗被關掉：不能當成開著（畫面留在「官網視窗已關閉」，重新打開會再同步一次）
                 if (closes !== closedRef.current) return null;
+                // 同步途中面板關掉了：不再替它送憑證帳號
+                if (!aliveRef.current) return null;
                 // 開窗途中改選了帳號（那時還送不出去）：把最新的選擇送過去
                 if (caProfileRef.current !== sent && (taskRef.current === 'ca' || taskRef.current === 'production')) {
                     windowRef.current = 'open';

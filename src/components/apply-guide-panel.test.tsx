@@ -474,6 +474,25 @@ describe('in-app apply guide', () => {
         expect(radios().map(r => r.props.checked)).toEqual([false, true]);
     });
 
+    it('does not resend a CA recipient from a panel that closed while its window was being synced', async () => {
+        const other: CredentialProfile = { ...prod, id: 'p3', name: '第二正式' };
+        await mount(withProfiles(sim, prod, other));
+        let finish!: () => void;
+        mocks.importEnvironment.mockImplementationOnce(() => new Promise<void>(resolve => { finish = resolve; }));
+        await act(async () => { void button('下載 CA 憑證')!.props.onClick(); });
+        await emit({ kind: 'step', step: 'list' });
+        const radios = () => view!.root.findAll(n => n.type === 'input' && n.props.type === 'radio');
+        await act(async () => radios()[0]!.props.onChange());
+        await act(async () => view!.unmount());
+        await mount(withProfiles(sim, prod, other), 'ca');
+        await emit({ kind: 'step', step: 'list' });
+        await act(async () => radios()[1]!.props.onChange());
+        const calls = mocks.caTarget.mock.calls.length;
+        await act(async () => finish());
+        expect(mocks.caTarget.mock.calls.length).toBe(calls);
+        expect(mocks.caTarget).toHaveBeenLastCalledWith('p3');
+    });
+
     it('discloses plaintext storage for a production key like first-run setup', async () => {
         await mount({ ...withProfiles(sim), credentialBackend: 'plaintext-fallback', fallbackPath: '/fixture/credentials.json' }, 'production');
         await emit({ kind: 'imported', profileId: 'p2', name: 'ShioajiProProd', duplicate: false, environment: 'production' });
