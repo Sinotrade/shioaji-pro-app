@@ -114,7 +114,7 @@ export const progressWrap = style({ flexShrink: 0, padding: '0.875em 1em 0.25em'
 export const progressCount = style({ margin: '0 0.25em 0.5em', fontSize: '0.9em', fontWeight: 700, color: g.text });
 export const progressCountMuted = style({ fontWeight: 500, color: g.text2 });
 export const progress = style({
-    display: 'grid', gridTemplateColumns: 'repeat(6, minmax(0, 1fr))', gap: 0,
+    display: 'grid', gridTemplateColumns: 'repeat(7, minmax(0, 1fr))', gap: 0,
     margin: 0, padding: 0, listStyle: 'none',
 });
 export const progressItem = style({ position: 'relative', minWidth: 0 });
@@ -329,3 +329,38 @@ export const summaryChevron = style({
 });
 export const detailsBody = style({ padding: '0 1em 1em', display: 'flex', flexDirection: 'column', gap: '0.625em' });
 export const linkRow = style({ display: 'flex', flexWrap: 'wrap', gap: '0 0.75em', marginLeft: '-0.5em' });
+
+// ── 簽署 API 約定書 ─────────────────────────────────────────────────────
+export const subTitle = style({ margin: 0, fontSize: '1.05em', fontWeight: 750, display: 'flex', alignItems: 'center', gap: '0.4em' });
+export const marketSet = style({ margin: 0, padding: 0, border: 0, display: 'flex', flexDirection: 'column', gap: '0.5em', minWidth: 0 });
+export const marketLegend = style({ padding: 0, marginBottom: '0.5em', fontWeight: 700 });
+export const marketOptions = style({ display: 'flex', flexWrap: 'wrap', gap: '0.5em' });
+export const marketOption = style({
+    display: 'inline-flex', alignItems: 'center', gap: '0.5em', minHeight: 48, padding: '0 0.9em',
+    borderRadius: 10, border: `1.5px solid ${g.control}`, background: g.surface, cursor: 'pointer',
+    selectors: { '&:hover': { background: g.accentSoft }, '&:focus-within': ring },
+});
+export const marketOptionOn = style([marketOption, { borderColor: g.accent, background: g.accentSoft }]);
+export const signList = style({ display: 'flex', flexDirection: 'column', margin: 0, padding: 0, listStyle: 'none', gap: '0.625em' });
+export const signRow = style({
+    display: 'flex', flexDirection: 'column', gap: '0.625em',
+    padding: '0.875em 1em', borderRadius: 12, border: `1px solid ${g.divider}`, background: g.sunken,
+    selectors: { '&[aria-current="page"]': { borderColor: g.accent, borderWidth: 2, padding: 'calc(0.875em - 1px) calc(1em - 1px)' } },
+});
+export const signHead = style({ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '0.75em' });
+// 狀態：圖示＋文字＋外框，不只靠顏色
+const signStatusBase = style({
+    display: 'inline-flex', alignItems: 'center', gap: '0.3em', flexShrink: 0, whiteSpace: 'nowrap',
+    fontSize: '0.88em', fontWeight: 700, padding: '0.15em 0.65em', borderRadius: 999, border: '1.5px solid', lineHeight: 1.6,
+});
+export const signStatus = styleVariants({
+    unknown: [signStatusBase, { color: g.text2, borderColor: g.control, background: g.surface }],
+    signed: [signStatusBase, { color: g.success, borderColor: g.success, background: g.successSoft }],
+    unsigned: [signStatusBase, { color: g.warn, borderColor: g.warn, background: g.warnSoft }],
+    pending: [signStatusBase, { color: g.accentText, borderColor: g.accent, background: g.accentSoft }],
+});
+export const signHere = style({ margin: 0, fontSize: '0.88em', fontWeight: 650, color: g.accentText });
+export const signSection = style({
+    display: 'flex', flexDirection: 'column', gap: '0.625em',
+    padding: '0.875em 1em 1em', borderRadius: 12, border: `1px solid ${g.divider}`, background: g.surface,
+});

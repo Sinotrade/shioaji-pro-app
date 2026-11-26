@@ -20,8 +20,9 @@ export function unsignedAccountTitle(simulation: boolean) {
 export const API_MANAGEMENT_URL =
     'https://www.sinotrade.com.tw/newweb/PythonAPIKey/';
 
-// 依商品別的 API 約定書簽署頁。
-export const SIGNING_URLS: Record<'S' | 'F', { label: string; url: string }> = {
+// 依商品別的 API 約定書簽署頁（帳戶類別：S 證券、F 期貨／選擇權、H 複委託）。
+export type SigningMarket = 'S' | 'F' | 'H';
+export const SIGNING_URLS: Record<SigningMarket, { label: string; url: string }> = {
     S: {
         label: '證券 API 約定書',
         url: 'https://www.sinotrade.com.tw/newweb/signCenter/S_openAPI/',
@@ -29,5 +30,9 @@ export const SIGNING_URLS: Record<'S' | 'F', { label: string; url: string }> = {
     F: {
         label: '期貨／選擇權 API 約定書',
         url: 'https://www.sinotrade.com.tw/newweb/signCenter/F_openApi/',
+    },
+    H: {
+        label: '美股（複委託）API 約定書',
+        url: 'https://www.sinotrade.com.tw/newweb/signCenter/H_openApi/',
     },
 };

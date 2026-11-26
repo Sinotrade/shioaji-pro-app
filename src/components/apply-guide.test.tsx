@@ -6,7 +6,7 @@ import type { ApplyGuideEvent } from '../lib/apply-guide-native';
 const mocks = vi.hoisted(() => ({
     panel: vi.fn(() => null), defaults: vi.fn(), load: vi.fn(), save: vi.fn(), select: vi.fn(), start: vi.fn(),
     reload: vi.fn(), stop: vi.fn(), logout: vi.fn(), openLogs: vi.fn(), external: vi.fn(),
-    open: vi.fn(), close: vi.fn(), apiPage: vi.fn(), focus: vi.fn(), clearSite: vi.fn(), saveEnv: vi.fn(),
+    open: vi.fn(), close: vi.fn(), apiPage: vi.fn(), signPage: vi.fn(), focus: vi.fn(), clearSite: vi.fn(), saveEnv: vi.fn(),
     handler: null as ((event: ApplyGuideEvent) => void) | null,
 }));
 vi.mock('../lib/spawn-keys', () => ({ clearStoredSpawnKeyHash: vi.fn() }));
@@ -18,7 +18,7 @@ vi.mock('../lib/tauri', async () => ({
     serverStop: mocks.stop, logoutCredentialProfile: mocks.logout, openServerLogFolder: mocks.openLogs, openExternalUrl: mocks.external,
 }));
 vi.mock('../lib/apply-guide-native', () => ({
-    openApplyWindow: mocks.open, closeApplyWindow: mocks.close, clearApplySiteData: mocks.clearSite, setApplySaveEnv: mocks.saveEnv, showApplyApiPage: mocks.apiPage, focusApplyTarget: mocks.focus,
+    openApplyWindow: mocks.open, closeApplyWindow: mocks.close, clearApplySiteData: mocks.clearSite, setApplySaveEnv: mocks.saveEnv, showApplyApiPage: mocks.apiPage, showApplySignPage: mocks.signPage, focusApplyTarget: mocks.focus,
     listenApplyGuide: async (handler: (event: ApplyGuideEvent) => void) => { mocks.handler = handler; return () => { mocks.handler = null; }; },
 }));
 import { EMPTY_DESKTOP_SETTINGS, type DesktopSettings } from '../lib/desktop-credentials';
@@ -412,5 +412,109 @@ describe('apply guide review round 3', () => {
         // 完成頁仍可從進度列回去
         const progress = view!.root.findAllByProps({ 'aria-label': '申請進度' })[0]!.findAllByType('button');
         expect(progress.at(-1)!.props.disabled).toBe(false);
+    });
+});
+
+describe('signing the API agreements', () => {
+    const store = new Map<string, string>();
+    beforeEach(() => {
+        store.clear();
+        vi.stubGlobal('localStorage', {
+            getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => void store.set(k, v),
+            removeItem: (k: string) => void store.delete(k),
+        });
+    });
+    const byLabel = (text: string) => view!.root.findAllByProps({ 'aria-label': text }).find(n => n.type === 'button');
+    const marketBox = (title: string) => view!.root.findAll(n => n.type === 'label' && JSON.stringify(n.children.map(c => typeof c === 'string' ? c : (c as ReactTestInstance).props?.children)).includes(title))[0]!
+        .findByType('input');
+    const rows = () => view!.root.findAllByProps({ 'aria-label': 'API 約定書簽署狀態' })[0]?.findAllByType('li') ?? [];
+
+    it('comes right after login, asks which markets to trade and shows only those (台股 by default)', async () => {
+        await mount();
+        await act(async () => button('開始申請')!.props.onClick());
+        await act(async () => button('下一步')!.props.onClick());
+        expect(json()).toContain('簽署 API 約定書');
+        expect(json()).toContain('順序不限');
+        expect(json()).toContain('第 2 步，共 6 步');
+        expect(marketBox('證券（台股）').props.checked).toBe(true);
+        expect(marketBox('期貨／選擇權').props.checked).toBe(false);
+        expect(rows()).toHaveLength(1);
+        expect(json()).toContain('未確認');
+        // 勾期貨：多一列，選擇記住
+        await act(async () => marketBox('期貨／選擇權').props.onChange({ currentTarget: { checked: true } }));
+        expect(rows()).toHaveLength(2);
+        expect(JSON.parse(store.get('sjpro.applyGuide.markets')!)).toEqual(['S', 'F']);
+        await act(async () => byLabel('打開期貨／選擇權簽署頁')!.props.onClick());
+        expect(mocks.signPage).toHaveBeenCalledWith('F');
+        expect(byLabel('打開美股（複委託）簽署頁')).toBeUndefined();
+        // 不擋：隨時可以去申請金鑰
+        await act(async () => button('前往 API 管理頁申請金鑰')!.props.onClick());
+        expect(mocks.apiPage).toHaveBeenCalled();
+        expect(json()).toContain('按「新增 API Key」');
+    });
+
+    it('follows the signing page, shows what it read and keeps a known state over a later unknown', async () => {
+        store.set('sjpro.applyGuide.markets', JSON.stringify(['S', 'H']));
+        await mount();
+        await act(async () => button('開始申請')!.props.onClick());
+        await emit({ kind: 'step', step: 'sign-h', sign: 'unknown' });
+        expect(json()).toContain('簽署 API 約定書');
+        expect(json()).toContain('官網目前在這個簽署頁');
+        expect(json()).toContain('在簽署頁上照順序做');
+        await emit({ kind: 'step', step: 'sign-h', sign: 'unsigned' });
+        expect(json()).toContain('未簽署');
+        const locate = view!.root.findAllByProps({ 'aria-label': '在網頁上標示：下載約定書副本' })[0]!;
+        await act(async () => locate.props.onClick());
+        expect(mocks.focus).toHaveBeenCalledWith('sign-h-download');
+        await emit({ kind: 'step', step: 'sign-h', sign: 'signed' });
+        await emit({ kind: 'step', step: 'sign-h', sign: 'unknown' });
+        expect(json()).toContain('已簽署');
+        expect(rows()).toHaveLength(2);
+        // 已簽署的市場不再出現「打開簽署頁」
+        await emit({ kind: 'step', step: 'list' });
+        await act(async () => button('上一步')!.props.onClick());
+        expect(byLabel('打開美股（複委託）簽署頁')).toBeUndefined();
+        expect(byLabel('打開證券（台股）簽署頁')).toBeDefined();
+    });
+
+    it('opens the signing page in the browser when the app could only use the browser', async () => {
+        mocks.open.mockResolvedValue('browser');
+        await mount();
+        await act(async () => button('開始申請')!.props.onClick());
+        await act(async () => button('下一步')!.props.onClick());
+        await act(async () => byLabel('打開證券（台股）簽署頁')!.props.onClick());
+        expect(mocks.signPage).not.toHaveBeenCalled();
+        expect(mocks.external).toHaveBeenCalledWith('https://www.sinotrade.com.tw/newweb/signCenter/S_openAPI/');
+    });
+
+    it('reopens a closed window before opening the signing page', async () => {
+        await mount();
+        await act(async () => button('開始申請')!.props.onClick());
+        await emit({ kind: 'closed' });
+        await act(async () => button('下一步')!.props.onClick());
+        mocks.open.mockClear();
+        await act(async () => byLabel('打開證券（台股）簽署頁')!.props.onClick());
+        expect(mocks.open).toHaveBeenCalledOnce();
+        expect(mocks.signPage).toHaveBeenCalledWith('S');
+    });
+
+    it('lists the chosen markets that still need signing on the 完成 page and stays there while signing', async () => {
+        store.set('sjpro.applyGuide.markets', JSON.stringify(['S', 'F']));
+        await mount();
+        await act(async () => button('開始申請')!.props.onClick());
+        await emit({ kind: 'step', step: 'sign-s', sign: 'signed' });
+        mocks.load.mockResolvedValue({ ...EMPTY_DESKTOP_SETTINGS, activeProfileId: 'p1', profiles: [profile] });
+        await emit({ kind: 'imported', profileId: 'p1', name: 'ShioajiPro', duplicate: false });
+        expect(json()).toContain('金鑰已載入');
+        expect(json()).toContain('還有約定書沒簽或還沒確認');
+        expect(rows()).toHaveLength(2);
+        expect(byLabel('打開證券（台股）簽署頁')).toBeUndefined();
+        await act(async () => byLabel('打開期貨／選擇權簽署頁')!.props.onClick());
+        expect(mocks.signPage).toHaveBeenCalledWith('F');
+        await emit({ kind: 'step', step: 'sign-f', sign: 'signed' });
+        expect(json()).toContain('金鑰已載入');
+        expect(json()).toContain('你選的市場都已簽署');
+        expect(rows()).toHaveLength(2);
+        expect(byLabel('打開美股（複委託）簽署頁')).toBeUndefined();
     });
 });
