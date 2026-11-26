@@ -48,9 +48,9 @@ export interface LimitPrices {
 export interface SymbolBroadcastState {
     /** 上一次「真正念出去」的價格；-1 = 尚未初始化（第一筆不播報） */
     lastPrice: number;
-    /** 高點水位標竿；-1 = 尚未初始化 */
+    /** 目前為止的最高價基準；-1 = 尚未初始化 */
     lastHigh: number;
-    /** 低點水位標竿；-1 = 尚未初始化 */
+    /** 目前為止的最低價基準；-1 = 尚未初始化 */
     lastLow: number;
     /** 上一次播報的時間（epoch ms）；-1 = 尚未播報過 */
     lastSpeakAt: number;
@@ -61,7 +61,7 @@ export function createSymbolState(): SymbolBroadcastState {
 }
 
 export interface BroadcastDecision {
-    /** 判定後的狀態（已推進水位標竿） */
+    /** 判定後的狀態（最高／最低價基準已更新） */
     state: SymbolBroadcastState;
     status: BroadcastStatus;
     /** 要念的完整句子；空字串代表這次不念 */
@@ -108,7 +108,7 @@ export function evaluateBroadcast(
 
     const status = detectStatus(tick, limits, lastPrice, lastHigh, lastLow);
 
-    // 水位標竿一定要在冷卻判斷「之前」推進：就算這次被冷卻擋下，
+    // 最高／最低價基準一定要在冷卻判斷「之前」更新：就算這次被冷卻擋下，
     // 這檔商品的高低點基準還是得跟著市場走；否則冷卻期間的創新高會被吞掉。
     if (tick.high > lastHigh) lastHigh = tick.high;
     if (tick.low > 0 && tick.low < lastLow) lastLow = tick.low;

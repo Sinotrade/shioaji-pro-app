@@ -171,7 +171,7 @@ describe('broadcast-hub 的訂閱生命週期', () => {
         expect(mocks.retained).toBe(0);
     });
 
-    it('移除商品後重新加入會從新的基準開始（不會沿用舊的水位標竿）', async () => {
+    it('移除商品後重新加入會從新的基準開始（不會沿用舊的最高／最低價基準）', async () => {
         const hub = await import('./broadcast-hub');
         const settings = await import('./broadcast-settings');
         settings.setBroadcastSettings({

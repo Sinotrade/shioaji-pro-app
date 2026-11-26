@@ -5,7 +5,7 @@
 //
 // 沿用 repo 既有的 useSyncExternalStore 寫法（見 toast-prefs.ts / privacy.ts）。
 //
-// 註：語速是「抽象刻度 -10~20」，各 engine 自行映射成自己的語意
+// 註：語速是面板滑桿刻度（-10~20），實際播放倍率由各 engine 換算
 // （見 lib/tts/web-speech-engine.ts 的 rateToSpeed）。共用層不做映射。
 
 import { useSyncExternalStore } from 'react';

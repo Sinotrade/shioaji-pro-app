@@ -11,8 +11,8 @@
 import type { TtsEngine, TtsProbe, TtsSpeakOptions, TtsVoice } from './tts-engine';
 
 /**
- * 抽象語速刻度（-10~20，0 = 正常）→ Web Speech 的倍率（1 = 正常）。
- * 抽象刻度每格對應約 10% 的語速變化。
+ * 面板滑桿的語速刻度（-10~20，0 = 正常）→ Web Speech 的播放倍率（1 = 正常）。
+ * 滑桿刻度每格對應約 10% 的播放速度變化。
  *
  * 為什麼放在 engine 裡而不是共用層：各平台的「語速」語意不同
  * （Web Speech 是倍率、WinRT 是 -10~10 的整數、sherpa 是 length_scale），

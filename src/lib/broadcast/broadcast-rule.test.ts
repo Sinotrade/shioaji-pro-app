@@ -201,7 +201,7 @@ it('announces an important event even during the cooldown', () => {
     expect(urgent.status).toBe('limit-up');
 });
 
-// 被冷卻擋下時，水位標竿仍要跟著市場走，但「上次念出的價格」不動
+// 被冷卻擋下時，最高／最低價基準仍要跟著市場走，但「上次念出的價格」不動
 it('advances the high/low watermark even when the cooldown blocks the speech', () => {
     let state: SymbolBroadcastState = createSymbolState();
     const base = { price: 100, high: 100, low: 100 };
