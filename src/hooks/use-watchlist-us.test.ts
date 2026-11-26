@@ -170,7 +170,7 @@ it('adds a US symbol with region US and its real exchange, notifying once', asyn
     expect(keys()).toEqual(['T', 'US:AAPL']);
     expect(mocks.notify).toHaveBeenCalledTimes(1);
     expect(mocks.notify.mock.calls[0]![0]).toMatchObject({ kind: 'info' });
-    expect(mocks.notify.mock.calls[0]![0].body).toContain('1.8.0b1');
+    expect(mocks.notify.mock.calls[0]![0].body).toContain('1.8.0');
     expect(data.get(US_WATCHLIST_NOTICE_KEY)).toBe('1');
     // 第二檔美股、重複加入都不再提示
     await act(async () => { await state.addSymbol('US:MSFT'); });
