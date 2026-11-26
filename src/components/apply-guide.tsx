@@ -295,11 +295,21 @@ export function useApplyGuide(onImported?: (imported: ApplyImported) => void, op
                 void setApplySaveEnv(saveEnvRef.current);
                 void setApplySaveCa(saveCaRef.current);
                 windowRef.current = 'open';
+                const request = caRequestRef.current;
+                const sent = caProfileRef.current;
                 try { await syncTask(taskRef.current); } catch (error) {
                     // 正式金鑰存不成正式帳號、或憑證帳號設定失敗：不能讓使用者照著做下去
                     if (taskRef.current === 'production') throw error;
-                    caProfileRef.current = null; setCaProfileState(null);
-                    setCaError(error instanceof Error ? error.message : String(error));
+                    // 等待中使用者已經改選帳號：這次的結果不算（syncTask 自己只算一次）
+                    if (caRequestRef.current <= request + 1 && caProfileRef.current === sent) {
+                        caProfileRef.current = null; setCaProfileState(null);
+                        setCaError(error instanceof Error ? error.message : String(error));
+                    }
+                }
+                // 開窗途中改選了帳號（那時還送不出去）：把最新的選擇送過去
+                if (caProfileRef.current !== sent && (taskRef.current === 'ca' || taskRef.current === 'production')) {
+                    windowRef.current = 'open';
+                    void selectCa(caProfileRef.current);
                 }
             }
             if (result === 'browser') setWindowState('browser');

@@ -1,7 +1,7 @@
 import { createElement, type ReactElement } from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-const mocks = vi.hoisted(() => ({ load: vi.fn(), save: vi.fn(), profile: vi.fn(), select: vi.fn(), remove: vi.fn(), logout: vi.fn(), start: vi.fn(), stop: vi.fn(), status: vi.fn(), env: vi.fn(), envCandidate: vi.fn(), ca: vi.fn(), notify: vi.fn(), info: vi.fn(), prepare: vi.fn(), reload: vi.fn(), guideOpen: vi.fn(), guideClose: vi.fn() }));
+const mocks = vi.hoisted(() => ({ load: vi.fn(), save: vi.fn(), profile: vi.fn(), select: vi.fn(), remove: vi.fn(), logout: vi.fn(), start: vi.fn(), stop: vi.fn(), status: vi.fn(), env: vi.fn(), envCandidate: vi.fn(), ca: vi.fn(), notify: vi.fn(), info: vi.fn(), prepare: vi.fn(), reload: vi.fn(), guideOpen: vi.fn(), guideClose: vi.fn(), guideHandlers: [] as ((event: { kind: string }) => void)[] }));
 vi.mock('../lib/tauri', async () => ({
     ...await import('../lib/desktop-credentials'),
     isTauri: true, appVersion: async () => 'dev · test',
@@ -19,7 +19,10 @@ vi.mock('../lib/apply-guide-native', () => ({
     openApplyWindow: mocks.guideOpen, closeApplyWindow: mocks.guideClose, clearApplySiteData: vi.fn(), setApplySaveEnv: vi.fn(),
     setApplySaveCa: vi.fn(), setApplyImportEnvironment: vi.fn(async () => undefined), setApplyCaTarget: vi.fn(async () => null),
     showApplyApiPage: vi.fn(), showApplySignPage: vi.fn(), focusApplyTarget: vi.fn(), setApplyGuideCard: vi.fn(),
-    listenApplyGuide: async () => () => undefined,
+    listenApplyGuide: async (handler: (event: { kind: string }) => void) => {
+        mocks.guideHandlers.push(handler);
+        return () => { mocks.guideHandlers.splice(mocks.guideHandlers.indexOf(handler), 1); };
+    },
 }));
 vi.mock('../hooks/use-stream', () => ({ useStreamStatus: () => 'live' }));
 vi.mock('../lib/shioaji', () => ({ fetchHealth: async () => null, fetchInfo: mocks.info, fetchAccounts: async () => [], fetchCaExpire: vi.fn() }));
@@ -371,6 +374,13 @@ describe('credential profiles in server settings', () => {
         expect(mocks.notify).toHaveBeenCalledWith(expect.objectContaining({ title: '帳號資料讀取失敗' }));
         await act(async () => view.root.findByType(ApplyGuidePanel).props.onClose());
         expect(view.root.findAllByType(ApplyGuidePanel)).toHaveLength(0);
+    });
+    it('reloads the profiles when the apply window saves a key or certificate, even with the panel closed', async () => {
+        await act(async () => { view = create(createElement(ServerManager, { open: true, onToggle: vi.fn() })); });
+        expect(view.root.findAllByType(ApplyGuidePanel)).toHaveLength(0);
+        const reads = mocks.load.mock.calls.length;
+        await act(async () => { for (const handler of [...mocks.guideHandlers]) handler({ kind: 'ca-attached' }); });
+        expect(mocks.load.mock.calls.length).toBeGreaterThan(reads);
     });
     it('starts the production key task directly from the shortcut request', async () => {
         mocks.guideOpen.mockResolvedValue('overlay');

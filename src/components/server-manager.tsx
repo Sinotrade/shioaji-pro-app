@@ -90,6 +90,7 @@ import { ServerEnvNotice } from './server-env-notice';
 import { ServerSettingsDialog, type ServerConnectionSettings } from './server-settings-dialog';
 import { ApplyGuidePanel } from './apply-guide-panel';
 import { onApplyGuideRequest, requestApplyGuide } from '../lib/apply-guide-reentry';
+import { listenApplyGuide } from '../lib/apply-guide-native';
 import type { InAppGuideTask } from '../lib/apply-guide-config';
 import * as dialogStyles from './server-settings-dialog.css';
 import { vars } from '../theme.css';
@@ -149,6 +150,18 @@ export function ServerManager({
     const [editProfileId, setEditProfileId] = useState<string | undefined>(undefined);
     const toggleRef = useRef(onToggle);
     toggleRef.current = onToggle;
+    // 申請視窗存好金鑰或憑證：不管導覽面板還開著沒，都重新讀帳號資料
+    // （面板關掉後原生端才存完時，設定畫面也不會拿舊的資料）
+    useEffect(() => {
+        let active = true;
+        let off: (() => void) | undefined;
+        void listenApplyGuide(event => {
+            if (event.kind === 'imported' || event.kind === 'ca-attached') {
+                void loadDesktopSettings().then(fresh => { if (active) setSettings(fresh); }).catch(() => undefined);
+            }
+        }).then(unlisten => { if (active) off = unlisten; else unlisten(); });
+        return () => { active = false; off?.(); };
+    }, []);
     useEffect(() => onApplyGuideRequest(task => {
         setSettingsOpen(false); toggleRef.current(false);
         setGuideRequest(current => ({ task, seq: (current?.seq ?? 0) + 1 }));

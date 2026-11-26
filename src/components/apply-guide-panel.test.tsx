@@ -277,6 +277,27 @@ describe('in-app apply guide', () => {
         expect(json()).not.toContain('要在官網上做什麼？');
     });
 
+    it('keeps a newer selection when the reopened window refuses the previous one', async () => {
+        const other: CredentialProfile = { ...prod, id: 'p3', name: '第二正式' };
+        await mount(withProfiles(sim, prod, other), 'ca');
+        await emit({ kind: 'step', step: 'list' });
+        const radios = () => view!.root.findAll(n => n.type === 'input' && n.props.type === 'radio');
+        await act(async () => radios()[0]!.props.onChange());
+        await emit({ kind: 'closed' });
+        let refuse!: (error: Error) => void;
+        mocks.caTarget.mockImplementation(async (id: string | null) => {
+            if (id === 'p2') return new Promise<string>((_resolve, reject) => { refuse = reject; });
+            return id && '第二正式';
+        });
+        await act(async () => { void button('重新打開官網')!.props.onClick(); });
+        expect(mocks.caTarget).toHaveBeenLastCalledWith('p2');
+        await act(async () => radios()[1]!.props.onChange());
+        await act(async () => refuse(new Error('憑證要設定的帳號已經改變，請重新選擇')));
+        expect(json()).not.toContain('憑證沒有存成');
+        expect(radios().map(r => r.props.checked)).toEqual([false, true]);
+        expect(mocks.caTarget).toHaveBeenLastCalledWith('p3');
+    });
+
     it('only signs in the signing task', async () => {
         await mount(withProfiles(sim), 'sign');
         expect(mocks.importEnvironment).toHaveBeenCalledWith('simulation');
