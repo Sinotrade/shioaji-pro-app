@@ -650,6 +650,8 @@ export function ApplyGuide({ guide, settings, busy, docked = false, contentRef, 
         <div className={bodyClass} ref={contentRef}>
             <h2 className={g.title}>{copy.title}</h2>
             <p className={g.lead}><Rich text={copy.lead} /></p>
+            {/* 放在最上面：按「下載 .env」之前就要看到 */}
+            {step === 'success' && windowState !== 'browser' && <SaveEnvOption guide={guide} />}
             {windowState === 'closed' && <Callout tone="warn" title="官網視窗已關閉"
                 actions={<button className={g.secondaryButton} onClick={() => void guide.open()}><RotateCw size={18} aria-hidden />重新打開官網</button>}>
                 按「重新打開官網」繼續。{step === 'success' ? '如果已經看到「新增成功」但還沒下載 .env，Secret Key 已經看不到了，請再新增一把金鑰。' : ''}
@@ -666,7 +668,6 @@ export function ApplyGuide({ guide, settings, busy, docked = false, contentRef, 
             {step === 'login' && windowOpen && <div className={g.actions}>
                 <button className={g.secondaryButton} onClick={() => void showApplyApiPage()}><ArrowRight size={18} aria-hidden />回到 API 管理頁</button>
             </div>}
-            {step === 'success' && windowState !== 'browser' && <SaveEnvOption guide={guide} />}
             {guide.downloaded && step === 'success' && <p className={g.secondary}>{downloadedText(guide.downloaded)}</p>}
             {copy.note && <p className={g.secondary}>{copy.note}</p>}
             {manualLink}
