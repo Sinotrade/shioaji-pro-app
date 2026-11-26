@@ -1,7 +1,7 @@
 // src/lib/broadcast/broadcast-queue.ts — 語音佇列（去重 / 過時丟棄 / 插播）。
 //
-// 移植自 WpfApp6 的 Services/SpeechService.cs。WPF 那邊用
-// BlockingCollection + 背景執行緒，這邊用 Promise 串接，語意等價。
+// 序列化語意：一次只念一句，念完才取下一個（上層佇列不允許並發出聲）。
+// 以 Promise 串接表達，等同「單一消費者 + 阻塞佇列」的模型。
 //
 // 三道機制：
 //   1. 去重：同一商品「完全一樣的一句話」不重複念（_latestSymbolMessages）
@@ -98,7 +98,7 @@ export class BroadcastQueue {
         void this.pump();
     }
 
-    /** 清空排隊（不影響「上次念了什麼」的記憶，與 WPF 的 ClearQueue 相同） */
+    /** 清空排隊（不影響「上次念了什麼」的去重記憶；清空後同一句話仍不重複播報） */
     clear() {
         this.queue.length = 0;
     }

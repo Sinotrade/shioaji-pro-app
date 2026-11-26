@@ -12,7 +12,7 @@
 
 export interface TtsSpeakOptions {
     /**
-     * 語速，**抽象刻度 -10 ~ 20**（0 = 正常，沿用 WpfApp6 的刻度）。
+     * 語速，**抽象刻度 -10 ~ 20**（0 = 正常，每格約 10%）。
      * 各 engine 自行映射到自己的語意：
      *   - Web Speech：倍率 1 + rate/10，夾在 0.1~3
      *   - 原生引擎（WinRT／AVSpeech／sherpa）：各自的 rate / length_scale

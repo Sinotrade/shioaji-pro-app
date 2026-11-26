@@ -14,7 +14,7 @@ export interface BroadcastSettings {
     /** 總開關 */
     enabled: boolean;
     /**
-     * 語速，-10 ~ 20（沿用 WPF 的刻度，0 = 正常，每格約 10%）。
+     * 語速，-10 ~ 20（0 = 正常，每格約 10%）。
      * 上限從 10 放寬到 20：舊的 ±10 在 Web Speech 只到 2.0 倍，
      * 而 engine 本來就允許到 3.0 倍（見 rateToSpeed）。既有使用者的
      * rate=10 仍然是 2.0 倍，行為不變，只是多了更快的檔位。

@@ -8,8 +8,8 @@
 // 為什麼是 singleton：事件來源（成交、條件單、通知）是**全域**的，
 // 多個面板各有一份設定會互相衝突——哪一份生效？規則會變得不可預期。
 //
-// 設計取自 WpfApp6 的 MonitorTab：有自己的商品清單與播報開關，
-// 全域共用同一個語音引擎與去重表。
+// 面板持有自己的商品清單與播報開關，但全域共用同一個語音引擎與去重表：
+// 設定集中在一處，去重與佇列才能跨商品、跨面板正確運作。
 
 import { Volume2, VolumeX, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';

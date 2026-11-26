@@ -4,7 +4,7 @@
 // 不支援環境：Linux WebKitGTK（speechSynthesis 為 undefined）→ 回報不可用。
 //
 // 為什麼自己管佇列而不直接用 speechSynthesis 的內建佇列：
-// WPF 那套的「過時丟棄（排隊超過 10 秒就不念）」需要知道一句話「幾點被要求念」
+// 上層的「逾時丟棄（排隊超過 10 秒就不念）」需要知道一句話「幾點被要求念」
 // 與「幾點真的念出來」，瀏覽器的內建佇列不給這個資訊。佇列放在上層
 // （broadcast-queue.ts），engine 只負責單純地把一句話念完。
 
@@ -12,7 +12,7 @@ import type { TtsEngine, TtsProbe, TtsSpeakOptions, TtsVoice } from './tts-engin
 
 /**
  * 抽象語速刻度（-10~20，0 = 正常）→ Web Speech 的倍率（1 = 正常）。
- * WPF 的 SpeechSynthesizer.Rate 每格約 10%，這裡採同樣的近似比例。
+ * 抽象刻度每格對應約 10% 的語速變化。
  *
  * 為什麼放在 engine 裡而不是共用層：各平台的「語速」語意不同
  * （Web Speech 是倍率、WinRT 是 -10~10 的整數、sherpa 是 length_scale），

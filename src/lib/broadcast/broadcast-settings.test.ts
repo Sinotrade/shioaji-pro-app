@@ -16,7 +16,7 @@ beforeEach(() => {
     vi.resetModules();
 });
 
-it('starts disabled with the WpfApp6 defaults', async () => {
+it('starts disabled with the documented defaults', async () => {
     const m = await import('./broadcast-settings');
     expect(m.getBroadcastSettings()).toEqual({
         enabled: false,

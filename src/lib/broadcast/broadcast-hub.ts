@@ -328,7 +328,7 @@ function onTick(contract: ContractInfo, panelCode: string) {
     });
     if (!decision.speak) return;
 
-    // 行情類用商品代號去重（同商品同句話不重複念，保留 WPF 行為）
+    // 行情類以商品代號去重（同一商品的同一句話不重複播報）
     getQueue().enqueue(decision.text, { symbolCode: code });
 }
 

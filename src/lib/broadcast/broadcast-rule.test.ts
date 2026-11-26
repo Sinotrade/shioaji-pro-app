@@ -8,7 +8,7 @@ import {
 
 const NO_LIMITS = {};
 
-// 第一筆只定基準不播報（與 WpfApp6 MonitorItemViewModel 相同）
+// 第一筆只定基準不播報
 it('does not announce the very first tick', () => {
     const decision = evaluateBroadcast(
         createSymbolState(),

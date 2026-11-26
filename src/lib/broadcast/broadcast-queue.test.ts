@@ -152,7 +152,7 @@ it('interrupts the current speech and drops the backlog for an urgent message', 
     expect(spoken).toEqual(['普通句', '急件']);
 });
 
-it('keeps the dedup memory across an interrupt (same as WPF ClearQueue)', async () => {
+it('keeps the dedup memory across an interrupt', async () => {
     const { engine, spoken } = makeEngine();
     const queue = new BroadcastQueue(engine);
     queue.enqueue('台積電 1900.0', { symbolCode: '2330' });

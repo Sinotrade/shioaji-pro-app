@@ -1,6 +1,6 @@
 # 語音播報 — 技法筆記與使用準則
 
-> 移植自既有的 .NET WPF 交易終端（`System.Speech` 語音引擎）的語音播報模組。
+> 語音播報模組。設計參考公司內部既有桌面版（.NET `System.Speech`）；以下說明自洽，閱讀時不需對照該專案。
 > 本專案是 React + Tauri，語音引擎層重新接，**播報的「腦」則 1:1 移植並改寫成純函式**。
 > 原始系統的逐條行為規格已固化為本專案的單元測試：
 > [`src/lib/broadcast/broadcast-rule.test.ts`](../../src/lib/broadcast/broadcast-rule.test.ts)、
@@ -31,7 +31,7 @@
 
    | 事件 | 接入點 | 文案來源 |
    |---|---|---|
-   | 行情狀態 | `onAnyTick` / `subscribeQuoteStore` | `broadcast-rule.ts`（移植自 WPF 的規則） |
+   | 行情狀態 | `onAnyTick` / `subscribeQuoteStore` | `broadcast-rule.ts`（規則層） |
    | 成交／委託 | `onOrderEvent(ev)` | `broadcast-events.ts` 的 `describeOrderVoice()` |
    | 通知／條件單 | `onNotice(n)` ← `notify()` 是全 app 統一出口 | `describeNoticeVoice()` |
 
@@ -68,7 +68,7 @@
    但背後可能是六種完全不同的原因（沒開關／事件沒勾／清單是空的／沒有報價／
    沒有狀態詞所以本來就不該念／被冷卻或去重擋下）。面板必須把這些講清楚。
    - `evaluateBroadcast()` 回傳 `reason`（`'first-tick' | 'cooldown'`）
-   - **注意：「沒有狀態詞」不是不播報的原因** —— 依 WpfApp6 原始行為，
+   - **注意：「沒有狀態詞」不是不播報的原因** ——
      無狀態詞時照樣會播（「台積電 1900.0」），只是受冷卻限制。
    - 「已訂閱但收不到報價」要另外明示：訂閱成功（伺服器 `desired=true`）
      不等於有資料可念。沿用 repo 既有的「訂閱失敗會重試並明示」慣例
@@ -79,7 +79,7 @@
     否則診斷面板本身就會造成重繪風暴——那是在「用診斷工具製造問題」。
 
 11. **語速是抽象刻度，映射交給各 engine**：`TtsSpeakOptions.rate` 用 **-10 ~ 20**
-   （沿用 WPF 的刻度，0 = 正常），各 engine 自行映射成自己的語意
+   （0 = 正常，每格約 10%），各 engine 自行映射成自己的語意
    （Web Speech 是倍率、原生引擎是 rate / length_scale）。
    **共用層不做映射**——那是平台相關的部分。
 

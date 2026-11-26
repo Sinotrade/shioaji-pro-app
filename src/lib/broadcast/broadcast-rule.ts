@@ -1,6 +1,7 @@
 // src/lib/broadcast/broadcast-rule.ts — 播報判定（純函式，無平台相依）。
 //
-// 移植自 WpfApp6 的 MonitorItemViewModel.CheckAndBroadcast()。
+// 規則語意參考公司內部既有桌面版的播報邏輯；本檔以純函式重寫，
+// 行為由以下條件完整定義，閱讀時不需對照任何外部專案。
 // 這裡是整套語音播報的「腦」：決定「這時候該不該念、念什麼」。
 // 做成純函式的好處：可以用 vitest 完整覆蓋，不用真的出聲。
 
@@ -13,7 +14,7 @@ export type BroadcastStatus =
     | 'low'
     | '';
 
-/** 狀態詞 → 播報時接在價格後面的文字（開頭的逗號沿用 WPF 原樣） */
+/** 狀態詞 → 播報時接在價格後面的文字（前置逗號讓語氣銜接自然） */
 export const STATUS_TEXT: Record<BroadcastStatus, string> = {
     'limit-up': '，漲停',
     'limit-down': '，跌停',
@@ -25,7 +26,7 @@ export const STATUS_TEXT: Record<BroadcastStatus, string> = {
 };
 
 /**
- * Shioaji 的 chg_type 語意（見 WpfApp6 FOPTickData.GetChangeStatus）：
+ * Shioaji 行情 tick 的 chg_type 語意：
  * 1=漲停 2=漲 3=平盤 4=跌 5=跌停
  */
 export const CHG_TYPE_LIMIT_UP = 1;
@@ -69,7 +70,7 @@ export interface BroadcastDecision {
     /**
      * 這次「沒有播報」的原因。
      *
-     * 注意：**「沒有狀態詞」不是不播報的原因** —— 依 WpfApp6 的原始行為，
+     * 注意：**「沒有狀態詞」不是不播報的原因** ——
      * 沒有狀態詞時照樣會播（「台積電 1900.0」），只是受冷卻限制。
      * 所以不播報只有兩種原因。
      */
@@ -108,7 +109,7 @@ export function evaluateBroadcast(
     const status = detectStatus(tick, limits, lastPrice, lastHigh, lastLow);
 
     // 水位標竿一定要在冷卻判斷「之前」推進：就算這次被冷卻擋下，
-    // 這檔商品的高低點基準還是得跟著市場走（與 WPF 行為一致）。
+    // 這檔商品的高低點基準還是得跟著市場走；否則冷卻期間的創新高會被吞掉。
     if (tick.high > lastHigh) lastHigh = tick.high;
     if (tick.low > 0 && tick.low < lastLow) lastLow = tick.low;
 
