@@ -57,6 +57,15 @@ export interface TtsEngine {
     readonly speaking: boolean;
     /** 可選的語音清單（實作不支援就回空陣列） */
     listVoices(): TtsVoice[];
+    /**
+     * 訂閱語音清單的後續變化（可選實作）。
+     *
+     * 為什麼需要：Chromium／WebView2 首次呼叫 `getVoices()` 常常回空陣列，
+     * 真正的清單要等 `voiceschanged` 事件才補上。UI 若只讀一次 `listVoices()`，
+     * 在桌面版就永遠看不到「語音選擇」。
+     * 實作應在訂閱時立即回呼一次目前清單，並回傳解除訂閱的函式。
+     */
+    subscribeVoices?(cb: (voices: TtsVoice[]) => void): () => void;
 }
 
 export interface TtsVoice {

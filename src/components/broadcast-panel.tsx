@@ -12,7 +12,7 @@
 // 設定集中在一處，去重與佇列才能跨商品、跨面板正確運作。
 
 import { Volume2, VolumeX, X } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useContract } from '../lib/contracts-cache';
 import { useQuote } from '../hooks/use-stream';
 import {
@@ -43,7 +43,7 @@ import {
     type ProductSuggestion,
 } from '../lib/product-search';
 import { getTtsEngine } from '../lib/tts';
-import type { TtsProbe } from '../lib/tts';
+import type { TtsProbe, TtsVoice } from '../lib/tts';
 import { fmtPrice } from '../lib/utils/format';
 import * as styles from './broadcast-panel.css';
 
@@ -176,7 +176,17 @@ export function BroadcastPanel({ codes, onCodesChange }: BroadcastPanelProps) {
         [codes, onCodesChange],
     );
 
-    const voices = useMemo(() => engine.listVoices(), [engine]);
+    // 語音清單在 Chromium（含桌面版 WebView2）首次取用時是空的，之後才透過
+    // voiceschanged 事件補上；因此不能只讀一次就固定，必須訂閱後續更新，
+    // 否則「語音選擇」在桌面版永遠不會出現。
+    const [voices, setVoices] = useState<TtsVoice[]>(() => engine.listVoices());
+    useEffect(
+        () =>
+            engine.subscribeVoices?.((list) => {
+                setVoices(list);
+            }),
+        [engine],
+    );
     // 只有一種語音時不顯示選擇器（單一音色是刻意的設計，選了也沒得選）
     const showVoicePicker = voices.length > 1;
 

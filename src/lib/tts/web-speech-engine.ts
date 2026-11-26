@@ -76,9 +76,17 @@ export function createWebSpeechEngine(): TtsEngine {
     }
 
     let voices = getVoices(synth);
-    // Chromium 的 getVoices() 常常一開始是空的，等 voiceschanged 再補
+    const voiceListeners = new Set<(list: TtsVoice[]) => void>();
+    const mapVoices = (list: SpeechSynthesisVoice[]): TtsVoice[] =>
+        list.map((v) => ({ uri: v.voiceURI, name: v.name, lang: v.lang }));
+    const currentVoices = (): TtsVoice[] => mapVoices(voices.length ? voices : getVoices(synth));
+
+    // Chromium／WebView2 的 getVoices() 常常一開始是空的，等 voiceschanged 再補。
+    // 補上之後要主動通知訂閱者，否則 UI 只會停在「沒有語音可選」。
     synth.addEventListener?.('voiceschanged', () => {
         voices = getVoices(synth);
+        const list = currentVoices();
+        for (const cb of voiceListeners) cb(list);
     });
 
     let current: { utterance: SpeechSynthesisUtterance; resolve: () => void } | null =
@@ -93,12 +101,16 @@ export function createWebSpeechEngine(): TtsEngine {
         },
 
         listVoices(): TtsVoice[] {
-            const list = voices.length ? voices : getVoices(synth);
-            return list.map((v) => ({
-                uri: v.voiceURI,
-                name: v.name,
-                lang: v.lang,
-            }));
+            return currentVoices();
+        },
+
+        subscribeVoices(cb: (list: TtsVoice[]) => void): () => void {
+            voiceListeners.add(cb);
+            // 訂閱時先給目前結果：清單可能早已載入完成
+            cb(currentVoices());
+            return () => {
+                voiceListeners.delete(cb);
+            };
         },
 
         async probe(): Promise<TtsProbe> {
