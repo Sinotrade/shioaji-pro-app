@@ -231,7 +231,40 @@ const TRACE_COLLAPSE_MS = 1000;
 
 let trace: BroadcastTraceEntry[] = [];
 
+// ---- trace 開關（診斷用，**預設關**）----
+//
+// 為什麼預設關：trace 是「查問題時才需要」的東西，平常交易沒必要一直記錄。
+// 關閉時 pushTrace 直接 return —— 不取時間、不配置物件，成本趨近 0。
+// 刻意用獨立的 localStorage key，而不是混進播報設定（broadcast-settings）：
+// 它是開發／診斷旗標，不是使用者要調的產品設定，也不該進設定檔契約。
+const TRACE_STORAGE_KEY = 'shioaji-pro.broadcast.trace-enabled';
+
+function readTraceEnabled(): boolean {
+    try {
+        return globalThis.localStorage?.getItem(TRACE_STORAGE_KEY) === '1';
+    } catch {
+        // 沒有 localStorage（測試環境、隱私模式）→ 當成關閉
+        return false;
+    }
+}
+
+let traceEnabled = readTraceEnabled();
+
+export function isBroadcastTraceEnabled(): boolean {
+    return traceEnabled;
+}
+
+export function setBroadcastTraceEnabled(on: boolean) {
+    traceEnabled = on;
+    try {
+        globalThis.localStorage?.setItem(TRACE_STORAGE_KEY, on ? '1' : '0');
+    } catch {
+        // 存不起來不影響本次 session 的行為
+    }
+}
+
 function pushTrace(kind: BroadcastTraceKind, text: string, code?: string) {
+    if (!traceEnabled) return;
     const now = Date.now();
     const last = trace[trace.length - 1];
     // 折疊的判斷必須含 text：同商品同種類但**內容不同**的兩筆是兩件事。
@@ -298,6 +331,9 @@ export function formatBroadcastTrace(
     lines.push('[shioaji-pro] 語音播報 trace');
     lines.push(`匯出時間：${stampText(now)}`);
     lines.push(
+        `記錄狀態：${traceEnabled ? '開' : '關（除錯區的「記錄 trace」打開後才會記錄）'}`,
+    );
+    lines.push(
         `記錄筆數：${entries.length} / ${TRACE_LIMIT}（同一事件 ${TRACE_COLLAPSE_MS}ms 內折疊，次數記在行尾）`,
     );
     lines.push('');
@@ -338,7 +374,9 @@ export function formatBroadcastTrace(
     lines.push('---- 時間軸 ----');
     if (entries.length === 0) {
         lines.push(
-            '（沒有記錄 —— 面板沒開、開關沒開，或這段時間沒有任何 tick／事件）',
+            traceEnabled
+                ? '（沒有記錄 —— 面板沒開、事件開關沒開，或這段時間沒有 tick／事件）'
+                : '（trace 記錄未開啟 —— 除錯區的「記錄 trace」打開後才會開始記錄）',
         );
     } else {
         for (const e of entries) {

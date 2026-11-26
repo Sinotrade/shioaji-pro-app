@@ -25,6 +25,9 @@ import {
 import {
     downloadBroadcastTrace,
     dumpBroadcastDebug,
+    getBroadcastTrace,
+    isBroadcastTraceEnabled,
+    setBroadcastTraceEnabled,
     useBroadcastDebug,
 } from '../lib/broadcast/broadcast-debug';
 import {
@@ -82,6 +85,11 @@ export function BroadcastPanel({ codes, onCodesChange }: BroadcastPanelProps) {
     const debug = useBroadcastDebug();
     const engine = getTtsEngine();
     const [input, setInput] = useState('');
+    // trace 開關：預設關（診斷用）。狀態放在元件裡是為了讓按鈕立刻反映，
+    // 真正的記錄判斷在 broadcast-debug 的 pushTrace()。
+    const [traceOn, setTraceOn] = useState(isBroadcastTraceEnabled());
+    // 每一輪 render 讀一次長度即可：面板本身會隨 debug 快照更新而重繪
+    const traceCount = getBroadcastTrace().length;
     const [suggestions, setSuggestions] = useState<ProductSuggestion[]>([]);
     const [probe, setProbe] = useState<TtsProbe | null>(null);
 
@@ -449,6 +457,19 @@ export function BroadcastPanel({ codes, onCodesChange }: BroadcastPanelProps) {
 
                 <div className={styles.addRow}>
                     <button
+                        className={`${styles.toggle} ${
+                            traceOn ? styles.toggleOn : styles.toggleOff
+                        }`}
+                        onClick={() => {
+                            const next = !traceOn;
+                            setBroadcastTraceEnabled(next);
+                            setTraceOn(next);
+                        }}
+                        title="診斷用。平常關掉即可；要查「為什麼沒聲音」時再打開來記錄時間軸。"
+                    >
+                        {traceOn ? '記錄 trace：開' : '記錄 trace：關'}
+                    </button>
+                    <button
                         className={`${styles.toggle} ${styles.toggleOff}`}
                         onClick={() => dumpBroadcastDebug()}
                     >
@@ -456,6 +477,7 @@ export function BroadcastPanel({ codes, onCodesChange }: BroadcastPanelProps) {
                     </button>
                     <button
                         className={`${styles.toggle} ${styles.toggleOff}`}
+                        disabled={traceCount === 0}
                         onClick={() => downloadBroadcastTrace()}
                         title="下載這段時間的時間軸與目前狀態（純文字，可直接貼給別人看）"
                     >

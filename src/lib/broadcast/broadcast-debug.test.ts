@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import {
     clearBroadcastTrace,
     debugDecision,
+    isBroadcastTraceEnabled,
+    setBroadcastTraceEnabled,
     debugNoQuote,
     debugQuoteArrived,
     debugSpoke,
@@ -17,7 +19,34 @@ import {
 //   3. 不影響本來就有的狀態與計數（觀測層不能改變被觀測的東西）
 
 beforeEach(() => {
+    // trace 預設是「關」（診斷用，不干擾日常），測試裡逐一開啟
+    setBroadcastTraceEnabled(true);
     clearBroadcastTrace();
+});
+
+describe('trace 開關', () => {
+    it('預設是關的（不打擾日常交易）', () => {
+        setBroadcastTraceEnabled(false);
+        expect(isBroadcastTraceEnabled()).toBe(false);
+    });
+
+    it('關閉時完全不記錄，匯出檔會說明原因', () => {
+        setBroadcastTraceEnabled(false);
+        debugNoQuote('2330', 'x');
+        debugDecision('2330', { status: '創新高', speak: true, text: 't' });
+
+        expect(getBroadcastTrace()).toHaveLength(0);
+        const text = formatBroadcastTrace();
+        expect(text).toContain('記錄狀態：關');
+        expect(text).toContain('trace 記錄未開啟');
+    });
+
+    it('打開後才開始記錄', () => {
+        setBroadcastTraceEnabled(true);
+        debugNoQuote('2330', 'x');
+        expect(getBroadcastTrace().length).toBeGreaterThan(0);
+        expect(formatBroadcastTrace()).toContain('記錄狀態：開');
+    });
 });
 
 describe('語音播報 trace', () => {
