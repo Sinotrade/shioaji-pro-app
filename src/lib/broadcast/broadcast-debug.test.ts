@@ -1,0 +1,101 @@
+import { beforeEach, describe, expect, it } from 'vitest';
+import {
+    clearBroadcastTrace,
+    debugNoQuote,
+    debugQuoteArrived,
+    debugSubscribed,
+    formatBroadcastTrace,
+    getBroadcastDebug,
+    getBroadcastTrace,
+} from './broadcast-debug';
+
+// 這些測試只鎖「旁路觀測層」的三件事：
+//   1. 有界（不會因為跑幾小時把記憶體吃光）
+//   2. 抗洪（同一商品同一事件不會把有用的記錄擠掉）
+//   3. 不影響本來就有的狀態與計數（觀測層不能改變被觀測的東西）
+
+beforeEach(() => {
+    clearBroadcastTrace();
+});
+
+describe('語音播報 trace', () => {
+    it('沒有任何記錄時也給得出可讀文字，不是空字串', () => {
+        const text = formatBroadcastTrace([], Date.UTC(2026, 10, 26, 10, 30, 0));
+        expect(text).toContain('[shioaji-pro] 語音播報 trace');
+        expect(text).toContain('---- 目前狀態 ----');
+        expect(text).toContain('（沒有記錄');
+    });
+
+    it('同一商品同一種事件在 1 秒內折疊成一行，並累計次數', () => {
+        debugNoQuote('2330', '盤後沒有即時成交');
+        debugNoQuote('2330', '盤後沒有即時成交');
+        debugNoQuote('2330', '盤後沒有即時成交');
+
+        const trace = getBroadcastTrace();
+        expect(trace).toHaveLength(1);
+        expect(trace.at(0)?.kind).toBe('no-quote');
+        // 3 次事件 → 1 行，第 2、3 次折進 repeat
+        expect(trace.at(0)?.repeat).toBe(2);
+    });
+
+    it('不同種類的事件不會被折疊掉', () => {
+        debugNoQuote('2330', 'x');
+        debugSubscribed('2330', ['tick']);
+        debugNoQuote('2330', 'x');
+
+        expect(getBroadcastTrace().map((e) => e.kind)).toEqual([
+            'no-quote',
+            'subscribe',
+            'no-quote',
+        ]);
+    });
+
+    it('上限 200 筆，超過時丟掉最舊的', () => {
+        for (let i = 0; i < 250; i += 1) {
+            // 用不同代碼讓每一筆都是獨立事件，不會被折疊
+            debugNoQuote(`C${i}`, 'x');
+        }
+
+        const trace = getBroadcastTrace();
+        expect(trace).toHaveLength(200);
+        expect(trace.at(0)?.code).toBe('C50');
+        expect(trace.at(-1)?.code).toBe('C249');
+    });
+
+    it('報價只在「沒有 → 有」的轉折記一筆，之後每筆 tick 不灌進來', () => {
+        debugNoQuote('2330', '收盤後沒有即時成交');
+        debugQuoteArrived('2330');
+        expect(getBroadcastTrace()).toHaveLength(2);
+
+        // tick 每一筆都會呼叫 debugQuoteArrived()，這裡模擬高頻呼叫
+        debugQuoteArrived('2330');
+        debugQuoteArrived('2330');
+        // 已經有報價了 → 只留下原先那筆轉折記錄與它的 repeat
+        const trace = getBroadcastTrace();
+        expect(trace).toHaveLength(2);
+        expect(trace.at(-1)?.kind).toBe('quote-arrived');
+        expect(trace.at(-1)?.repeat).toBe(0);
+    });
+
+    it('匯出的每一行都有「時:分:秒.毫秒 事件種類 代碼 說明」', () => {
+        debugSubscribed('2330', ['tick']);
+        const text = formatBroadcastTrace();
+        expect(text).toMatch(
+            /\d{2}:\d{2}:\d{2}\.\d{3}\s+subscribe\s+2330 訂閱 tick/,
+        );
+    });
+
+    it('折疊的次數會出現在匯出文字裡', () => {
+        debugNoQuote('2330', 'x');
+        debugNoQuote('2330', 'x');
+        expect(formatBroadcastTrace()).toContain('(×2)');
+    });
+
+    it('trace 是旁路：記錄不改變既有的計數與開關狀態', () => {
+        const before = getBroadcastDebug().counters;
+        debugNoQuote('2330', 'x');
+        debugSubscribed('2330', ['tick']);
+        const after = getBroadcastDebug().counters;
+        expect(after).toEqual(before);
+    });
+});

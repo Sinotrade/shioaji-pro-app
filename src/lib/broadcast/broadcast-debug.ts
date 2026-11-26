@@ -185,6 +185,196 @@ function target(code: string): BroadcastTargetDebug {
     return state.targets[code] ?? emptyTarget(code);
 }
 
+// ---- 時間軸 trace（實測用） ----
+//
+// 為什麼快照不夠：
+//   上面的 state 回答的是「現在是什麼狀態」，實測時真正要回答的是
+//   「剛剛依序發生了什麼」——tick 有沒有進來、判定為什麼不念、
+//   是不是被冷卻擋掉。快照看不到順序，順序才是診斷的線索。
+//
+// 設計約束（與上面同一原則：旁路觀測，不影響播報行為）：
+//   - 不改任何判定結果，只在既有記錄點旁註一行
+//   - 有界：最多 TRACE_LIMIT 筆，超過丟最舊的（實測可能連續跑數小時）
+//   - 抗洪：同一個 (kind, code) 在 TRACE_COLLAPSE_MS 內只留一筆並累計次數。
+//     tick 每秒數十筆，不折疊的話 200 筆只夠存幾秒，等於沒有記錄。
+
+export type BroadcastTraceKind =
+    | 'switch'
+    | 'contract'
+    | 'subscribe'
+    | 'decision'
+    | 'speak'
+    | 'speak-done'
+    | 'no-quote'
+    | 'quote-arrived'
+    | 'deal'
+    | 'notice'
+    | 'test'
+    | 'dropped'
+    | 'duplicate';
+
+export interface BroadcastTraceEntry {
+    /** 第一次發生的時間（ms epoch） */
+    at: number;
+    kind: BroadcastTraceKind;
+    code?: string;
+    text: string;
+    /** 被折疊掉的相同事件數（0 = 只有這一筆） */
+    repeat: number;
+}
+
+const TRACE_LIMIT = 200;
+const TRACE_COLLAPSE_MS = 1000;
+
+let trace: BroadcastTraceEntry[] = [];
+
+function pushTrace(kind: BroadcastTraceKind, text: string, code?: string) {
+    const now = Date.now();
+    const last = trace[trace.length - 1];
+    if (
+        last &&
+        last.kind === kind &&
+        last.code === code &&
+        now - last.at < TRACE_COLLAPSE_MS
+    ) {
+        // 折疊：不新增一行，只把上一筆的次數 +1（參考值一定換新，陣列本身不變長）
+        trace = [...trace.slice(0, -1), { ...last, repeat: last.repeat + 1 }];
+        return;
+    }
+    trace = [...trace, { at: now, kind, code, text, repeat: 0 }].slice(
+        -TRACE_LIMIT,
+    );
+}
+
+export function getBroadcastTrace(): BroadcastTraceEntry[] {
+    return trace;
+}
+
+export function clearBroadcastTrace() {
+    trace = [];
+}
+
+function pad2(n: number): string {
+    return n < 10 ? `0${n}` : String(n);
+}
+
+function clockText(at: number): string {
+    const d = new Date(at);
+    return `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}.${String(
+        d.getMilliseconds(),
+    ).padStart(3, '0')}`;
+}
+
+function stampText(at: number): string {
+    const d = new Date(at);
+    return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(
+        d.getHours(),
+    )}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
+}
+
+/**
+ * 把 trace 變成可直接貼上／存檔的純文字。
+ *
+ * 為什麼不是 console.table：實測完要把結果貼給別人看，table 一貼就散掉。
+ * 這裡刻意連「目前狀態」一起輸出，讓這份檔案單獨看就能診斷，
+ * 不必再回頭去猜當時的開關與計數。
+ */
+export function formatBroadcastTrace(
+    entries: BroadcastTraceEntry[] = trace,
+    now = Date.now(),
+): string {
+    // 這裡刻意讀 state 而不是 snapshot：snapshot 是為了 React 重繪穩定而節流
+    // （250ms），但匯出是一次性的，讀到節流前的舊值會讓「目前狀態」看起來是空的。
+    const s = state;
+    const lines: string[] = [];
+    lines.push('[shioaji-pro] 語音播報 trace');
+    lines.push(`匯出時間：${stampText(now)}`);
+    lines.push(
+        `記錄筆數：${entries.length} / ${TRACE_LIMIT}（同一事件 ${TRACE_COLLAPSE_MS}ms 內折疊，次數記在行尾）`,
+    );
+    lines.push('');
+    lines.push('---- 目前狀態 ----');
+    lines.push(
+        `開關：總=${s.switches.enabled ? '開' : '關'} 行情=${
+            s.switches.quote ? '開' : '關'
+        } 成交=${s.switches.deal ? '開' : '關'} 通知=${
+            s.switches.notice ? '開' : '關'
+        }`,
+    );
+    lines.push(
+        `佇列：待播 ${s.queue.pending}${
+            s.queue.speakingText ? ` · 正在念「${s.queue.speakingText}」` : ''
+        }`,
+    );
+    lines.push(
+        `計數：tick ${s.counters.ticks} · 判定 ${s.counters.decisions} · 已播 ${s.counters.spoke} · 一般報價 ${s.counters.generalQuotes} · 冷卻擋 ${s.counters.blockedCooldown} · 去重擋 ${s.counters.duplicateSuppressed} · 過時丟棄 ${s.counters.droppedStale} · 成交 ${s.counters.dealEvents} · 通知 ${s.counters.noticeEvents} · 測試 ${s.counters.testAnnouncements}`,
+    );
+    const targets = Object.values(s.targets);
+    if (targets.length === 0) {
+        lines.push('商品：（沒有播報商品）');
+    }
+    for (const t of targets) {
+        lines.push(
+            `商品 ${t.code}${t.name && t.name !== t.code ? ` ${t.name}` : ''}：合約${
+                t.contractResolved ? 'OK' : `失敗(${t.contractError ?? '?'})`
+            } · 訂閱${t.subscribedTypes.join(',') || '（無）'} · tick ${
+                t.tickCount
+            } · 最後價 ${t.lastPrice ?? '—'} · 最後判定 ${
+                t.lastStatus ?? '—'
+            } · 未播原因 ${t.lastSkipReason ?? '—'}${
+                t.noQuote ? ` · 無即時報價(${t.noQuoteReason ?? '?'})` : ''
+            }`,
+        );
+    }
+    lines.push('');
+    lines.push('---- 時間軸 ----');
+    if (entries.length === 0) {
+        lines.push(
+            '（沒有記錄 —— 面板沒開、開關沒開，或這段時間沒有任何 tick／事件）',
+        );
+    } else {
+        for (const e of entries) {
+            const suffix = e.repeat > 0 ? `  (×${e.repeat + 1})` : '';
+            const code = e.code ? ` ${e.code}` : '';
+            lines.push(
+                `${clockText(e.at)}  ${e.kind.padEnd(14, ' ')}${code} ${
+                    e.text
+                }${suffix}`,
+            );
+        }
+    }
+    // 去掉每行行尾空白：對齊用的 padEnd 與選填欄位會在行尾留下空白
+    return lines.join('\n').replace(/[ \t]+$/gm, '');
+}
+
+/**
+ * 面板「匯出 trace」按鈕：直接下載成 .txt。
+ *
+ * 為什麼用下載而不是複製到剪貼簿：Edge `--app` 視窗要開 devtools 才看得到
+ * console，而 clipboard 在非 https／非使用者手勢下常常沒權限。下載是唯一
+ * 兩個都不用管的路徑。開頭加 BOM，Windows 記事本才不會把中文顯示成亂碼。
+ */
+export function downloadBroadcastTrace() {
+    flush(); // 確保「目前狀態」是最新值
+    const at = Date.now();
+    const text = formatBroadcastTrace(trace, at);
+    const d = new Date(at);
+    const stamp = `${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(
+        d.getDate(),
+    )}-${pad2(d.getHours())}${pad2(d.getMinutes())}${pad2(d.getSeconds())}`;
+    const blob = new Blob([`\uFEFF${text}`], {
+        type: 'text/plain;charset=utf-8',
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `broadcast-trace-${stamp}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+}
+
 // ---- 記錄點 ----
 
 export function debugSwitches(sw: BroadcastDebugState['switches']) {
@@ -197,6 +387,12 @@ export function debugSwitches(sw: BroadcastDebugState['switches']) {
     ) {
         return; // 沒有變化就不擾動面板
     }
+    pushTrace(
+        'switch',
+        `總=${sw.enabled ? '開' : '關'} 行情=${sw.quote ? '開' : '關'} 成交=${
+            sw.deal ? '開' : '關'
+        } 通知=${sw.notice ? '開' : '關'}`,
+    );
     update((d) => {
         d.switches = { ...sw };
     });
@@ -212,6 +408,13 @@ export function debugContract(
         contractTargetCode?: string | null;
     },
 ) {
+    pushTrace(
+        'contract',
+        info.resolved
+            ? `合約解析 OK（${info.contractCode ?? '?'}）`
+            : `合約解析失敗：${info.error ?? '?'}`,
+        code,
+    );
     update((d) => {
         const t = { ...target(code) };
         t.name = info.name;
@@ -224,6 +427,7 @@ export function debugContract(
 }
 
 export function debugSubscribed(code: string, types: string[]) {
+    pushTrace('subscribe', `訂閱 ${types.join(',') || '（無）'}`, code);
     update((d) => {
         const t = { ...target(code) };
         t.subscribedTypes = [...types];
@@ -254,6 +458,18 @@ export function debugDecision(
         text?: string;
     },
 ) {
+    // 折疊後每檔每秒最多一行；價格取自同一個 tick 剛寫入的 lastPrice
+    const price = state.targets[code]?.lastPrice;
+    const priceText = price === undefined ? '' : ` ＠${price}`;
+    pushTrace(
+        'decision',
+        result.speak
+            ? `念 «${result.text ?? ''}»${priceText}${
+                  result.status ? `（狀態：${result.status}）` : ''
+              }`
+            : `不念（原因：${result.reason ?? '?'}${priceText}）`,
+        code,
+    );
     update((d) => {
         d.counters.decisions += 1;
         const t = { ...target(code) };
@@ -276,6 +492,7 @@ export function debugDecision(
 }
 
 export function debugSpoke(text: string, code: string) {
+    pushTrace('speak', `«${text}»`, code || undefined);
     update((d) => {
         d.counters.spoke += 1;
         d.queue.speakingText = text;
@@ -290,6 +507,7 @@ export function debugSpoke(text: string, code: string) {
 }
 
 export function debugSpeakingDone() {
+    pushTrace('speak-done', '念完');
     update((d) => {
         d.queue.speakingText = undefined;
         d.queue.speakingSince = undefined;
@@ -303,18 +521,21 @@ export function debugQueuePending(n: number) {
 }
 
 export function debugDroppedStale() {
+    pushTrace('dropped', '過時丟棄（佇列裡已經不是最新報價）');
     update((d) => {
         d.counters.droppedStale += 1;
     });
 }
 
 export function debugDuplicateSuppressed() {
+    pushTrace('duplicate', '去重擋下（同商品同句話）');
     update((d) => {
         d.counters.duplicateSuppressed += 1;
     });
 }
 
 export function debugNoQuote(code: string, reason: string) {
+    pushTrace('no-quote', reason, code);
     update((d) => {
         const t = { ...target(code) };
         t.noQuote = true;
@@ -324,6 +545,8 @@ export function debugNoQuote(code: string, reason: string) {
 }
 
 export function debugQuoteArrived(code: string) {
+    // tick 每一筆都會呼叫這裡，所以只在「之前判定沒報價 → 現在收到了」記一筆
+    if (target(code).noQuote) pushTrace('quote-arrived', '報價進來了', code);
     update((d) => {
         const t = { ...target(code) };
         if (!t.noQuote) return;
@@ -334,18 +557,21 @@ export function debugQuoteArrived(code: string) {
 }
 
 export function debugDealEvent() {
+    pushTrace('deal', '收到成交／委託回報');
     update((d) => {
         d.counters.dealEvents += 1;
     });
 }
 
 export function debugNoticeEvent() {
+    pushTrace('notice', '收到通知／條件單事件');
     update((d) => {
         d.counters.noticeEvents += 1;
     });
 }
 
 export function debugTestAnnouncement() {
+    pushTrace('test', '手動測試播報');
     update((d) => {
         d.counters.testAnnouncements += 1;
     });

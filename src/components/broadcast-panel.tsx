@@ -23,6 +23,7 @@ import {
     useBroadcastLog,
 } from '../lib/broadcast/broadcast-hub';
 import {
+    downloadBroadcastTrace,
     dumpBroadcastDebug,
     useBroadcastDebug,
 } from '../lib/broadcast/broadcast-debug';
@@ -452,6 +453,13 @@ export function BroadcastPanel({ codes, onCodesChange }: BroadcastPanelProps) {
                         onClick={() => dumpBroadcastDebug()}
                     >
                         診斷（丟到 console）
+                    </button>
+                    <button
+                        className={`${styles.toggle} ${styles.toggleOff}`}
+                        onClick={() => downloadBroadcastTrace()}
+                        title="下載這段時間的時間軸與目前狀態（純文字，可直接貼給別人看）"
+                    >
+                        匯出 trace.txt
                     </button>
                 </div>
             </div>
