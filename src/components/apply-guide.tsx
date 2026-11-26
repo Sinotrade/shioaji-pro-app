@@ -178,6 +178,9 @@ export function useApplyGuide(onImported?: (imported: ApplyImported) => void, op
     const theme = useThemeSettings();
     const windowRef = useRef<ApplyWindowState>('idle');
     windowRef.current = windowState;
+    // 面板關掉（卸載）以後，還在等的工作不再打開申請視窗
+    const aliveRef = useRef(true);
+    useEffect(() => { aliveRef.current = true; return () => { aliveRef.current = false; }; }, []);
     const saveEnvRef = useRef(saveEnvFile);
     saveEnvRef.current = saveEnvFile;
     hasImportedRef.current = !!imported;
@@ -402,10 +405,12 @@ export function useApplyGuide(onImported?: (imported: ApplyImported) => void, op
                 if (next === 'production') { setOpenError(message); setStep('start'); }
                 else setCaError(message);
             }
+            if (!aliveRef.current) return;
             const result = await openApplyWindow().catch(() => null); // 帶到前面
             if (result === 'beside' || result === 'overlay') setPlacement(result);
             return;
         }
+        if (!aliveRef.current) return;
         const result = await openWindow();
         if (!result && next === 'production') setStep('start');
     };
@@ -841,6 +846,7 @@ export function ApplyGuide({ guide, settings, busy, docked = false, fab = docked
         const profile = settings.profiles.find(p => p.id === guide.imported!.profileId);
         // 舊版原生殼不帶環境；帶了而且是模擬（例如設定沒送到）就提醒
         const wrongEnvironment = (profile?.environment ?? guide.imported.environment) === 'simulation';
+        const plaintext = (profile?.credentialBackend ?? settings.credentialBackend) === 'plaintext-fallback';
         return <section className={cardClass} aria-label={label}>
             {header}
             <Progress step={step} imported task={guide.task} signDone={allChosenSigned(guide)} onSelect={guide.setStep} />
@@ -855,7 +861,11 @@ export function ApplyGuide({ guide, settings, busy, docked = false, fab = docked
                     <dt className={g.doneTerm}>帳號名稱</dt>
                     <dd className={g.doneValue}>{profile?.name ?? guide.imported.name}{!wrongEnvironment && <span className={g.prodBadge}>正式環境</span>}</dd>
                     {profile?.apiKeyMasked && <><dt className={g.doneTerm}>API Key</dt><dd className={g.doneValue}><span className={g.mono}>{profile.apiKeyMasked}</span></dd></>}
+                    {!plaintext && <><dt className={g.doneTerm}>保存位置</dt><dd className={g.doneValue}>這台電腦的系統憑證庫</dd></>}
                 </dl>
+                {plaintext && <Callout tone="warn" title="金鑰存成檔案">
+                    這台電腦沒有可用的系統憑證庫，金鑰與憑證密碼存在 {settings.fallbackPath}（只有你的帳號能讀寫，0600）。同一使用者執行的程式（含 Agent）仍可能讀到這個檔案。
+                </Callout>}
                 {wrongEnvironment && <Callout tone="warn" title="這把金鑰存成了模擬帳號"
                     actions={onOpenAccount && <button className={g.secondaryButton} onClick={() => onOpenAccount(guide.imported!.profileId)}><SquarePen size={18} aria-hidden />到帳號設定改成正式環境</button>}>
                     請到帳號設定把環境改成正式環境，再下載 CA 憑證。

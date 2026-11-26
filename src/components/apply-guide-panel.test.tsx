@@ -298,6 +298,28 @@ describe('in-app apply guide', () => {
         expect(mocks.caTarget).toHaveBeenLastCalledWith('p3');
     });
 
+    it('does not reopen the apply window after the panel closed during a task switch', async () => {
+        await mount(withProfiles(sim, prod), 'ca');
+        await emit({ kind: 'step', step: 'list' });
+        let finish!: () => void;
+        mocks.importEnvironment.mockImplementationOnce(() => new Promise<void>(resolve => { finish = resolve; }));
+        await act(async () => button('換一件要做的事')!.props.onClick());
+        await act(async () => { void button('簽署 API 約定書')!.props.onClick(); });
+        const opens = mocks.open.mock.calls.length;
+        await act(async () => view!.root.findByProps({ 'aria-label': '關閉導覽' }).props.onClick());
+        await act(async () => view!.unmount());
+        view = undefined;
+        await act(async () => finish());
+        expect(mocks.open.mock.calls.length).toBe(opens);
+    });
+
+    it('discloses plaintext storage for a production key like first-run setup', async () => {
+        await mount({ ...withProfiles(sim), credentialBackend: 'plaintext-fallback', fallbackPath: '/fixture/credentials.json' }, 'production');
+        await emit({ kind: 'imported', profileId: 'p2', name: 'ShioajiProProd', duplicate: false, environment: 'production' });
+        expect(json()).toContain('金鑰存成檔案');
+        expect(json()).toContain('/fixture/credentials.json');
+    });
+
     it('only signs in the signing task', async () => {
         await mount(withProfiles(sim), 'sign');
         expect(mocks.importEnvironment).toHaveBeenCalledWith('simulation');
