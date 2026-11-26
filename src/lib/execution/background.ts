@@ -639,7 +639,11 @@ export const RISK_PUSH_MS = 2000;
 let lastRisk = '';
 /** The App's risk settings (kill switch / lock, per-order cap, daily loss
  * limit and the day's P&L, whether that P&L was read): on every change and
- * as a heartbeat (`force`). Main window only (the App refuses others). */
+ * as a heartbeat (`force`). Main window only (the App refuses others).
+ * #403 `dailyPnlEstimate`: the daily P&L the window's own risk check uses
+ * (risk.ts `getDailyPnl`: every position's unrealized P&L plus the futures
+ * settled P&L) — the engine checks an opening entry of any account against
+ * it, as the window does. */
 let riskQueue: Promise<void> = Promise.resolve();
 export function pushBackgroundRisk(force = false): Promise<void> {
     if (!isTauri) return Promise.resolve();
@@ -652,7 +656,7 @@ export function pushBackgroundRisk(force = false): Promise<void> {
 
 async function pushRiskNow(force: boolean): Promise<void> {
     // loaded on use: risk.ts reads window / localStorage when imported
-    const [{ getRiskSettings }, { getTradingState }] = await Promise.all([import('../risk'), import('../trading-state')]);
+    const [{ getRiskSettings, getDailyPnl }, { getTradingState }] = await Promise.all([import('../risk'), import('../trading-state')]);
     const s = getRiskSettings();
     const t = getTradingState();
     // one account's P&L: the futures account whose margin was read ("F:<broker>:<account>"),
@@ -667,7 +671,7 @@ async function pushRiskNow(force: boolean): Promise<void> {
     const pnlKnown = pnlAccount !== null && t.margin !== undefined && t.queries.positions.updatedAt !== null
         && !t.queries.positions.needsReconcile && !t.queries.account.needsReconcile && getStreamStatus() === 'live';
     const risk = { enabled: s.enabled, maxQty: s.maxQty, maxDailyLoss: s.maxDailyLoss, locked: s.locked,
-        dailyPnl, pnlKnown, pnlAccount };
+        dailyPnl, pnlKnown, pnlAccount, dailyPnlEstimate: getDailyPnl() };
     const key = JSON.stringify(risk);
     if (!force && key === lastRisk) return;
     await invoke<void>('execution_set_risk', { risk });

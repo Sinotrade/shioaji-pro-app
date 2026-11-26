@@ -94,6 +94,7 @@ import { fetchTrades } from './shioaji';
 import { getStreamStatus, onAnyBidAsk, onAnyTick, onOddLotTick, onStreamEvent, subscribeStatusStore } from './stream';
 import { notify, placeQuickOrder } from './trade';
 import { getTradingState } from './trading-state';
+import { accountCoverRoom } from './flash-order-totals';
 import { fmtPrice } from './utils/format';
 import { stepPrice } from './utils/ticksize';
 import { contractMarket, isWarrantContract } from './contract-market';
@@ -1484,6 +1485,36 @@ function reserve(t: TriggerOrder, lastPrice: number): { rec: ExitRecord; sibling
     return { rec, siblings, gk };
 }
 
+/** #403 A plain stock exit (a flash 回補 buy or a sell of shares held, a
+ * chart stop / take — no bracket, not an entry) that, when it fires, is
+ * KNOWN not to reduce anything any more: what it reduces now (a sell: the
+ * confirmed cash shares held; a buy: today's 當沖先賣 still to cover, from the
+ * order reports) less the other unresolved exits of the same side is short of
+ * it. It then goes out with the risk checks of an entry (it would open a
+ * position). Unknown (no confirmed positions / orders): kept as created. */
+export function stockExitOpens(t: Pick<TriggerOrder, 'role' | 'bracketId' | 'time' | 'account' | 'orderCode' | 'orderLot' | 'action'>,
+    rec: Pick<ExitRecord, 'id' | 'quantity' | 'reserveKey'>, nowMs = Date.now()): boolean {
+    if (t.role === 'entry' || t.bracketId || t.time || t.account?.account_type !== 'S' || !t.orderCode) return false;
+    const odd = isOddLot(t.orderLot);
+    const own = rec.quantity * (odd ? 1 : SHARES_PER_LOT);
+    if (t.action === 'Sell') {
+        const held = closablePosition(t.account, t.orderCode, 'Sell');
+        // the reservation includes this exit itself
+        return held !== null && held - Math.max(0, reservedShares(rec.reserveKey) - own) < own;
+    }
+    const state = getTradingState();
+    const q = state.queries?.orders;
+    if (!q || q.updatedAt === null) return false;
+    const room = accountCoverRoom(state.trades, t.account, t.orderCode, odd, nowMs) * (odd ? 1 : SHARES_PER_LOT);
+    // the cover room already takes off working buys and filled covers: an
+    // exit whose order is in the order list is counted there, not again here
+    const listed = new Set(state.trades.map(x => x.order.id));
+    const others = exits.filter(e => e.reserveKey === rec.reserveKey && e.id !== rec.id && !isResolved(e)
+        && !(e.orderId && listed.has(e.orderId)))
+        .reduce((s, e) => s + Math.max(0, e.quantity - e.filled) * (isOddLot(e.orderLot) ? 1 : SHARES_PER_LOT), 0);
+    return room - others < own;
+}
+
 function planFor(t: TriggerOrder) {
     const reserveKey = reserveKeyOf(t.env!, t.account!, t.orderCode!, t.action);
     const closable = t.bracketId ? closablePosition(t.account!, t.orderCode!, t.action) : null;
@@ -1619,11 +1650,15 @@ async function dispatch(t: TriggerOrder, rec: ExitRecord, lastPrice: number) {
     if (typeof op === 'string') { notSentExit(t, rec, op); return; }
     // the condition may have lapsed while the contract was being checked
     if (t.validity && Date.now() >= t.validity.until) { notSentExit(t, rec, '有效期已過，未送出'); return; }
+    // #403 a stock exit with nothing left to reduce would open a position:
+    // the entry's risk checks apply to it
+    const opens = stockExitOpens(t, rec);
+    if (opens) updateExit(rec.id, e => ({ ...e, detail: `${e.detail ? `${e.detail}；` : ''}觸發時已無對應的持股或待回補，依進場單套用風控` }));
     try {
         const trade = await placeQuickOrder(ctx.contract, t.action, op.price, rec.quantity, {
             // protective exit — never blocked by kill switch; an entry is a
             // new position: kill switch and loss limits apply
-            bypassRisk: t.role !== 'entry',
+            bypassRisk: t.role !== 'entry' && !opens,
             source: 'auto', // 使用者可能不在場，不彈確認
             account: ctx.account,
             ocType: t.octype,

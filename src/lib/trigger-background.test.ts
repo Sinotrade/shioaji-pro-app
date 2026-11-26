@@ -558,6 +558,23 @@ describe('#226 conditional orders in the background (step 1: triggers)', () => {
         await bg.pushBackgroundRisk(true);
         expect(last()).toMatchObject({ pnlKnown: false });
     });
+
+    it('#403 the daily P&L estimate the window checks is pushed too, for every account and whether or not it is confirmed', async () => {
+        m.enabled = true;
+        vi.stubGlobal('window', new EventTarget());
+        await boot();
+        const { reportDailyPnl } = await import('./risk');
+        // the window's estimate (all positions + futures settle), not yet confirmed and no futures account selected
+        reportDailyPnl(8500, false);
+        m.trading = { ...m.trading, marginAccount: undefined, margin: undefined, positions: [{ account: S1, pnl: 8500 }] as never };
+        await bg.pushBackgroundRisk(true);
+        const last = () => (calls('execution_set_risk').at(-1)![1] as { risk: Record<string, unknown> }).risk;
+        expect(last()).toMatchObject({ dailyPnlEstimate: 8500, pnlKnown: false, pnlAccount: null });
+        // a change of the estimate is pushed on its own (not only on the heartbeat)
+        reportDailyPnl(-12000, true);
+        await flush();
+        expect(last()).toMatchObject({ dailyPnlEstimate: -12000 });
+    });
 });
 
 describe('background fills reach the window (QA 10/12: 持倉暫未套用, stale positions)', () => {
