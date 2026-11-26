@@ -29,6 +29,17 @@ describe('theme settings migration', () => {
         expect(JSON.parse((globalThis.localStorage as Storage).getItem('sj-pro-theme')!)).toEqual({ mode: 'dark', convention: 'tw', fontScale: 1.15 });
     });
 
+    it('follows the system appearance on first launch only', async () => {
+        vi.stubGlobal('matchMedia', (query: string) => ({ matches: query === '(prefers-color-scheme: light)' }));
+        const fresh = await loadWith(undefined);
+        fresh.setThemeSettings({});
+        expect(JSON.parse((globalThis.localStorage as Storage).getItem('sj-pro-theme')!).mode).toBe('light');
+        vi.stubGlobal('matchMedia', (query: string) => ({ matches: query === '(prefers-color-scheme: light)' }));
+        const saved = await loadWith({ mode: 'dark', convention: 'tw', fontScale: 1.15 });
+        saved.setThemeSettings({});
+        expect(JSON.parse((globalThis.localStorage as Storage).getItem('sj-pro-theme')!).mode).toBe('dark');
+    });
+
     it('maps the old 純黑 mode to dark and the removed 0.85 size to the smallest', async () => {
         const m = await loadWith({ mode: 'midnight', convention: 'intl', fontScale: 0.85 });
         m.setThemeSettings({});
