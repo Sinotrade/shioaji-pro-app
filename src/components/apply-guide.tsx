@@ -176,11 +176,12 @@ export function useApplyGuide(onImported?: (imported: ApplyImported) => void): A
                     setWindowState('closed'); setSynced(null);
                     break;
                 case 'nav': {
-                    // 官網頁面送來的（官網自己的程式也能假造）：只移動導覽步驟或關掉說明卡，條件和 App 裡的按鈕相同
+                    // 官網頁面送來的（官網自己的程式也能假造）：只移動導覽步驟或關掉說明卡，條件和 App 裡的按鈕相同；
+                    // 不像 App 的「下一步」會把官網切回 API 管理頁，官網視窗一律不動
                     const nav = navRef.current;
                     if (!nav.pageCard) break;
-                    if (event.action === 'next' && nav.canNext) nav.goNext();
-                    else if (event.action === 'prev' && nav.canPrevious) nav.goPrevious();
+                    if (event.action === 'next' && nav.canNext) setStep(nextGuideStep(nav.step));
+                    else if (event.action === 'prev' && nav.canPrevious) setStep(previousGuideStep(nav.step));
                     else if (event.action === 'hide') nav.setPageCard(false);
                     break;
                 }
@@ -272,8 +273,8 @@ export function useApplyGuide(onImported?: (imported: ApplyImported) => void): A
         setStep(next);
     };
     const setPageCard = (on: boolean) => { setPageCardState(on); writePageCardPref(on); };
-    const navRef = useRef({ pageCard, canNext, canPrevious, goNext, goPrevious, setPageCard });
-    navRef.current = { pageCard, canNext, canPrevious, goNext, goPrevious, setPageCard };
+    const navRef = useRef({ step, pageCard, canNext, canPrevious, setPageCard });
+    navRef.current = { step, pageCard, canNext, canPrevious, setPageCard };
     // 官網上的說明卡跟著導覽這一步走；關掉時送 null 把卡片拿掉
     const cardTheme = baseMode(theme);
     const cardLarge = theme.fontScale === 1.3;

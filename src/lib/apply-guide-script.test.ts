@@ -361,4 +361,42 @@ describe.skipIf(!hasScript)('apply window guide card', () => {
         expect(page.nav()).toBeNull();
         expect(page.win.document.title).toBe('簽署中心' + MARK + 'list');
     });
+
+    it("keeps the app wording even when the site replaces built-ins after it loaded", () => {
+        const page = load(LIST_URL, listPage(), false, { rect: layout, viewport: VIEW });
+        const caught: unknown[] = [];
+        // （String.prototype.split 不測：happy-dom 自己是 JS，內部也會用它）
+        const saved = { slice: String.prototype.slice, isArray: Array.isArray };
+        const proto = { append: page.win.Node.prototype.appendChild, text: page.win.Document.prototype.createTextNode, attr: page.win.Element.prototype.setAttribute };
+        try {
+            // 官網的程式（沒有 nonce）等 App 送卡片時換掉內建函式
+            String.prototype.slice = function () { return "偽造"; } as never;
+            Array.isArray = (() => false) as never;
+            page.win.Node.prototype.appendChild = function (this: Node, child: Node) { caught.push(child); return child; } as never;
+            page.win.Document.prototype.createTextNode = function () { return proto.text.call(page.win.document, "偽造"); } as never;
+            page.win.Element.prototype.setAttribute = function (this: Element) { caught.push(this); } as never;
+            page.guide.card(CARD_KEY, guideCardOf("list", options));
+        } finally {
+            String.prototype.slice = saved.slice; Array.isArray = saved.isArray;
+            page.win.Node.prototype.appendChild = proto.append; page.win.Document.prototype.createTextNode = proto.text; page.win.Element.prototype.setAttribute = proto.attr;
+        }
+        expect(text(page.card()!.querySelector(".title"))).toBe("按「新增APIKey」");
+        expect(text(page.card())).not.toContain("偽造");
+        expect(caught).toHaveLength(0); // 卡片的節點沒有經過官網換掉的函式
+    });
+
+    it("measures new content again instead of staying folded from an earlier card", () => {
+        const small = { width: 640, height: 520 };
+        // 卡片高度跟著內容：長的放不下、短的放得下
+        const sized = (el: Element): Box | null => el.getRootNode() !== el.ownerDocument && el.matches("section.card")
+            ? { left: 0, top: 0, width: 360, height: (el.textContent ?? "").length > 120 ? 400 : 120 }
+            : layout(el);
+        const page = load(LIST_URL, `<button data-rect="20,200,600,100">新增 API Key</button>`, false, { rect: sized, viewport: small });
+        const long = guideCardOf("list", options);
+        page.guide.card(CARD_KEY, { ...long, points: [{ ...long.points[0]!, body: "很長的說明".repeat(30) }] });
+        expect(page.card()!.className).toContain("folded");
+        page.guide.card(CARD_KEY, { ...long, points: [{ ...long.points[0]!, body: "短說明" }] });
+        expect(page.card()!.className).not.toContain("folded");
+        expect(page.card()!.querySelector(".foot")).not.toBeNull();
+    });
 });
