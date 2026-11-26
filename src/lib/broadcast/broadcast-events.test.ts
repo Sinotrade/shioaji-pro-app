@@ -62,10 +62,17 @@ describe('成交語音', () => {
     });
 
     it('期貨的單位是口', () => {
-        expect(
-            describeOrderVoice(deal({ market: 'futures', code: 'TXFR1' })),
-        ).toBe('買進 TXFR1 1000 口 成交價 1900');
-    });
+            expect(
+                describeOrderVoice(deal({ market: 'futures', code: 'TXFR1' })),
+            ).toBe('買進 TXFR1 1000 口 成交價 1900');
+        });
+
+        it('美股的單位是股', () => {
+            // OrderMarket 在上游 rebase 後多了 'us'；美股沒有「張」，一律念股
+            expect(
+                describeOrderVoice(deal({ market: 'us', code: 'AAPL' })),
+            ).toBe('買進 AAPL 1000 股 成交價 1900');
+        });
 
     it('盤後零股的單位是股', () => {
         expect(

@@ -8,7 +8,7 @@
 // 只吃「已經整理好的資料」→ 純函式、可單獨測試。
 
 import type { Action } from '../types/order';
-import type { OrderEventReport } from '../order-report';
+import type { OrderEventReport, OrderMarket } from '../order-report';
 
 /** 通知事件（與 lib/trade.ts 的 AppNotice 同形，這裡只宣告需要的欄位） */
 export interface BroadcastNotice {
@@ -29,11 +29,10 @@ function actionText(action?: Action): string {
     return '';
 }
 
-function unitText(r: {
-    market: 'stock' | 'futures';
-    orderLot?: string;
-}): string {
+function unitText(r: { market: OrderMarket; orderLot?: string }): string {
     if (r.market === 'futures') return '口';
+    // 美股（OrderMarket 的 'us'）：一股就是一股，沒有「張」的概念
+    if (r.market === 'us') return '股';
     return r.orderLot === 'Odd' || r.orderLot === 'IntradayOdd' ? '股' : '張';
 }
 
