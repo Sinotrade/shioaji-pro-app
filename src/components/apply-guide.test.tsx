@@ -757,18 +757,21 @@ describe('the guide card on the page', () => {
         expect(mocks.focus).not.toHaveBeenCalled();
     });
 
-    it('only moves the guide step from the page, never the site window, even leaving a signing page', async () => {
+    it('leaving a signing page with 下一步 on the page card also switches the site to the API page, like the app button', async () => {
         await open();
         await emit({ kind: 'step', step: 'sign-f', sign: 'unknown' });
         mocks.apiPage.mockClear();
         await nav('next');
         expect(json()).toContain('按「新增 API Key」');
-        // 頁面送來的（可能是假造的）回報不能把官網從簽署頁切走；App 裡的「下一步」照舊會切
-        expect(mocks.apiPage).not.toHaveBeenCalled();
-        expect(mocks.signPage).not.toHaveBeenCalled();
-        await act(async () => button('上一步')!.props.onClick());
-        await act(async () => button('下一步')!.props.onClick());
         expect(mocks.apiPage).toHaveBeenCalledOnce();
+        expect(mocks.signPage).not.toHaveBeenCalled();
+        // 官網已在 API 管理頁時，卡片的上一步／下一步不動官網
+        await emit({ kind: 'step', step: 'list' });
+        mocks.apiPage.mockClear();
+        await nav('prev');
+        await nav('next');
+        await nav('next');
+        expect(mocks.apiPage).not.toHaveBeenCalled();
     });
 
     it('can be switched off in the guide header or from the page, and remembers it', async () => {

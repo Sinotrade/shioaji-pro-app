@@ -123,6 +123,9 @@ export function useApplyGuide(onImported?: (imported: ApplyImported) => void): A
     pageCardRef.current = pageCard;
     const setPageCardRef = useRef<(on: boolean) => void>(() => undefined);
     const hasImportedRef = useRef(false);
+    /** 畫面上這一步（給官網卡片的「下一步」決定要不要切回 API 管理頁） */
+    const stepRef = useRef<GuideStep>('start');
+    stepRef.current = step;
     const theme = useThemeSettings();
     const windowRef = useRef<ApplyWindowState>('idle');
     windowRef.current = windowState;
@@ -183,13 +186,14 @@ export function useApplyGuide(onImported?: (imported: ApplyImported) => void): A
                     setWindowState('closed'); setSynced(null);
                     break;
                 case 'nav': {
-                    // 官網頁面送來的（官網自己的程式也能假造）：只移動導覽步驟或關掉說明卡，條件和 App 裡的按鈕相同；
-                    // 不像 App 的「下一步」會把官網切回 API 管理頁，官網視窗一律不動
+                    // 官網頁面送來的（官網自己的程式也能假造）：只移動導覽步驟或關掉說明卡，條件和 App 裡的按鈕相同。
+                    // 從簽署頁按「下一步」和 App 的「下一步」一樣把官網切回 API 管理頁（固定網址；官網本來就能自己換頁，不多給權限）
                     // 同一批事件（React 還沒重畫）也要從最新的步驟算：用 functional update 與同步更新的 ref
                     if (!pageCardRef.current) break;
                     if (event.action === 'hide') setPageCardRef.current(false);
                     else {
                         const action = event.action;
+                        if (action === 'next' && stepRef.current === 'sign' && windowRef.current === 'open' && signMarketOf(syncedRef.current)) void showApplyApiPage();
                         setStep(current => pageNavStep(current, action, hasImportedRef.current));
                     }
                     break;
