@@ -522,6 +522,42 @@ describe('signing the API agreements', () => {
         expect(button('前往 API 管理頁申請金鑰')).toBeUndefined(); // 已在 API 管理步驟
     });
 
+    it('forgets what it read after logging out of the site, since another identity may log in', async () => {
+        store.set('sjpro.applyGuide.markets', JSON.stringify(['S']));
+        mocks.clearSite.mockResolvedValue('cleared');
+        await mount();
+        await act(async () => button('開始申請')!.props.onClick());
+        await emit({ kind: 'step', step: 'sign-s', sign: 'signed' });
+        expect(json()).toContain('已簽署');
+        await act(async () => button('登出並清除官網資料')!.props.onClick());
+        await act(async () => button('確認登出並清除')!.props.onClick());
+        expect(json()).not.toContain('已簽署');
+        expect(byLabel('打開證券（台股）簽署頁')).toBeDefined();
+    });
+
+    it('shows why the signing page could not open and lets the user press again', async () => {
+        mocks.signPage.mockRejectedValueOnce(new Error('無法打開簽署頁：apply window is gone'));
+        await mount();
+        await act(async () => button('開始申請')!.props.onClick());
+        await act(async () => button('下一步')!.props.onClick());
+        await act(async () => byLabel('打開證券（台股）簽署頁')!.props.onClick());
+        expect(json()).toContain('打不開簽署頁');
+        expect(json()).toContain('apply window is gone');
+        await act(async () => byLabel('打開證券（台股）簽署頁')!.props.onClick());
+        expect(json()).not.toContain('打不開簽署頁');
+    });
+
+    it('announces each market status politely with the market name', async () => {
+        store.set('sjpro.applyGuide.markets', JSON.stringify(['H']));
+        await mount();
+        await act(async () => button('開始申請')!.props.onClick());
+        await emit({ kind: 'step', step: 'sign-h', sign: 'pending' });
+        const live = view!.root.findAllByProps({ 'aria-live': 'polite' }).filter(n => n.type === 'span');
+        expect(live).toHaveLength(1);
+        expect(JSON.stringify(live[0]!.children.map(c => typeof c === 'string' ? c : (c as ReactTestInstance).props?.children))).toContain('美股（複委託）');
+        expect(JSON.stringify(live[0]!.children.map(c => typeof c === 'string' ? c : (c as ReactTestInstance).props?.children))).toContain('審核中');
+    });
+
     it('opens the signing page in the browser when the app could only use the browser', async () => {
         mocks.open.mockResolvedValue('browser');
         await mount();
@@ -541,6 +577,22 @@ describe('signing the API agreements', () => {
         await act(async () => byLabel('打開證券（台股）簽署頁')!.props.onClick());
         expect(mocks.open).toHaveBeenCalledOnce();
         expect(mocks.signPage).toHaveBeenCalledWith('S');
+    });
+
+    it('shows a failed reopen from the 完成 page next to its signing buttons', async () => {
+        store.set('sjpro.applyGuide.markets', JSON.stringify(['F']));
+        await mount();
+        await act(async () => button('開始申請')!.props.onClick());
+        mocks.load.mockResolvedValue({ ...EMPTY_DESKTOP_SETTINGS, activeProfileId: 'p1', profiles: [profile] });
+        await emit({ kind: 'imported', profileId: 'p1', name: 'ShioajiPro', duplicate: false });
+        await emit({ kind: 'closed' });
+        mocks.open.mockRejectedValueOnce(new Error('建立視窗失敗'));
+        await act(async () => byLabel('打開期貨／選擇權簽署頁')!.props.onClick());
+        expect(json()).toContain('金鑰已載入');
+        expect(json()).toContain('建立視窗失敗');
+        expect(mocks.signPage).not.toHaveBeenCalled();
+        await act(async () => button('重新打開官網')!.props.onClick());
+        expect(json()).not.toContain('建立視窗失敗');
     });
 
     it('lists the chosen markets that still need signing on the 完成 page and stays there while signing', async () => {

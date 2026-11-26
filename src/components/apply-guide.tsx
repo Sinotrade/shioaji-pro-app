@@ -50,6 +50,8 @@ export interface ApplyGuideController {
     setMarket: (market: SigningMarket, on: boolean) => void;
     /** 各市場簽署頁讀到的狀態（這次開 App 期間；沒讀到是 unknown）。 */
     signs: Record<SigningMarket, SignState>;
+    /** 打開簽署頁失敗的原因（空字串＝沒有錯誤） */
+    signError: string;
     /** 在申請視窗打開該市場的簽署頁（視窗沒開就先打開）。 */
     openSignPage: (market: SigningMarket) => Promise<void>;
 }
@@ -95,6 +97,7 @@ export function useApplyGuide(onImported?: (imported: ApplyImported) => void): A
     const [saveEnvFile, setSaveEnvState] = useState(readSaveEnvPref);
     const [markets, setMarkets] = useState(readMarketsPref);
     const [signs, setSigns] = useState(UNKNOWN_SIGNS);
+    const [signError, setSignError] = useState('');
     const windowRef = useRef<ApplyWindowState>('idle');
     windowRef.current = windowState;
     const saveEnvRef = useRef(saveEnvFile);
@@ -157,12 +160,17 @@ export function useApplyGuide(onImported?: (imported: ApplyImported) => void): A
     };
     const open = async () => { await openWindow(); };
     const openSignPage = async (market: SigningMarket) => {
+        setSignError('');
         let state: ApplyWindowState | ApplyWindowOpenResult | null = windowRef.current;
         if (state !== 'open' && state !== 'browser') state = await openWindow();
         if (!state) return;
         // 用瀏覽器開官網時（舊版原生殼）簽署頁也交給瀏覽器
         if (state === 'browser') void openExternalUrl(SIGNING_URLS[market].url);
-        else await showApplySignPage(market);
+        else {
+            try { await showApplySignPage(market); } catch (error) {
+                setSignError(error instanceof Error ? error.message : String(error));
+            }
+        }
     };
     const setMarket = (market: SigningMarket, on: boolean) => {
         setMarkets(current => {
@@ -178,6 +186,8 @@ export function useApplyGuide(onImported?: (imported: ApplyImported) => void): A
             // 原生端已關掉申請視窗；closed 事件也會到，這裡先把狀態對齊
             setWindowState(current => current === 'open' ? 'closed' : current);
             setSynced(null);
+            // 登出後可能換另一個身分登入：先前讀到的簽署狀態不能沿用
+            setSigns(UNKNOWN_SIGNS);
             setSiteClear({ kind: 'done' });
         } catch (error) {
             setSiteClear({ kind: 'failed', message: error instanceof Error ? error.message : String(error) });
@@ -189,7 +199,7 @@ export function useApplyGuide(onImported?: (imported: ApplyImported) => void): A
     };
     return {
         step, setStep, windowState, placement, synced, imported, failure, downloaded, opening, openError, open,
-        siteClear, clearSiteData, saveEnvFile, setSaveEnvFile, markets, setMarket, signs, openSignPage,
+        siteClear, clearSiteData, saveEnvFile, setSaveEnvFile, markets, setMarket, signs, signError, openSignPage,
     };
 }
 
@@ -218,7 +228,8 @@ function SignRows({ guide, compact = false }: { guide: ApplyGuideController; com
     if (guide.markets.length === 0) {
         return <p className={g.secondary}>還沒選市場。勾選要交易的市場後，這裡會列出要簽的約定書。</p>;
     }
-    return <ul className={g.signList} aria-label="API 約定書簽署狀態">
+    return <>{guide.signError && <Callout tone="danger" title="打不開簽署頁">{guide.signError}，請再按一次「打開簽署頁」。</Callout>}
+    <ul className={g.signList} aria-label="API 約定書簽署狀態">
         {guide.markets.map(market => {
             const state = guide.signs[market];
             const Icon = SIGN_ICON[state];
@@ -229,7 +240,9 @@ function SignRows({ guide, compact = false }: { guide: ApplyGuideController; com
                         <p className={g.itemTitle}>{SIGN_MARKET_COPY[market].title}</p>
                         {!compact && <p className={g.itemBody}>{SIGN_MARKET_COPY[market].body}</p>}
                     </div>
-                    <span className={g.signStatus[state]}><Icon size={16} aria-hidden />{SIGN_STATE_LABEL[state]}</span>
+                    <span className={g.signStatus[state]} aria-live="polite" aria-atomic="true">
+                        <Icon size={16} aria-hidden /><span className={g.srOnly}>{SIGN_MARKET_COPY[market].title}：</span>{SIGN_STATE_LABEL[state]}
+                    </span>
                 </div>
                 {here
                     ? <p className={g.signHere}>官網目前在這個簽署頁</p>
@@ -240,7 +253,7 @@ function SignRows({ guide, compact = false }: { guide: ApplyGuideController; com
                     </button>}
             </li>;
         })}
-    </ul>;
+    </ul></>;
 }
 
 /** 簽署步驟：選市場、各市場狀態、照順序做的說明。 */
@@ -549,6 +562,10 @@ export function ApplyGuide({ guide, settings, busy, docked = false, contentRef, 
                 <section className={g.signSection} aria-labelledby="apply-done-sign">
                     <h3 id="apply-done-sign" className={g.subTitle}><FileSignature size={19} aria-hidden />API 約定書</h3>
                     <p className={g.secondary}>{doneSignText(guide)}</p>
+                    {guide.openError && <Callout tone="danger" title="打不開申請視窗"
+                        actions={<button className={g.secondaryButton} disabled={guide.opening} onClick={() => void guide.open()}><RotateCw size={18} aria-hidden />重新打開官網</button>}>
+                        {guide.openError}
+                    </Callout>}
                     <SignRows guide={guide} compact />
                 </section>
                 <details className={g.details}>

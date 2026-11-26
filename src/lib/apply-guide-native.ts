@@ -7,7 +7,7 @@
 // 步驟（step；簽署頁另帶讀到的簽署狀態）、.env 已載入（只帶帳號 id 與金鑰名稱，不含金鑰）、
 // 載入失敗、其他下載、視窗關閉。舊版原生殼沒有這些指令時退回系統瀏覽器。
 
-import type { SigningMarket } from './account-signing';
+import { SIGNING_URLS, type SigningMarket } from './account-signing';
 import { APPLY_PAGE_RULES, APPLY_URL, isApplyPageStep, isSignState, signMarketOf, type ApplyPageStep, type SignState } from './apply-guide-config';
 import { isTauri } from './runtime';
 import { openExternalUrlOrThrow } from './tauri';
@@ -74,8 +74,21 @@ async function call(command: string, args?: Record<string, unknown>) {
 
 export const closeApplyWindow = () => call('apply_window_close');
 export const showApplyApiPage = () => call('apply_window_show_api_page');
-/** 申請視窗切到該市場的 API 約定書簽署頁（網址由原生殼固定，只傳市場代號）。 */
-export const showApplySignPage = (market: SigningMarket) => call('apply_window_show_sign_page', { market });
+/**
+ * 申請視窗切到該市場的 API 約定書簽署頁（網址由原生殼固定，只傳市場代號）。
+ * 失敗（例如視窗剛好關掉）時丟出原因，讓側欄顯示並重試；舊版原生殼沒有這個指令就改用瀏覽器開。
+ */
+export async function showApplySignPage(market: SigningMarket) {
+    if (!isTauri) return;
+    try {
+        const { invoke } = await core();
+        await invoke('apply_window_show_sign_page', { market });
+    } catch (error) {
+        if (isUnknownCommand(error)) { await openExternalUrlOrThrow(SIGNING_URLS[market].url); return; }
+        const reason = errorText(error);
+        throw new Error(reason ? `無法打開簽署頁：${reason}` : '無法打開簽署頁');
+    }
+}
 export const focusApplyTarget = (target: string) => call('apply_window_focus', { target });
 /** 「下載 .env」時是否同時把檔案存到下載資料夾（預設不存，只匯入 App）。舊版原生殼沒有這個指令：照舊只匯入。 */
 export const setApplySaveEnv = (save: boolean) => call('apply_window_set_save_env', { save });

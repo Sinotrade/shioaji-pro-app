@@ -102,6 +102,9 @@ describe.skipIf(!hasScript)('apply window guide script on the signing pages', ()
         // 沒有表格（還在載入、沒登入、沒有這類帳戶）或讀不到狀態：未確認
         expect(load(H_URL, signPage()).marker()).toBe('sign-h:unknown');
         expect(load(H_URL, signPage({ rows: [{ status: '—' }] })).marker()).toBe('sign-h:unknown');
+        // 已簽署要每一列都讀得到：有一列讀不到就是未確認
+        expect(load(H_URL, signPage({ rows: [{ status: '已簽署' }, { status: '' }] })).marker()).toBe('sign-h:unknown');
+        expect(load(H_URL, signPage({ rows: [{ status: '—' }, { status: '未簽署' }] })).marker()).toBe('sign-h:unsigned');
         // 網址大小寫不同也認得
         expect(load('https://www.sinotrade.com.tw/newweb/signcenter/s_openapi/', signPage()).marker()).toBe('sign-s:unknown');
     });
@@ -149,8 +152,10 @@ describe.skipIf(!hasScript)('apply window guide script on the signing pages', ()
         expect(load('https://www.sinotrade.com.tw/', '<a>客戶登入</a>').marker()).toBe('login');
     });
 
-    it('reports an anonymized structure summary in debug builds only', () => {
-        const html = signPage({ rows: [{ status: '未簽署' }], countdown: 9 });
+    it('reports only known site wording, lengths and counts in debug builds only', () => {
+        // 頁首以外也可能有姓名：一律不輸出原文
+        const html = signPage({ rows: [{ status: '未簽署' }], countdown: 9 })
+            + '<h2>王小明 您好</h2><div class="ant-message">陳大文 簽署成功</div><button>林美 A12</button>';
         expect(load(S_URL, html).win.document.title).not.toContain(DOM_MARK);
         const page = load(S_URL, html, true);
         const title = page.win.document.title;
@@ -160,12 +165,15 @@ describe.skipIf(!hasScript)('apply window guide script on the signing pages', ()
         expect(summary).toContain('未簽署');
         expect(summary).toContain('簽署與否');
         expect(summary).toContain('秒後可簽署');
+        expect(summary).toContain('測試與否');
+        expect(summary).toContain('簽署成功');
         expect(summary).toContain('rows=1');
         expect(summary).toContain('box=0/4');
-        // 沒有數字、英文字母，也沒有頁首（問候語裡的名字）
-        expect(summary.replace(/rows=\d+|box=\d+\/\d+|\b[hbsm]=|th=/g, '')).not.toMatch(/[0-9A-Za-z]/);
-        expect(summary).not.toContain('王小明');
-        expect(summary).not.toContain('城中');
+        // 不認得的文字只剩長度（?5＝五個字）；沒有姓名、分行、帳號或身分證字號
+        expect(summary).toContain('?5');
+        for (const word of ['王小明', '陳大文', '林美', '城中', '您好', '98765', 'A123']) expect(summary).not.toContain(word);
+        const words = summary.split(';').flatMap(part => part.replace(/^[a-z]+=/, '').split('/')).filter(Boolean);
+        for (const word of words) expect(word).toMatch(/^(\?\d+|\d+(\/\d+)?|[\u4e00-\u9fff]+)$/);
         // 非簽署頁不回報
         expect(load('https://www.sinotrade.com.tw/newweb/PythonAPIKey/', '<h1>API 管理</h1>', true).win.document.title).not.toContain(DOM_MARK);
     });
