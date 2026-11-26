@@ -113,6 +113,8 @@ export function useApplyGuide(onImported?: (imported: ApplyImported) => void): A
                     setSynced(event.step);
                     setWindowState('open');
                     const market = signMarketOf(event.step);
+                    // 官網回到登入頁＝登出或逾時，下一個登入的可能是別人：先前讀到的簽署狀態不能沿用
+                    if (event.step === 'login') setSigns(current => current === UNKNOWN_SIGNS ? current : UNKNOWN_SIGNS);
                     // 讀不到（unknown）不蓋掉先前讀到的狀態：頁面載入中也會先回報 unknown
                     if (market && event.sign && event.sign !== 'unknown') {
                         const sign = event.sign;
@@ -246,7 +248,7 @@ function SignRows({ guide, compact = false }: { guide: ApplyGuideController; com
                 </div>
                 {here
                     ? <p className={g.signHere}>官網目前在這個簽署頁</p>
-                    : state !== 'signed' && <button className={g.secondaryButton} disabled={guide.opening}
+                    : <button className={g.secondaryButton} disabled={guide.opening}
                         aria-label={`打開${SIGN_MARKET_COPY[market].title}簽署頁`}
                         onClick={() => void guide.openSignPage(market)}>
                         <FileSignature size={18} aria-hidden />打開簽署頁

@@ -469,10 +469,10 @@ describe('signing the API agreements', () => {
         await emit({ kind: 'step', step: 'sign-h', sign: 'unknown' });
         expect(json()).toContain('已簽署');
         expect(rows()).toHaveLength(2);
-        // 已簽署的市場不再出現「打開簽署頁」
+        // 已簽署的市場仍可再打開簽署頁查看
         await emit({ kind: 'step', step: 'list' });
         await act(async () => button('上一步')!.props.onClick());
-        expect(byLabel('打開美股（複委託）簽署頁')).toBeUndefined();
+        expect(byLabel('打開美股（複委託）簽署頁')).toBeDefined();
         expect(byLabel('打開證券（台股）簽署頁')).toBeDefined();
     });
 
@@ -533,6 +533,23 @@ describe('signing the API agreements', () => {
         await act(async () => button('確認登出並清除')!.props.onClick());
         expect(json()).not.toContain('已簽署');
         expect(byLabel('打開證券（台股）簽署頁')).toBeDefined();
+    });
+
+    it('forgets what it read when the site is back at its login page (logout or session timeout)', async () => {
+        store.set('sjpro.applyGuide.markets', JSON.stringify(['S']));
+        await mount();
+        await act(async () => button('開始申請')!.props.onClick());
+        await emit({ kind: 'step', step: 'sign-s', sign: 'signed' });
+        await emit({ kind: 'step', step: 'list' });
+        const signStep = () => view!.root.findAllByProps({ 'aria-label': '申請進度' })[0]!.findAllByType('button')
+            .find(b => String(b.props['aria-label']).startsWith('簽署，'))!;
+        expect(signStep().props['aria-label']).toBe('簽署，已完成');
+        await emit({ kind: 'step', step: 'login' });
+        await emit({ kind: 'step', step: 'list' });
+        expect(signStep().props['aria-label']).toBe('簽署，勾選的市場還沒全部確認已簽署');
+        await act(async () => button('上一步')!.props.onClick());
+        expect(json()).not.toContain('已簽署');
+        expect(json()).toContain('未確認');
     });
 
     it('shows why the signing page could not open and lets the user press again', async () => {
@@ -605,7 +622,9 @@ describe('signing the API agreements', () => {
         expect(json()).toContain('金鑰已載入');
         expect(json()).toContain('還有約定書沒簽或還沒確認');
         expect(rows()).toHaveLength(2);
+        // 官網還停在證券簽署頁：該列顯示所在位置，不重複放按鈕
         expect(byLabel('打開證券（台股）簽署頁')).toBeUndefined();
+        expect(json()).toContain('官網目前在這個簽署頁');
         await act(async () => byLabel('打開期貨／選擇權簽署頁')!.props.onClick());
         expect(mocks.signPage).toHaveBeenCalledWith('F');
         await emit({ kind: 'step', step: 'sign-f', sign: 'signed' });
