@@ -82,6 +82,50 @@ it('一句發聲失敗不會讓後面的句子停擺（失敗要記錄，不可�
     expect(spoken).toEqual(['這句會失敗', '這句要念出來']);
 });
 
+it('被過時丟棄的句子不會讓下一次同句話被誤擋（去重記憶不可記錄未念出的句子）', async () => {
+    const spoken: string[] = [];
+    // 用物件持有器而不是 let：TS 的控制流分析看不到 Promise executor 內的
+    // 賦值，`let release: (() => void) | null` 在呼叫端會被窄化成 null。
+    const gate: { release: (() => void) | null } = { release: null };
+    const engine: TtsEngine = {
+        id: 'fake-blocking',
+        available: true,
+        probe: async () => ({ available: true }),
+        get speaking() {
+            return gate.release !== null;
+        },
+        speak(text: string) {
+            spoken.push(text);
+            return new Promise<void>((resolve) => {
+                gate.release = () => {
+                    gate.release = null;
+                    resolve();
+                };
+            });
+        },
+        cancelAll() {},
+        listVoices: () => [],
+    };
+    let now = 0;
+    const queue = new BroadcastQueue(engine, () => now, 10_000);
+
+    queue.enqueue('第一句', { symbolCode: 'X' }); // pump 開始念，卡住
+    await flush();
+    queue.enqueue('第二句', { symbolCode: 'Y' }); // 排隊中，且被寫進去重記憶
+    now = 20_000; // 放置超過 10 秒
+    gate.release?.();
+    await flush();
+    await flush();
+    expect(spoken).toEqual(['第一句']); // 「第二句」被過時丟棄
+
+    // 重新排「從未真正念過」的第二句 → 必須念出來
+    now = 21_000;
+    queue.enqueue('第二句', { symbolCode: 'Y' });
+    gate.release?.();
+    await flush();
+    expect(spoken).toContain('第二句');
+});
+
 it('drops a queued announcement that went stale while waiting', async () => {
     let now = 0;
     const { engine, spoken, finish } = makeEngine();

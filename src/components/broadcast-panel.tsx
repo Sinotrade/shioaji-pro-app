@@ -122,8 +122,13 @@ export function BroadcastPanel({ codes, onCodesChange }: BroadcastPanelProps) {
     const codesKey = codes.join('|');
     useEffect(() => {
         setBroadcastQuoteCodes(codesKey ? codesKey.split('|') : []);
-        return () => clearBroadcastQuoteCodes();
     }, [codesKey]);
+
+    // 「清空」只能在面板卸載時做。若把它當成上面那個 effect 的 cleanup，
+    // 每次新增／移除商品都會先清空再重設 → 所有商品被退訂重訂，
+    // 播報狀態（高低點基準、冷卻計時、訂閱中的 tick 計數）全部歸零，
+    // 等於「加第二個商品時，第一個商品的狀態被偷偷重置」。
+    useEffect(() => () => clearBroadcastQuoteCodes(), []);
 
     // 搜尋建議（沿用自選清單的 debounce 寫法）
     useEffect(() => {

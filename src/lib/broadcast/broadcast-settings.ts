@@ -59,17 +59,29 @@ function bool(raw: unknown, fallback: boolean): boolean {
     return typeof raw === 'boolean' ? raw : fallback;
 }
 
+/**
+ * 數字欄位的消毒：**非有限數一律回預設值**。
+ *
+ * 為什麼不能只靠 clamp：`Math.min/max` 遇到 NaN 會原樣傳回 NaN
+ * （實測：`setBroadcastSettings({ rate: 'abc' })` → rate 變成 NaN），
+ * 而 NaN 一路傳到 `utterance.rate` 就是「完全沒有聲音、也沒有錯誤」。
+ * 存檔被手改成 `"rate": "abc"` 或未來某個呼叫端傳錯型別都會踩到。
+ */
+function num(raw: unknown, fallback: number, min: number, max: number): number {
+    if (raw === null || raw === undefined || raw === '') return fallback;
+    const n = Number(raw);
+    if (!Number.isFinite(n)) return fallback;
+    return clamp(Math.round(n), min, max);
+}
+
 function sanitize(raw: Partial<BroadcastSettings> | null): BroadcastSettings {
     if (!raw) return { ...DEFAULT_SETTINGS };
     return {
         enabled: bool(raw.enabled, DEFAULT_SETTINGS.enabled),
-        rate: clamp(
-            Math.round(Number(raw.rate ?? DEFAULT_SETTINGS.rate)),
-            RATE_MIN,
-            RATE_MAX,
-        ),
-        cooldownSec: clamp(
-            Math.round(Number(raw.cooldownSec ?? DEFAULT_SETTINGS.cooldownSec)),
+        rate: num(raw.rate, DEFAULT_SETTINGS.rate, RATE_MIN, RATE_MAX),
+        cooldownSec: num(
+            raw.cooldownSec,
+            DEFAULT_SETTINGS.cooldownSec,
             COOLDOWN_MIN,
             COOLDOWN_MAX,
         ),

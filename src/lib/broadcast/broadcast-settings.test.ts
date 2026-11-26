@@ -58,6 +58,29 @@ it('clamps the rate and the cooldown into range', async () => {
     expect(m.getBroadcastSettings().cooldownSec).toBe(60);
 });
 
+it('非有限數的 rate／cooldown 會回預設值，不會變成 NaN', async () => {
+    const m = await import('./broadcast-settings');
+    // 實測 bug：'abc' 與 NaN 原本都會被存成 NaN，而 NaN 傳到
+    // utterance.rate 就是「完全沒有聲音、也沒有任何錯誤」。
+    m.setBroadcastSettings({ rate: 'abc' as unknown as number });
+    expect(Number.isFinite(m.getBroadcastSettings().rate)).toBe(true);
+    expect(m.getBroadcastSettings().rate).toBe(m.DEFAULT_SETTINGS.rate);
+
+    m.setBroadcastSettings({ rate: Number.NaN });
+    expect(m.getBroadcastSettings().rate).toBe(m.DEFAULT_SETTINGS.rate);
+
+    m.setBroadcastSettings({ cooldownSec: 'x' as unknown as number });
+    expect(Number.isFinite(m.getBroadcastSettings().cooldownSec)).toBe(true);
+    expect(m.getBroadcastSettings().cooldownSec).toBe(
+        m.DEFAULT_SETTINGS.cooldownSec,
+    );
+
+    // 合法值仍然照 clamp 走
+    m.setBroadcastSettings({ rate: 15 });
+    expect(m.getBroadcastSettings().rate).toBe(15);
+    m.setBroadcastSettings({ ...m.DEFAULT_SETTINGS });
+});
+
 it('persists the settings to localStorage', async () => {
     const m = await import('./broadcast-settings');
     m.setBroadcastSettings({ enabled: true, rate: 6, noticeEnabled: true });

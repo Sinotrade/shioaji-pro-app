@@ -116,6 +116,17 @@ export class BroadcastQueue {
                     !message.interrupt &&
                     this.now() - message.requestedAt > this.staleAfterMs
                 ) {
+                    // 這句從未發聲：把它從去重記憶中移除。
+                    // 少了這段，「第二句」被過時丟棄後，之後再排同一句會被
+                    // 誤判成「跟上一句一樣」而永久靜音（實測重現：
+                    // SPOKEN = ['第一句']，重新排「第二句」仍不發聲）。
+                    if (
+                        message.symbolCode &&
+                        this.lastTextBySymbol.get(message.symbolCode) ===
+                            message.text
+                    ) {
+                        this.lastTextBySymbol.delete(message.symbolCode);
+                    }
                     debugDroppedStale(message.symbolCode);
                     continue;
                 }

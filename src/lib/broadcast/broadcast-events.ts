@@ -49,7 +49,7 @@ function unitText(r: { market: OrderMarket; orderLot?: string }): string {
  */
 export function describeOrderVoice(ev: OrderEventReport): string | null {
     const act = actionText(ev.action);
-    const code = ev.kind === 'deal' ? ev.code : ev.code;
+    const code = ev.code;
     if (!code) return null;
 
     const unit = unitText(ev);
@@ -59,8 +59,8 @@ export function describeOrderVoice(ev: OrderEventReport): string | null {
     if (ev.kind === 'deal') {
         const parts = [act, code];
         if (qty) parts.push(`${qty} ${unit}`);
-        parts.push('成交價');
-        if (price) parts.push(price);
+        // 價格拿不到時不要把「成交價」單獨留下（會念成「… 張 成交價」）
+        if (price) parts.push('成交價', price);
         return parts.join(' ');
     }
 
