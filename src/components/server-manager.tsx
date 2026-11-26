@@ -1196,10 +1196,14 @@ export function ServerManager({
                 onClose={() => setGuideRequest(undefined)}
                 onChanged={() => { void loadDesktopSettings().then(setSettings).catch(() => undefined); }}
                 onOpenAccount={profileId => {
-                    // 先讀最新的帳號資料（剛設定的憑證路徑），編輯畫面才不會帶著舊的路徑存回去
-                    void loadDesktopSettings().then(setSettings).catch(() => undefined).finally(() => {
+                    // 先讀最新的帳號資料（剛設定的憑證路徑），編輯畫面才不會帶著舊的路徑存回去；
+                    // 讀不到就不打開，請使用者再按一次
+                    void loadDesktopSettings().then(fresh => {
+                        setSettings(fresh);
                         setEditProfileId(profileId || undefined); setReadyLines([]);
                         toggleRef.current(true); setSettingsOpen(true);
+                    }, (e: unknown) => {
+                        notify({ kind: 'err', title: '帳號資料讀取失敗', body: `${e instanceof Error ? e.message : String(e)}。請再按一次打開帳號設定。` });
                     });
                 }} />}
         </div>

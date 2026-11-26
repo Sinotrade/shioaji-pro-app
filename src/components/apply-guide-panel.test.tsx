@@ -254,6 +254,29 @@ describe('in-app apply guide', () => {
         expect(mocks.caTarget).toHaveBeenLastCalledWith(null);
     });
 
+    it('does not let a late production import take over the CA task', async () => {
+        await mount(withProfiles(sim, prod), 'production');
+        await emit({ kind: 'step', step: 'success' });
+        await act(async () => button('換一件要做的事')!.props.onClick());
+        await act(async () => button('下載 CA 憑證')!.props.onClick());
+        await emit({ kind: 'imported', profileId: 'p2', name: 'ShioajiProProd', duplicate: false, environment: 'production' });
+        expect(props.onChanged).toHaveBeenCalled();
+        expect(json()).not.toContain('啟動模擬環境');
+        expect(json()).not.toContain('正式金鑰已載入');
+    });
+
+    it('starts each task without the previous certificate recipient', async () => {
+        await mount(withProfiles(sim, prod), 'ca');
+        await emit({ kind: 'step', step: 'list' });
+        expect(mocks.caTarget).toHaveBeenLastCalledWith('p2');
+        await act(async () => button('換一件要做的事')!.props.onClick());
+        await rerender(withProfiles(sim));
+        await act(async () => button('申請正式 API Key')!.props.onClick());
+        expect(mocks.caTarget).toHaveBeenLastCalledWith(null);
+        expect(mocks.importEnvironment).toHaveBeenLastCalledWith('production');
+        expect(json()).not.toContain('要在官網上做什麼？');
+    });
+
     it('only signs in the signing task', async () => {
         await mount(withProfiles(sim), 'sign');
         expect(mocks.importEnvironment).toHaveBeenCalledWith('simulation');

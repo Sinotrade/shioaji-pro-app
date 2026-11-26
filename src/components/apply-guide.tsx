@@ -221,6 +221,11 @@ export function useApplyGuide(onImported?: (imported: ApplyImported) => void, op
                 }
                 case 'imported': {
                     const value: ApplyImported = { profileId: event.profileId, name: event.name, ...(event.environment ? { environment: event.environment } : {}) };
+                    // 存檔較慢、使用者已經換成下載憑證或簽署：帳號照樣重新讀取，但不打斷現在這件事
+                    if (taskRef.current !== 'apply' && taskRef.current !== 'production') {
+                        importedRef.current?.(value);
+                        break;
+                    }
                     setImported(value); setFailure(null); setStep('imported');
                     hasImportedRef.current = true;
                     // 正式金鑰載入後，下一步的 CA 憑證預設設定到這個帳號
@@ -374,6 +379,8 @@ export function useApplyGuide(onImported?: (imported: ApplyImported) => void, op
     };
     const chooseTask = async (next: InAppGuideTask) => {
         taskRef.current = next; setTaskState(next);
+        // 每件事都重新選憑證要給哪個帳號（上一次選的帳號可能已經刪掉或改成模擬）
+        caProfileRef.current = null; setCaProfileState(null);
         setCaError(''); setCaAttached(null); setFailure(null); setDownloaded(null);
         setImported(null); hasImportedRef.current = false;
         // 官網已經登入、停在某一頁：直接跳到這件事對應的步驟（不必重新登入）

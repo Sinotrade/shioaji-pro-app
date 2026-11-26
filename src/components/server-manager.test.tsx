@@ -363,6 +363,12 @@ describe('credential profiles in server settings', () => {
         expect(view.root.findByType(ServerSettingsDialog).props.initialEditId).toBe('two');
         expect(view.root.findByType(CredentialProfiles).findAllByType('input').length).toBeGreaterThan(0);
         expect(view.root.findByType(ApplyGuidePanel)).toBeDefined();
+        // 讀不到最新帳號資料：不打開編輯畫面（避免帶著舊的憑證路徑存回去）
+        await click('關閉伺服器設定');
+        mocks.load.mockRejectedValueOnce(new Error('無法讀取'));
+        await act(async () => view.root.findByType(ApplyGuidePanel).props.onOpenAccount('two'));
+        expect(view.root.findAllByType(ServerSettingsDialog)).toHaveLength(0);
+        expect(mocks.notify).toHaveBeenCalledWith(expect.objectContaining({ title: '帳號資料讀取失敗' }));
         await act(async () => view.root.findByType(ApplyGuidePanel).props.onClose());
         expect(view.root.findAllByType(ApplyGuidePanel)).toHaveLength(0);
     });
