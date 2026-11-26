@@ -75,7 +75,7 @@ function noticeUsWatchlistOnce() {
     notify({
         kind: 'info',
         title: '自選清單已含美股',
-        body: '含美股的自選清單：使用 SDK 1.7.x 的程式讀取時會失敗，請改用 1.8.0b1 以上版本',
+        body: '含美股的自選清單：使用 SDK 1.7.x 的程式讀取時會失敗，請改用 1.8.0 以上版本',
     });
 }
 
