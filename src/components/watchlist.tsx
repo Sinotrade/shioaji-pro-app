@@ -63,7 +63,7 @@ type SortMode = 'custom' | 'desc' | 'asc';
 const isUs = (contract: ContractInfo) => contract.region === 'US';
 
 /**
- * 美股自選列（SDK 1.8 us_tick，store key `US:CODE`）：主行是一般盤價與對參考價的
+ * 美股自選列（SDK 1.8 tick_stk_us，store key `US:CODE`）：主行是一般盤價與對參考價的
  * 漲跌（盤前是前一日收盤與它的漲跌），副行是盤前／盤後價（見 us-session-view）。
  * 和報價板同一個 usSessionViewFor。沒有任何價格時 main 為 null（畫面顯示「參考」）。
  */

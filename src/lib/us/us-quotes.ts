@@ -9,8 +9,9 @@
 //   - 訂閱：POST /api/v1/stream/subscribe，body 為
 //     {security_type:'STK', exchange:'NASDAQ', code:'AAPL', quote_type:'Tick'|'BidAsk'}，
 //     exchange 是美股交易所（NASDAQ／NYSE／BATS／TXSE），不帶 intraday_odd。
-//   - 推送：獨立 SSE GET /api/v1/stream/data/us_tick、/api/v1/stream/data/us_bidask
-//     （事件名稱 us_tick／us_bidask）；美股事件不會出現在台股 tick／bidask 串流。
+//   - 推送：獨立 SSE GET /api/v1/stream/data/tick_stk_us、/api/v1/stream/data/bidask_stk_us
+//     （事件名稱 tick_stk_us／bidask_stk_us；SDK 1.8.0 前叫 us_tick／us_bidask，新舊名稱
+//     相容見 us-stream-names.ts）；美股事件不會出現在台股 tick／bidask 串流。
 //   - Decimal 欄位是字串；datetime 是 epoch µs UTC。
 //   - 停牌另見 us-halts.ts。
 // 美股行情只有正式環境（BC）有；IDC／模擬環境訂閱成功也不會有資料。
@@ -24,13 +25,6 @@ import { decIsPositive, decNormalize, decSub } from './decimal';
 import type { Candle, SseBidAsk, SseTick } from '../types/market';
 import { wallClockToUtc } from '../utils/kbars';
 
-/** SSE 事件名稱與獨立串流路徑 */
-export const US_TICK_EVENT = 'us_tick';
-export const US_BIDASK_EVENT = 'us_bidask';
-export const US_STREAM_PATHS: Record<string, string> = {
-    [US_TICK_EVENT]: '/api/v1/stream/data/us_tick',
-    [US_BIDASK_EVENT]: '/api/v1/stream/data/us_bidask',
-};
 /** 美股可訂閱的 quote_type（沒有 Quote）。App 內一律叫 Tick；送出時依設定可能換成 TickFull（us-tick-wire.ts） */
 export const US_QUOTE_TYPES = ['Tick', 'BidAsk'] as const;
 
@@ -186,7 +180,7 @@ const positiveDec = (v: string | null | undefined) => (decIsPositive(str(v)) ? s
 //
 // 資料工程規則（cfvhub）：漲跌基準是 reference（調整後昨收 → 昨收 → 前一日
 // NOCP），SDK 的 price_chg／pct_chg 也用它。盤前／盤後的成交只更新
-// ext_close／ext_high／ext_low；us_tick 的 close 是最後一筆 updates_last 成交，
+// ext_close／ext_high／ext_low；tick_stk_us 的 close 是最後一筆 updates_last 成交，
 // 不是官方收盤，不能拿來當基準。所以延長時段的漲跌＝成交價 − reference，
 // reference 取當天交易日的快照，或確定適用那天的合約檔參考價。
 
@@ -257,7 +251,7 @@ export function usTickChange(raw: Pick<RawUsTick, 'price_chg' | 'pct_chg' | 'ses
     return { priceChg: str(raw.price_chg) || undefined, pctChg: str(raw.pct_chg) || undefined };
 }
 
-/** us_tick → SseTick（code＝US:CODE）＋美股資訊；沒有成交價回 null */
+/** tick_stk_us（舊名 us_tick）→ SseTick（code＝US:CODE）＋美股資訊；沒有成交價回 null */
 export function normalizeUsTick(raw: RawUsTick): { tick: SseTick; meta: UsTickMeta } | null {
     // price 是這筆成交價（可含 sub-penny，例如零股或中價成交，照原值顯示）；close 是一般盤價
     const price = str(raw.price) || str(raw.close);
@@ -325,7 +319,7 @@ export function normalizeUsTick(raw: RawUsTick): { tick: SseTick; meta: UsTickMe
     };
 }
 
-/** us_bidask → SseBidAsk（只有最佳一檔） */
+/** bidask_stk_us（舊名 us_bidask）→ SseBidAsk（只有最佳一檔） */
 export function normalizeUsBidAsk(raw: RawUsBidAsk): SseBidAsk | null {
     if (!raw?.code) return null;
     const { date, time } = nyDateTime(raw.datetime);

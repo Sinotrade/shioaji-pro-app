@@ -2,7 +2,7 @@
 //
 // 報價板、五檔、K 線、走勢、成交明細都用台股那一套元件畫美股；差別只在資料：
 // 這裡把美股快照（UsSnapshot）轉成台股 Snapshot，code 用連動 key（US:CODE，
-// 與行情 store 的 key 一致），時間是紐約牆鐘（和 us_bidask 的 date／time 同一
+// 與行情 store 的 key 一致），時間是紐約牆鐘（和 bidask_stk_us 的 date／time 同一
 // 套），display-book 比較「快照 vs 即時一檔」誰新時兩邊才對得上。
 // 美股快照沒有的欄位（均價、單量、金額…）填 0，台股元件本來就把 0 當沒有。
 

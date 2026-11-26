@@ -257,6 +257,24 @@ describe('reconnect replay', () => {
         expect(calls('subscribe')).toEqual([tw]);
         expect(calls('unsubscribe')).toEqual([]);
     });
+
+    it('replays the US halt feed on halt_stk_us, falling back to us_halt on a pre-1.8.0 sidecar', async () => {
+        const stream = await ownedStream();
+        stream.registerCapabilitySubscription('halt_stk_us', 'halt_stk_us', {});
+        await stream.replayRegisteredSubscriptionsForTest();
+        expect(m.post.mock.calls.map(c => c[0])).toEqual(['/api/v1/stream/subscribe/halt_stk_us']);
+        // sidecar 重啟成 1.8.0b3：新路徑 404 → 舊路徑
+        m.post.mockClear();
+        m.post.mockImplementation(async (path: string) => {
+            if (path.endsWith('/halt_stk_us')) throw Object.assign(new Error('404 Not Found'), { status: 404 });
+            return { success: true, message: '' };
+        });
+        await stream.replayRegisteredSubscriptionsForTest();
+        expect(m.post.mock.calls.map(c => c[0])).toEqual([
+            '/api/v1/stream/subscribe/halt_stk_us',
+            '/api/v1/stream/subscribe/us_halt',
+        ]);
+    });
 });
 
 describe('switching 美股成交資料 re-subscribes live', () => {

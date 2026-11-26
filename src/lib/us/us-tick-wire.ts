@@ -4,7 +4,7 @@
 // 1/3/4）的整股成交。延長時段那幾筆 updates_last=false、close／high／low 維持一般盤
 // 值，成交價＝ext_close，ext_high／ext_low 是該時段高低（us-session-view 直接用）。
 // 使用者在 設定 → 行情「美股成交資料」選「完整成交」時改訂 `TickFull`（另含碎股與
-// 特殊條件成交的每一筆；推送同樣是 us_tick、欄位相同），見 us-tick-prefs.ts。
+// 特殊條件成交的每一筆；推送同樣是 tick_stk_us、欄位相同），見 us-tick-prefs.ts。
 // 同一個商品不可同時訂 Tick 與 TickFull（會收到重複成交）。
 //
 // 選了完整成交但外接 sidecar 可能還是 b1：b1 的 TickFull 會被 400 拒絕
