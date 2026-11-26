@@ -27,7 +27,12 @@ const pkg = JSON.parse(
 
 export default defineConfig(({ mode, command }) => {
     const env = loadEnv(mode, process.cwd(), '');
-    const devPort = command === 'serve' ? env.VITE_DEV_SERVER_PORT : undefined;
+    // QA bundle（pnpm desktop:qa）以 --mode qa 建置，與 dev 一樣鎖定隔離埠；
+    // 未設定時 build 失敗，不可產出會連到正式 21322／8080 的 QA App。
+    const devPort = command === 'serve' || mode === 'qa' ? env.VITE_DEV_SERVER_PORT : undefined;
+    if (mode === 'qa' && !devPort) {
+        throw new Error('QA build 必須設定 VITE_DEV_SERVER_PORT（例如 21323），拒絕建置');
+    }
     const isolatedApi = devPort ? `http://127.0.0.1:${Number(devPort)}` : undefined;
     if (devPort && (!Number.isInteger(Number(devPort)) || Number(devPort) < 1024 || Number(devPort) > 65535)) {
         throw new Error('VITE_DEV_SERVER_PORT 必須是 1024–65535');
