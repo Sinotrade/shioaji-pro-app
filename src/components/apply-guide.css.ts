@@ -364,3 +364,41 @@ export const signSection = style({
     display: 'flex', flexDirection: 'column', gap: '0.625em',
     padding: '0.875em 1em 1em', borderRadius: 12, border: `1px solid ${g.divider}`, background: g.surface,
 });
+
+// ── App 裡叫出的導覽（申請／下載憑證） ─────────────────────────────────
+export const closeButton = style({
+    display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 44, height: 44, flexShrink: 0,
+    border: `1px solid ${g.control}`, borderRadius: 999, background: 'transparent', color: g.text, cursor: 'pointer',
+    selectors: { '&:hover': { background: g.accentSoft }, '&:focus-visible': ring },
+});
+// 選擇要做的事：整列可點
+export const taskList = style({ display: 'flex', flexDirection: 'column', margin: 0, padding: 0, listStyle: 'none', gap: '0.625em' });
+export const taskButton = style({
+    display: 'grid', gridTemplateColumns: '2em minmax(0, 1fr) auto', columnGap: '0.75em', alignItems: 'center', width: '100%',
+    padding: '0.875em 1em', borderRadius: 12, border: `1.5px solid ${g.control}`, background: g.sunken, color: g.text,
+    fontFamily: 'inherit', fontSize: '1em', textAlign: 'left', cursor: 'pointer', boxSizing: 'border-box',
+    selectors: {
+        '&:hover:not(:disabled)': { background: g.accentSoft, borderColor: g.accent },
+        '&:focus-visible': ring,
+        '&:disabled': { opacity: 0.6, cursor: 'default' },
+    },
+});
+export const taskHint = style({ margin: 0, color: g.warn, fontWeight: 600, fontSize: '0.88em', lineHeight: 1.6 });
+// CA 憑證：選正式帳號
+export const profileOptions = style({ display: 'flex', flexDirection: 'column', gap: '0.5em' });
+export const profileOption = style({
+    display: 'grid', gridTemplateColumns: '1.5em minmax(0, 1fr)', columnGap: '0.75em', alignItems: 'start',
+    padding: '0.75em 1em', borderRadius: 10, border: `1.5px solid ${g.control}`, background: g.surface, cursor: 'pointer',
+    selectors: { '&:hover': { background: g.accentSoft }, '&:focus-within': ring },
+});
+export const profileOptionOn = style([profileOption, { borderColor: g.accent, background: g.accentSoft }]);
+export const prodBadge = style({
+    fontSize: '0.8em', fontWeight: 700, padding: '0.05em 0.6em', borderRadius: 999,
+    color: g.danger, background: g.dangerSoft, border: `1.5px solid ${g.danger}`,
+});
+// App 裡的導覽面板：貼齊主視窗左側、不蓋住整個畫面（申請視窗蓋住右側時原生端保留左側 540px）
+export const panel = style({
+    position: 'fixed', left: 16, top: 56, bottom: 16, zIndex: 205,
+    display: 'flex', flexDirection: 'column', minHeight: 0, pointerEvents: 'none',
+});
+globalStyle(`${panel} > *`, { pointerEvents: 'auto', maxHeight: '100%' });

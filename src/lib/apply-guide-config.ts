@@ -134,9 +134,32 @@ export const SIGN_MARKET_COPY: Record<SigningMarket, { title: string; body: stri
 
 // ── 側欄步驟 ─────────────────────────────────────────────────────────
 
-/** 導覽的全部步驟：開始前、官網五步、App 載入、完成。 */
-export type GuideStep = 'start' | 'login' | 'sign' | 'list' | 'verify' | 'form' | 'success' | 'imported';
+/** 導覽的全部步驟：開始前、官網五步、App 載入、完成；ca＝在 App 裡下載 CA 憑證（首次設定沒有這一步）。 */
+export type GuideStep = 'start' | 'login' | 'sign' | 'list' | 'verify' | 'form' | 'success' | 'imported' | 'ca';
 export const GUIDE_ORDER: GuideStep[] = ['start', 'login', 'sign', 'list', 'verify', 'form', 'success', 'imported'];
+
+/**
+ * 導覽要做的事。apply＝首次設定（模擬金鑰）；其他三個從 App 裡「申請／下載憑證導覽」叫出：
+ * production＝申請正式 API Key（存成正式帳號，再下載憑證）、ca＝只下載 CA 憑證、sign＝只簽署約定書。
+ */
+export type ApplyGuideTask = 'apply' | 'production' | 'ca' | 'sign';
+export type InAppGuideTask = Exclude<ApplyGuideTask, 'apply'>;
+export const IN_APP_TASKS: InAppGuideTask[] = ['production', 'ca', 'sign'];
+/** 各任務的步驟順序（start 在 App 裡是「選擇要做的事」）。 */
+export const TASK_ORDER: Record<ApplyGuideTask, GuideStep[]> = {
+    apply: GUIDE_ORDER,
+    production: ['start', 'login', 'sign', 'list', 'verify', 'form', 'success', 'imported', 'ca'],
+    ca: ['start', 'login', 'ca'],
+    sign: ['start', 'login', 'sign'],
+};
+export const TASK_CHOICES: Record<InAppGuideTask, { title: string; body: string }> = {
+    production: { title: '申請正式 API Key', body: '新增一把勾選「正式環境」的金鑰，存成正式帳號，接著下載 CA 憑證。' },
+    ca: { title: '下載 CA 憑證', body: '到 API 管理頁按「下載憑證」，App 收下 Sinopac.pfx 並設定到你選的正式帳號。' },
+    sign: { title: '簽署 API 約定書', body: '打開證券、期貨／選擇權、美股的約定書簽署頁，看各市場的簽署狀態。' },
+};
+export function isInAppGuideTask(value: unknown): value is InAppGuideTask {
+    return typeof value === 'string' && (IN_APP_TASKS as string[]).includes(value);
+}
 
 /** 官網步驟對應的導覽步驟：三個簽署頁都是「簽署」。 */
 export function guideStepOf(step: ApplyPageStep): GuideStep {
@@ -162,6 +185,8 @@ export interface GuideStepCopy {
 }
 
 export const SUGGESTED_KEY_NAME = 'ShioajiPro';
+/** 正式金鑰的建議名稱（官網上限 15 字），和模擬用的分得出來。 */
+export const SUGGESTED_PRODUCTION_KEY_NAME = 'ShioajiProProd';
 
 export const GUIDE_COPY: Record<GuideStep, GuideStepCopy> = {
     start: {
@@ -249,7 +274,46 @@ export const GUIDE_COPY: Record<GuideStep, GuideStepCopy> = {
         lead: '已經存成模擬帳號。按「啟動模擬環境」就可以開始使用。',
         points: [],
     },
+    ca: {
+        label: 'CA 憑證',
+        title: '按「下載憑證」交給 App',
+        lead: '正式環境下單一定要有 CA 憑證。先選要用憑證的正式帳號，再到 API 管理頁按「下載憑證」，App 會直接收下 Sinopac.pfx。',
+        points: [
+            { title: '選擇正式帳號', body: '憑證會設定到這個帳號。還沒有正式帳號的話，先申請正式 API Key。' },
+            { title: '按「下載憑證」', body: '在 API 管理頁表格上方。官網用登入時安裝的電子憑證產生 Sinopac.pfx，App 檢查格式後存到這台電腦、設定到選的帳號。', target: 'download-ca' },
+            { title: '到帳號設定輸入憑證密碼', body: 'App 不經手憑證密碼。收到憑證後，到「伺服器設定 › 帳號」編輯這個帳號、輸入憑證密碼並儲存，下次啟動或重啟伺服器時套用。' },
+        ],
+    },
 };
+
+const PRODUCTION_FORM_POINTS: GuidePoint[] = GUIDE_COPY.form.points.map(point => {
+    if (point.target === 'key-name') return { ...point, body: `最多 15 個字，只是方便辨認，例如「${SUGGESTED_PRODUCTION_KEY_NAME}」，和模擬用的金鑰分開。App 會用這個名稱當作帳號名稱。` };
+    if (point.target === 'perm-prod') return { ...point, tone: 'recommend', body: '這次要申請正式環境用的金鑰，請勾選。勾了才能連正式環境下真實委託，會動用真實資金；送出前再確認帳戶與 IP 限制。' };
+    if (point.title.includes('無限制 IP')) return { ...point, body: '任何網路都能使用。正式金鑰外流可能被拿去下真實委託，建議改用限制 IP；一定要用的話，請妥善保管、不要分享 .env。' };
+    return point;
+});
+
+/** 任務各步驟的文案：正式金鑰的表單建議勾「正式環境」、載入後存成正式帳號；其他照首次設定。 */
+export function guideCopyOf(task: ApplyGuideTask, step: GuideStep): GuideStepCopy {
+    const copy = GUIDE_COPY[step];
+    if (task !== 'production') return copy;
+    switch (step) {
+        case 'form':
+            return { ...copy, lead: '這把是正式環境用的金鑰。每一欄都要填，「正式環境」權限要勾選。', points: PRODUCTION_FORM_POINTS };
+        case 'success':
+            return {
+                ...copy,
+                lead: '申請成功！按官網上的「下載 .env」，App 會自動收下，存成正式帳號。',
+                points: copy.points.map(point => point.target === 'download-env'
+                    ? { ...point, body: '按下後，金鑰會直接存進 App（這台電腦的系統憑證庫），新增為正式帳號。內容是金鑰名稱、API Key 與 Secret Key，不含 CA 憑證。' }
+                    : point),
+            };
+        case 'imported':
+            return { ...copy, label: '存入 App', title: '正式金鑰已載入', lead: '已經存成正式帳號。下一步下載 CA 憑證：正式環境下單一定要有。' };
+        default:
+            return copy;
+    }
+}
 
 /** 完成後的下一步：正式交易另外需要的條件（只說明，不在這裡辦理）。 */
 export interface NextStepLink { label: string; url: string }
@@ -278,11 +342,15 @@ export const PRODUCTION_NEXT_STEPS: NextStep[] = [
     },
 ];
 
-export function nextGuideStep(step: GuideStep): GuideStep {
-    return GUIDE_ORDER[Math.min(GUIDE_ORDER.indexOf(step) + 1, GUIDE_ORDER.length - 1)]!;
+export function nextGuideStep(step: GuideStep, task: ApplyGuideTask = 'apply'): GuideStep {
+    const order = TASK_ORDER[task];
+    const at = order.indexOf(step);
+    return at < 0 ? step : order[Math.min(at + 1, order.length - 1)]!;
 }
-export function previousGuideStep(step: GuideStep): GuideStep {
-    return GUIDE_ORDER[Math.max(GUIDE_ORDER.indexOf(step) - 1, 0)]!;
+export function previousGuideStep(step: GuideStep, task: ApplyGuideTask = 'apply'): GuideStep {
+    const order = TASK_ORDER[task];
+    const at = order.indexOf(step);
+    return at < 0 ? step : order[Math.max(at - 1, 0)]!;
 }
 /** 簽署步驟的標示目標：依目前打開的簽署頁（sign-s-terms…）。 */
 /**
@@ -332,12 +400,17 @@ export const CARD_LIMITS = { progress: 40, title: 100, lead: 400, pointTitle: 10
 // 簽署頁上沒有對應說明的目標，顯示同一段說明（「下載副本」那段也說了要勾確認；「勾選帳戶後按簽署」也說了勾帳戶）
 const SIGN_POINT_ALSO: Record<string, string[]> = { download: ['confirm'], button: ['accounts'] };
 
-const GUIDE_SITE_STEPS: GuideStep[] = GUIDE_ORDER.filter(step => step !== 'start');
+/** 進度列上的步驟（不含 start）與總步數：首次設定的「完成」不算一步。 */
+export function progressStepsOf(task: ApplyGuideTask): { steps: GuideStep[]; total: number } {
+    const steps = TASK_ORDER[task].filter(step => step !== 'start');
+    return { steps, total: task === 'apply' ? steps.length - 1 : steps.length };
+}
 
 /** 進度文字（同導覽進度列）。 */
-export function guideProgressText(step: GuideStep): string {
-    if (step === 'imported') return '全部完成';
-    return `第 ${GUIDE_SITE_STEPS.indexOf(step) + 1} 步，共 ${GUIDE_SITE_STEPS.length - 1} 步：${GUIDE_COPY[step].label}`;
+export function guideProgressText(step: GuideStep, task: ApplyGuideTask = 'apply'): string {
+    if (task === 'apply' && step === 'imported') return '全部完成';
+    const { steps, total } = progressStepsOf(task);
+    return `第 ${steps.indexOf(step) + 1} 步，共 ${total} 步：${guideCopyOf(task, step).label}`;
 }
 
 function cardTargets(step: GuideStep, target: string): string[] {
@@ -346,15 +419,15 @@ function cardTargets(step: GuideStep, target: string): string[] {
 }
 
 /** 導覽這一步要送到網頁上的說明卡；只放有網頁目標的項目。 */
-export function guideCardOf(step: GuideStep, options: { canPrev: boolean; canNext: boolean; theme: 'light' | 'dark'; large: boolean }): ApplyGuideCard {
-    const copy = GUIDE_COPY[step];
+export function guideCardOf(step: GuideStep, options: { canPrev: boolean; canNext: boolean; theme: 'light' | 'dark'; large: boolean }, task: ApplyGuideTask = 'apply'): ApplyGuideCard {
+    const copy = guideCopyOf(task, step);
     const points: ApplyGuideCardPoint[] = copy.points.flatMap(point => point.target
         ? [{ targets: cardTargets(step, point.target), title: point.title, body: point.body, ...(point.tone ? { tone: point.tone } : {}) }]
         : []);
-    if (step === 'imported') {
+    if (step === 'imported' && task === 'apply') {
         for (const item of PRODUCTION_NEXT_STEPS) {
             if (item.target) points.push({ targets: [item.target], title: item.title, body: item.body });
         }
     }
-    return { progress: guideProgressText(step), title: copy.title, lead: copy.lead, points, ...options };
+    return { progress: guideProgressText(step, task), title: copy.title, lead: copy.lead, points, ...options };
 }

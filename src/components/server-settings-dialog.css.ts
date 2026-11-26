@@ -260,3 +260,9 @@ export const startBar = style({
     padding: '0.75em 0.875em', border: `1px solid ${vars.color.borderBright}`, borderRadius: vars.radius.sm, background: vars.color.inset,
 });
 export const startText = style({ flex: '1 1 14em', margin: 0, fontSize: '0.875em', lineHeight: 1.6, minWidth: 0, overflowWrap: 'anywhere' });
+// 「申請／下載憑證導覽」入口：帳號清單下方一列
+export const guideBar = style({
+    display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '0.5em 0.75em',
+    padding: '0.625em 0.875em', border: `1px dashed ${vars.color.borderBright}`, borderRadius: vars.radius.sm,
+});
+export const guideText = style({ flex: '1 1 14em', margin: 0, fontSize: '0.8125em', lineHeight: 1.6, minWidth: 0, color: vars.color.mutedForeground });

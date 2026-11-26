@@ -200,3 +200,14 @@ export const radioDesc = style({
     color: vars.color.mutedForeground,
     lineHeight: 1.5,
 });
+
+// 帳號：還沒有正式帳號時的「申請正式 API Key」捷徑
+export const prodShortcut = style({
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 6,
+    marginTop: 8,
+    padding: '8px 10px',
+    border: `1px dashed ${vars.color.borderBright}`,
+    borderRadius: vars.radius.sm,
+});

@@ -1,7 +1,7 @@
 import { createElement, type ReactElement } from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-const mocks = vi.hoisted(() => ({ load: vi.fn(), save: vi.fn(), profile: vi.fn(), select: vi.fn(), remove: vi.fn(), logout: vi.fn(), start: vi.fn(), stop: vi.fn(), status: vi.fn(), env: vi.fn(), envCandidate: vi.fn(), ca: vi.fn(), notify: vi.fn(), info: vi.fn(), prepare: vi.fn(), reload: vi.fn() }));
+const mocks = vi.hoisted(() => ({ load: vi.fn(), save: vi.fn(), profile: vi.fn(), select: vi.fn(), remove: vi.fn(), logout: vi.fn(), start: vi.fn(), stop: vi.fn(), status: vi.fn(), env: vi.fn(), envCandidate: vi.fn(), ca: vi.fn(), notify: vi.fn(), info: vi.fn(), prepare: vi.fn(), reload: vi.fn(), guideOpen: vi.fn(), guideClose: vi.fn() }));
 vi.mock('../lib/tauri', async () => ({
     ...await import('../lib/desktop-credentials'),
     isTauri: true, appVersion: async () => 'dev · test',
@@ -15,6 +15,12 @@ vi.mock('../lib/tauri', async () => ({
     getAppUpdateState: () => updateState, checkForUpdates: vi.fn(), ensureLocalTlsCert: vi.fn(),
     openLatestRelease: vi.fn(), reloadWhenHealthy: vi.fn(), restartAndInstallUpdate: vi.fn(),
 }));
+vi.mock('../lib/apply-guide-native', () => ({
+    openApplyWindow: mocks.guideOpen, closeApplyWindow: mocks.guideClose, clearApplySiteData: vi.fn(), setApplySaveEnv: vi.fn(),
+    setApplySaveCa: vi.fn(), setApplyImportEnvironment: vi.fn(async () => undefined), setApplyCaTarget: vi.fn(async () => null),
+    showApplyApiPage: vi.fn(), showApplySignPage: vi.fn(), focusApplyTarget: vi.fn(), setApplyGuideCard: vi.fn(),
+    listenApplyGuide: async () => () => undefined,
+}));
 vi.mock('../hooks/use-stream', () => ({ useStreamStatus: () => 'live' }));
 vi.mock('../lib/shioaji', () => ({ fetchHealth: async () => null, fetchInfo: mocks.info, fetchAccounts: async () => [], fetchCaExpire: vi.fn() }));
 vi.mock('../lib/trade', () => ({ notify: mocks.notify }));
@@ -25,6 +31,8 @@ import { ServerEnvNotice } from './server-env-notice';
 import { reloadWhenHealthy } from '../lib/tauri';
 import { endTiming } from '../lib/startup-timing';
 import { CredentialProfiles } from './credential-profiles';
+import { ApplyGuidePanel } from './apply-guide-panel';
+import { requestApplyGuide } from '../lib/apply-guide-reentry';
 import { getStoredSpawnKeyHash, setStoredSpawnKeyHash } from '../lib/spawn-keys';
 import { recordAgentRuntimeFailure } from '../lib/agent-diagnostics';
 const updateState = { phase: 'idle' };
@@ -336,5 +344,40 @@ describe('credential profiles in server settings', () => {
             await vi.waitFor(() => expect(copy).toHaveBeenCalledWith(expect.stringContaining('exit code: 3\nInvalid settings')));
         });
         expect(copy.mock.calls[0]![0]).not.toContain('hidden-token');
+    });
+    it('opens the in-app apply guide from 伺服器設定 › 帳號 and returns to the account editor for the CA password', async () => {
+        mocks.guideOpen.mockResolvedValue('overlay');
+        await open();
+        expect(view.root.findAllByType(ApplyGuidePanel)).toHaveLength(0);
+        await click('申請／下載憑證導覽');
+        // 設定對話框讓位給導覽面板；開始頁先選要做的事，還沒打開官網
+        expect(view.root.findAllByType(ServerSettingsDialog)).toHaveLength(0);
+        expect(view.root.findByType(ApplyGuidePanel).props.task).toBeNull();
+        expect(text()).toContain('要在官網上做什麼？');
+        expect(mocks.guideOpen).not.toHaveBeenCalled();
+        // 導覽要求到帳號設定輸入憑證密碼：直接打開那個帳號的編輯畫面
+        await act(async () => view.root.findByType(ApplyGuidePanel).props.onOpenAccount('two'));
+        expect(view.root.findByType(ServerSettingsDialog).props.initialEditId).toBe('two');
+        expect(view.root.findByType(CredentialProfiles).findAllByType('input').length).toBeGreaterThan(0);
+        expect(view.root.findByType(ApplyGuidePanel)).toBeDefined();
+        await act(async () => view.root.findByType(ApplyGuidePanel).props.onClose());
+        expect(view.root.findAllByType(ApplyGuidePanel)).toHaveLength(0);
+    });
+    it('starts the production key task directly from the shortcut request', async () => {
+        mocks.guideOpen.mockResolvedValue('overlay');
+        await act(async () => { view = create(createElement(ServerManager, { open: true, onToggle: vi.fn() })); });
+        await act(async () => { expect(requestApplyGuide('production')).toBe(true); });
+        expect(view.root.findByType(ApplyGuidePanel).props.task).toBe('production');
+        expect(mocks.guideOpen).toHaveBeenCalledOnce();
+        expect(text()).toContain('登入永豐金證券網站');
+    });
+    it('shows the guide entry only where the caller wires it', async () => {
+        const props = { settings: initial, busy: false, running: false, onSave: vi.fn(), onAction: vi.fn(), onImported: vi.fn() };
+        await act(async () => { view = create(createElement(CredentialProfiles, props)); });
+        expect(text()).not.toContain('申請／下載憑證導覽');
+        const onOpenGuide = vi.fn();
+        await act(async () => { view.update(createElement(CredentialProfiles, { ...props, onOpenGuide })); });
+        await click('申請／下載憑證導覽');
+        expect(onOpenGuide).toHaveBeenCalledOnce();
     });
 });

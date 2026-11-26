@@ -1,4 +1,4 @@
-import { AlertTriangle, ArrowLeft, Check, CheckCircle2, Circle, CircleCheck, FileKey, FileUp, FolderOpen, KeyRound, Loader2, Pencil, Play, Plus, RotateCw, ShieldAlert, ShieldCheck, ShieldOff, Trash2, X } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, Check, CheckCircle2, Circle, CircleCheck, FileKey, FileUp, FolderOpen, KeyRound, Loader2, Pencil, Play, Plus, RotateCw, ShieldAlert, ShieldCheck, ShieldOff, Signpost, Trash2, X } from 'lucide-react';
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { importEnvCandidate, loadDesktopSettings, pickCaFile, pickEnvFile, type CredentialDraft, type CredentialProfile, type DesktopSettings, type EnvImportResult, type EnvSelection } from '../lib/tauri';
 import * as s from './server-settings-dialog.css';
@@ -40,10 +40,14 @@ function Callout({ tone, icon, title, children, actions }: { tone: 'danger' | 'w
     </div>;
 }
 
-export function CredentialProfiles({ settings, busy, running, applyOnSwitch = false, onSave, onAction, onImported, onStart, onBusyChange, onEditingChange }: {
+export function CredentialProfiles({ settings, busy, running, applyOnSwitch = false, initialEditId, onOpenGuide, onSave, onAction, onImported, onStart, onBusyChange, onEditingChange }: {
     settings: DesktopSettings; busy: boolean; running: boolean;
     // 切換後由外層直接重新啟動（#370）；首次設定畫面仍由使用者按「啟動」
     applyOnSwitch?: boolean;
+    // 打開時直接編輯這個帳號（導覽收下憑證後「到帳號設定輸入憑證密碼」）
+    initialEditId?: string;
+    // 「申請／下載憑證導覽」：申請正式 API Key、下載 CA 憑證、簽署約定書（首次設定畫面沒有，那裡本來就是導覽）
+    onOpenGuide?: () => void;
     onSave: (draft: CredentialDraft, apply: boolean) => Promise<DesktopSettings>;
     onAction: (action: 'select' | 'delete', id: string) => Promise<DesktopSettings>;
     onImported: (settings: DesktopSettings) => void;
@@ -55,9 +59,11 @@ export function CredentialProfiles({ settings, busy, running, applyOnSwitch = fa
 }) {
     const ids = useId();
     const migrating = !!settings.migrationError;
-    const [draft, setDraft] = useState(() => editDraft(settings.profiles.find(p => p.id === settings.activeProfileId)));
+    const initialEdit = initialEditId && !settings.migrationError
+        ? settings.profiles.find(p => p.id === initialEditId && p.secretState === 'stored') : undefined;
+    const [draft, setDraft] = useState(() => editDraft(initialEdit ?? settings.profiles.find(p => p.id === settings.activeProfileId)));
     // 列表為主，新增或編輯時才展開表單；完全沒有帳號（首次設定）直接進新增
-    const [editing, setEditingState] = useState(() => settings.profiles.length === 0 && !settings.migrationError);
+    const [editing, setEditingState] = useState(() => !!initialEdit || (settings.profiles.length === 0 && !settings.migrationError));
     const setEditing = (next: boolean) => { setEditingState(next); onEditingChange?.(next); };
     const [pending, setPending] = useState(false);
     const [confirmation, setConfirmation] = useState('');
@@ -238,6 +244,10 @@ export function CredentialProfiles({ settings, busy, running, applyOnSwitch = fa
                 <button ref={reg('start')} className={s.primary} disabled={locked || !ready || !!confirmation} onClick={() => void operation(onStart)}><Play size={15} />啟動</button>
             </div>;
         })()}
+        {onOpenGuide && <div className={s.guideBar}>
+            <p className={s.guideText}>要申請正式 API Key、下載 CA 憑證或簽署 API 約定書？</p>
+            <button ref={reg('guide')} className={s.button} disabled={locked} onClick={onOpenGuide}><Signpost size={15} />申請／下載憑證導覽</button>
+        </div>}
         {profiles.length ? null : <div className={s.empty}>
             <span className={s.emptyIcon}><KeyRound size={20} /></span>
             <p className={s.emptyTitle}>還沒有帳號</p>

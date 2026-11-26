@@ -88,6 +88,9 @@ import { notify } from '../lib/trade';
 import { Orb } from './orb';
 import { ServerEnvNotice } from './server-env-notice';
 import { ServerSettingsDialog, type ServerConnectionSettings } from './server-settings-dialog';
+import { ApplyGuidePanel } from './apply-guide-panel';
+import { onApplyGuideRequest, requestApplyGuide } from '../lib/apply-guide-reentry';
+import type { InAppGuideTask } from '../lib/apply-guide-config';
 import * as dialogStyles from './server-settings-dialog.css';
 import { vars } from '../theme.css';
 import type { Health } from '../lib/types/health';
@@ -139,6 +142,16 @@ export function ServerManager({
     const logoutInFlight = useRef(false);
     const [settingsOpen, setSettingsOpen] = useState(false);
     const settingsButton = useRef<HTMLButtonElement>(null);
+    // App 裡的「申請／下載憑證導覽」面板：undefined＝關著；null＝先選要做的事
+    const [guideTask, setGuideTask] = useState<InAppGuideTask | null | undefined>(undefined);
+    // 從導覽「到帳號設定」：打開伺服器設定並直接編輯這個帳號
+    const [editProfileId, setEditProfileId] = useState<string | undefined>(undefined);
+    const toggleRef = useRef(onToggle);
+    toggleRef.current = onToggle;
+    useEffect(() => onApplyGuideRequest(task => {
+        setSettingsOpen(false); toggleRef.current(false);
+        setGuideTask(task);
+    }), []);
     const [settingsLoaded, setSettingsLoaded] = useState(false);
     const [settingsLoadError, setSettingsLoadError] = useState('');
     const [savedForRestart, setSavedForRestart] = useState(false);
@@ -1138,10 +1151,11 @@ export function ServerManager({
                     </div>
                     {settingsOpen && <ServerSettingsDialog
                         settings={settings} status={status} busy={busy || httpsBusy}
+                        initialEditId={editProfileId} onOpenGuide={() => requestApplyGuide(null)}
                         switching={switching ? envNotice?.text : undefined} applyOnSwitch={applyOnSwitch}
                         pendingApply={savedForRestart || (!!status?.running && status.simulation === settings.production)}
                         onSave={saveConnectionSettings} onProfileAction={profileAction} onImported={setSettings} onClose={() => {
-                            setSettingsOpen(false);
+                            setSettingsOpen(false); setEditProfileId(undefined);
                             // macOS does not necessarily focus a button on click.
                             // Restore explicitly after the popover becomes visible.
                             requestAnimationFrame(() => settingsButton.current?.focus());
@@ -1177,6 +1191,13 @@ export function ServerManager({
 
                 </>
             )}
+            {guideTask !== undefined && <ApplyGuidePanel settings={settings} task={guideTask}
+                onClose={() => setGuideTask(undefined)}
+                onChanged={() => { void loadDesktopSettings().then(setSettings).catch(() => undefined); }}
+                onOpenAccount={profileId => {
+                    setEditProfileId(profileId || undefined); setReadyLines([]);
+                    toggleRef.current(true); setSettingsOpen(true);
+                }} />}
         </div>
     );
 }

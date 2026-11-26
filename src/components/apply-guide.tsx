@@ -1,30 +1,36 @@
 // src/components/apply-guide.tsx — 首次設定的預設畫面：一步一步帶使用者在
 // 永豐官網申請 API Key、下載 .env，由原生殼直接載入金鑰後啟動模擬環境。
+// 同一套導覽也從 App 裡「申請／下載憑證導覽」叫出（apply-guide-panel.tsx）：
+// 先選要做的事（申請正式 API Key／下載 CA 憑證／簽署約定書），再走同一個申請視窗。
 // 官網開在原生申請視窗（見 apply-guide-native.ts）；文案與網頁標示目標
 // 集中在 apply-guide-config.ts。
 
 import {
     ALargeSmall, ArrowRight, Check, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, CircleCheckBig, CircleHelp, Clock, Crosshair,
-    ExternalLink, FileSignature, Flag, FlaskConical, Hourglass, KeyRound, Loader2, LogOut, MessageSquareText, Moon, OctagonAlert, Play, RotateCw, ShieldCheck,
-    SquarePen, Sun, ThumbsUp, TriangleAlert, UserRound,
+    ExternalLink, FileKey, FileSignature, Flag, FlaskConical, Hourglass, KeyRound, ListChecks, Loader2, LogOut, MessageSquareText, Moon, OctagonAlert, Play, RotateCw, ShieldCheck,
+    SquarePen, Sun, ThumbsUp, TriangleAlert, UserRound, X,
 } from 'lucide-react';
 import { useEffect, useRef, useState, type ReactNode, type Ref } from 'react';
 import { SIGNING_URLS, type SigningMarket } from '../lib/account-signing';
 import {
-    GUIDE_COPY, GUIDE_ORDER, PRODUCTION_NEXT_STEPS, SIGN_MARKET_COPY, SIGN_STATE_LABEL, SIGNING_MARKETS,
-    guideCardOf, guideStepOf, nextGuideStep, previousGuideStep, signMarketOf, signTargetId, sitePageOf, targetPageOf,
-    type ApplyPageStep, type GuidePoint, type GuideStep, type SignState,
+    IN_APP_TASKS, PRODUCTION_NEXT_STEPS, SIGN_MARKET_COPY, SIGN_STATE_LABEL, SIGNING_MARKETS, TASK_CHOICES, TASK_ORDER,
+    guideCardOf, guideCopyOf, guideStepOf, nextGuideStep, previousGuideStep, progressStepsOf, signMarketOf, signTargetId, sitePageOf, targetPageOf,
+    type ApplyGuideTask, type ApplyPageStep, type GuidePoint, type GuideStep, type InAppGuideTask, type SignState,
 } from '../lib/apply-guide-config';
 import {
-    clearApplySiteData, focusApplyTarget, listenApplyGuide, setApplyGuideCard, setApplySaveEnv, openApplyWindow, showApplyApiPage, showApplySignPage,
+    clearApplySiteData, focusApplyTarget, listenApplyGuide, setApplyCaTarget, setApplyGuideCard, setApplyImportEnvironment, setApplySaveCa, setApplySaveEnv,
+    openApplyWindow, showApplyApiPage, showApplySignPage,
     type ApplyGuideEvent, type ApplyWindowOpenResult, type ApplyWindowPlacement, type DownloadStatus,
 } from '../lib/apply-guide-native';
+import type { CredentialEnvironment } from '../lib/desktop-credentials';
 import { openExternalUrl, type DesktopSettings } from '../lib/tauri';
 import { baseMode, setThemeSettings, useThemeSettings } from '../lib/theme-store';
 import * as g from './apply-guide.css';
 
 export type ApplyWindowState = 'idle' | 'open' | 'browser' | 'closed';
-export interface ApplyImported { profileId: string; name: string }
+export interface ApplyImported { profileId: string; name: string; environment?: CredentialEnvironment }
+/** 「下載憑證」收下並設定到帳號的結果（不含憑證內容）。 */
+export interface ApplyCaAttached { profileId: string; name: string; fileName: string; hasCaPassword: boolean }
 
 export interface ApplyGuideController {
     step: GuideStep;
@@ -64,6 +70,35 @@ export interface ApplyGuideController {
     /** 在官網上、黃色框旁邊顯示這一步的說明卡（預設開，選擇會記住）。 */
     pageCard: boolean;
     setPageCard: (on: boolean) => void;
+    /** 這次導覽要做的事（首次設定固定 apply）。 */
+    task: ApplyGuideTask;
+    /** App 裡選了要做的事：切到該任務、打開（或沿用）申請視窗。 */
+    chooseTask: (task: InAppGuideTask) => Promise<void>;
+    /** 回到「選擇要做的事」。 */
+    backToTasks: () => void;
+    /** CA 憑證要設定到的正式帳號（null＝還沒選）。 */
+    caProfileId: string | null;
+    setCaProfile: (profileId: string | null) => Promise<void>;
+    caAttached: ApplyCaAttached | null;
+    /** 憑證沒有收成（格式不符、帳號不能用、選帳號失敗）的原因。 */
+    caError: string;
+    /** 「下載憑證」時同時把 Sinopac.pfx 存到下載資料夾（預設關，選擇會記住）。 */
+    saveCaFile: boolean;
+    setSaveCaFile: (save: boolean) => void;
+}
+
+export interface ApplyGuideOptions {
+    task?: ApplyGuideTask;
+    /** 憑證已設定到帳號：帳號清單要重新讀取 */
+    onChanged?: () => void;
+}
+
+const SAVE_CA_KEY = 'sjpro.applyGuide.saveCaFile';
+function readSaveCaPref(): boolean {
+    try { return localStorage.getItem(SAVE_CA_KEY) === '1'; } catch { return false; }
+}
+function writeSaveCaPref(save: boolean) {
+    try { if (save) localStorage.setItem(SAVE_CA_KEY, '1'); else localStorage.removeItem(SAVE_CA_KEY); } catch { /* 只是介面偏好 */ }
 }
 
 const SAVE_ENV_KEY = 'sjpro.applyGuide.saveEnvFile';
@@ -102,8 +137,20 @@ function writePageCardPref(on: boolean) {
 export type SiteClearState = { kind: 'idle' } | { kind: 'clearing' } | { kind: 'done' } | { kind: 'failed'; message: string };
 
 /** 導覽狀態放在 OnboardingSetup：切到手動設定時事件仍會收到。 */
-export function useApplyGuide(onImported?: (imported: ApplyImported) => void): ApplyGuideController {
+export function useApplyGuide(onImported?: (imported: ApplyImported) => void, options: ApplyGuideOptions = {}): ApplyGuideController {
     const [step, setStep] = useState<GuideStep>('start');
+    const [task, setTaskState] = useState<ApplyGuideTask>(options.task ?? 'apply');
+    const taskRef = useRef(task);
+    taskRef.current = task;
+    const [caProfileId, setCaProfileState] = useState<string | null>(null);
+    const caProfileRef = useRef<string | null>(null);
+    const [caAttached, setCaAttached] = useState<ApplyCaAttached | null>(null);
+    const [caError, setCaError] = useState('');
+    const [saveCaFile, setSaveCaState] = useState(readSaveCaPref);
+    const saveCaRef = useRef(saveCaFile);
+    saveCaRef.current = saveCaFile;
+    const changedRef = useRef(options.onChanged);
+    changedRef.current = options.onChanged;
     const [windowState, setWindowState] = useState<ApplyWindowState>('idle');
     const [placement, setPlacement] = useState<ApplyWindowPlacement>('overlay');
     const [synced, setSynced] = useState<ApplyPageStep | null>(null);
@@ -166,16 +213,26 @@ export function useApplyGuide(onImported?: (imported: ApplyImported) => void): A
                     }
                     // 載入後關掉「新增成功」會回到列表、從完成頁打開簽署頁：都留在完成頁；
                     // 開始申請另一把（身份驗證以後）才跟著官網走，完成頁仍可從進度列回去
-                    setStep(current => followSiteStep(current, event.step));
+                    setStep(current => followSiteStep(current, event.step, taskRef.current));
                     break;
                 }
                 case 'imported': {
-                    const value = { profileId: event.profileId, name: event.name };
+                    const value: ApplyImported = { profileId: event.profileId, name: event.name, ...(event.environment ? { environment: event.environment } : {}) };
                     setImported(value); setFailure(null); setStep('imported');
                     hasImportedRef.current = true;
+                    // 正式金鑰載入後，下一步的 CA 憑證預設設定到這個帳號
+                    if (taskRef.current === 'production' && event.environment === 'production') void selectCa(event.profileId);
                     importedRef.current?.(value);
                     break;
                 }
+                case 'ca-attached':
+                    setCaAttached({ profileId: event.profileId, name: event.name, fileName: event.fileName, hasCaPassword: event.hasCaPassword });
+                    setCaError('');
+                    changedRef.current?.();
+                    break;
+                case 'ca-failed':
+                    setCaError(event.message);
+                    break;
                 case 'import-failed':
                     setFailure({ message: event.message });
                     break;
@@ -194,7 +251,7 @@ export function useApplyGuide(onImported?: (imported: ApplyImported) => void): A
                     else {
                         const action = event.action;
                         if (action === 'next' && stepRef.current === 'sign' && windowRef.current === 'open' && signMarketOf(syncedRef.current)) void showApplyApiPage();
-                        setStep(current => pageNavStep(current, action, hasImportedRef.current));
+                        setStep(current => pageNavStep(current, action, hasImportedRef.current, taskRef.current));
                     }
                     break;
                 }
@@ -203,12 +260,36 @@ export function useApplyGuide(onImported?: (imported: ApplyImported) => void): A
         void listenApplyGuide(handle).then(unlisten => { if (active) off = unlisten; else unlisten(); });
         return () => { active = false; off?.(); };
     }, []);
+    /** 把這次任務交給原生端：.env 存成哪個環境、憑證設定到哪個帳號（視窗關掉後原生端會重設）。 */
+    const syncTask = async (current: ApplyGuideTask) => {
+        await setApplyImportEnvironment(current === 'production' ? 'production' : 'simulation');
+        const target = current === 'production' || current === 'ca' ? caProfileRef.current : null;
+        await setApplyCaTarget(target);
+    };
+    const selectCa = async (profileId: string | null) => {
+        caProfileRef.current = profileId; setCaProfileState(profileId); setCaError('');
+        if (windowRef.current !== 'open') return;
+        try { await setApplyCaTarget(profileId); } catch (error) {
+            caProfileRef.current = null; setCaProfileState(null);
+            setCaError(error instanceof Error ? error.message : String(error));
+        }
+    };
     const openWindow = async (): Promise<ApplyWindowOpenResult | null> => {
         setOpening(true); setOpenError(''); setSiteClear({ kind: 'idle' });
         try {
             const result = await openApplyWindow();
             // 原生端每次啟動都預設不存檔：開窗後把使用者記住的選擇帶過去
-            if (result !== 'browser') void setApplySaveEnv(saveEnvRef.current);
+            if (result !== 'browser') {
+                void setApplySaveEnv(saveEnvRef.current);
+                void setApplySaveCa(saveCaRef.current);
+                windowRef.current = 'open';
+                try { await syncTask(taskRef.current); } catch (error) {
+                    // 正式金鑰存不成正式帳號、或憑證帳號設定失敗：不能讓使用者照著做下去
+                    if (taskRef.current === 'production') throw error;
+                    caProfileRef.current = null; setCaProfileState(null);
+                    setCaError(error instanceof Error ? error.message : String(error));
+                }
+            }
             if (result === 'browser') setWindowState('browser');
             else { setPlacement(result); setWindowState('open'); }
             setStep(current => current === 'start' ? 'login' : current);
@@ -274,15 +355,44 @@ export function useApplyGuide(onImported?: (imported: ApplyImported) => void): A
         setSaveEnvState(save); writeSaveEnvPref(save);
         void setApplySaveEnv(save);
     };
-    const canPrevious = canGoPrevious(step, !!imported);
-    const canNext = canGoNext(step, !!imported);
+    const canPrevious = canGoPrevious(step, !!imported, task);
+    const canNext = canGoNext(step, !!imported, task);
     // 從排隊中的最新步驟算：同一批裡網頁卡片的按鈕先到也不會被蓋掉（和 pageNavStep 同一套限制）
-    const goPrevious = () => setStep(current => pageNavStep(current, 'prev', hasImportedRef.current));
+    const goPrevious = () => setStep(current => pageNavStep(current, 'prev', hasImportedRef.current, taskRef.current));
     // 從簽署到 API 管理：官網還停在簽署頁時一起切回 API 管理頁（固定網址），和「前往 API 管理頁申請金鑰」相同
     const goNext = () => {
         // 切頁是副作用，留在 updater 外面，照畫面上這一步決定
         if (step === 'sign' && windowRef.current === 'open' && signMarketOf(syncedRef.current)) void showApplyApiPage();
-        setStep(current => pageNavStep(current, 'next', hasImportedRef.current));
+        setStep(current => pageNavStep(current, 'next', hasImportedRef.current, taskRef.current));
+    };
+    const chooseTask = async (next: InAppGuideTask) => {
+        taskRef.current = next; setTaskState(next);
+        setCaError(''); setCaAttached(null); setFailure(null); setDownloaded(null);
+        setImported(null); hasImportedRef.current = false;
+        // 官網已經登入、停在某一頁：直接跳到這件事對應的步驟（不必重新登入）
+        const site = syncedRef.current;
+        setStep(site && windowRef.current === 'open' ? followSiteStep('login', site, next) : 'login');
+        if (windowRef.current === 'open') {
+            try { await syncTask(next); } catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                if (next === 'production') { setOpenError(message); setStep('start'); }
+                else setCaError(message);
+            }
+            const result = await openApplyWindow().catch(() => null); // 帶到前面
+            if (result === 'beside' || result === 'overlay') setPlacement(result);
+            return;
+        }
+        const result = await openWindow();
+        if (!result && next === 'production') setStep('start');
+    };
+    const backToTasks = () => {
+        setStep('start');
+        // 不再攔截下載：回到選擇時原生端照首次設定（模擬、一般下載）
+        if (windowRef.current === 'open') void syncTask('sign').catch(() => undefined);
+    };
+    const setSaveCaFile = (save: boolean) => {
+        setSaveCaState(save); writeSaveCaPref(save);
+        void setApplySaveCa(save);
     };
     const setPageCard = (on: boolean) => { pageCardRef.current = on; setPageCardState(on); writePageCardPref(on); };
     setPageCardRef.current = setPageCard;
@@ -292,12 +402,19 @@ export function useApplyGuide(onImported?: (imported: ApplyImported) => void): A
     useEffect(() => {
         if (windowState !== 'open') return;
         const show = pageCard && step !== 'start';
-        void setApplyGuideCard(show ? guideCardOf(step, { canPrev: canPrevious, canNext, theme: cardTheme, large: cardLarge }) : null);
-    }, [windowState, pageCard, step, canPrevious, canNext, cardTheme, cardLarge]);
+        void setApplyGuideCard(show ? guideCardOf(step, { canPrev: canPrevious, canNext, theme: cardTheme, large: cardLarge }, task) : null);
+    }, [windowState, pageCard, step, canPrevious, canNext, cardTheme, cardLarge, task]);
+    // CA 憑證這一步：在官網上標示「下載憑證」（官網不在 API 管理頁時先切過去；換頁後標示會不見，再標一次）
+    useEffect(() => {
+        if (step !== 'ca' || windowState !== 'open' || !synced || synced === 'login') return;
+        if (synced !== 'list' && sitePageOf(synced) === 'list') return; // 官網開著對話框：等關掉
+        void locate('download-ca');
+    }, [step, windowState, synced]); // eslint-disable-line react-hooks/exhaustive-deps
     return {
         step, setStep, windowState, placement, synced, imported, failure, downloaded, opening, openError, open,
         siteClear, clearSiteData, saveEnvFile, setSaveEnvFile, markets, setMarket, signs, signError, openSignPage, locate,
         canPrevious, canNext, goPrevious, goNext, pageCard, setPageCard,
+        task, chooseTask, backToTasks, caProfileId, setCaProfile: selectCa, caAttached, caError, saveCaFile, setSaveCaFile,
     };
 }
 
@@ -356,7 +473,7 @@ function SignRows({ guide, compact = false }: { guide: ApplyGuideController; com
 
 /** 簽署步驟：選市場、各市場狀態、照順序做的說明。 */
 function SignStep({ guide, windowOpen }: { guide: ApplyGuideController; windowOpen: boolean }) {
-    const copy = GUIDE_COPY.sign;
+    const copy = guideCopyOf(guide.task, 'sign');
     const market = signMarketOf(guide.synced);
     return <>
         <MarketChoice guide={guide} />
@@ -367,7 +484,7 @@ function SignStep({ guide, windowOpen }: { guide: ApplyGuideController; windowOp
             <PointList points={copy.points} canLocate={windowOpen}
                 resolveTarget={target => signTargetId(guide.synced, target)} />
         </>}
-        {windowOpen && <div className={g.actions}>
+        {windowOpen && guide.task !== 'sign' && <div className={g.actions}>
             <button className={g.secondaryButton} onClick={() => { void showApplyApiPage(); guide.setStep('list'); }}>
                 <ArrowRight size={18} aria-hidden />前往 API 管理頁申請金鑰
             </button>
@@ -433,8 +550,6 @@ function doneSignText(guide: ApplyGuideController) {
     return '你選的市場還有約定書沒簽或還沒確認。模擬環境現在就能用；正式下單前要簽好並完成測試。';
 }
 
-const SITE_STEPS: GuideStep[] = GUIDE_ORDER.filter(step => step !== 'start');
-const TOTAL_SITE_STEPS = SITE_STEPS.length - 1; // 「完成」不算一步
 
 /** 文案裡用「」包起來的介面名稱畫成框，讓使用者一眼看出要按哪個。 */
 export function Rich({ text }: { text: string }) {
@@ -513,17 +628,25 @@ function Callout({ tone, title, children, actions }: { tone: 'danger' | 'warn' |
     </div>;
 }
 
-/** 「上一步」「下一步」：開始頁與載入金鑰後的完成頁沒有；第一步沒有上一步，載入金鑰前「下載 .env」是最後一步。 */
-export function canGoPrevious(step: GuideStep, imported: boolean) {
+/**
+ * 「上一步」「下一步」：開始頁與載入金鑰後的完成頁沒有；第一步沒有上一步，載入金鑰前「下載 .env」是最後一步。
+ * App 裡的任務：正式金鑰載入後還有「CA 憑證」；只下載憑證、只簽署的最後一步沒有下一步。
+ */
+export function canGoPrevious(step: GuideStep, imported: boolean, task: ApplyGuideTask = 'apply') {
+    if (task !== 'apply' && !TASK_ORDER_OF(task).includes(step)) return false;
     return step !== 'start' && !(step === 'imported' && imported) && step !== 'login';
 }
-export function canGoNext(step: GuideStep, imported: boolean) {
-    return step !== 'start' && !(step === 'imported' && imported) && !(step === 'success' && !imported);
+export function canGoNext(step: GuideStep, imported: boolean, task: ApplyGuideTask = 'apply') {
+    if (task === 'apply') return step !== 'start' && !(step === 'imported' && imported) && !(step === 'success' && !imported);
+    const order = TASK_ORDER_OF(task);
+    const at = order.indexOf(step);
+    return at > 0 && at < order.length - 1 && !(step === 'success' && !imported) && !(step === 'imported' && !imported);
 }
+const TASK_ORDER_OF = (task: ApplyGuideTask) => TASK_ORDER[task];
 /** 官網上說明卡的按鈕：只換導覽步驟（不切換官網頁面）；不能動就停在原地。 */
-export function pageNavStep(step: GuideStep, action: 'next' | 'prev', imported: boolean): GuideStep {
-    if (action === 'next') return canGoNext(step, imported) ? nextGuideStep(step) : step;
-    return canGoPrevious(step, imported) ? previousGuideStep(step) : step;
+export function pageNavStep(step: GuideStep, action: 'next' | 'prev', imported: boolean, task: ApplyGuideTask = 'apply'): GuideStep {
+    if (action === 'next') return canGoNext(step, imported, task) ? nextGuideStep(step, task) : step;
+    return canGoPrevious(step, imported, task) ? previousGuideStep(step, task) : step;
 }
 
 /** 勾選的市場全部讀到「已簽署」（沒勾任何市場也算）：進度列的「簽署」才打勾。 */
@@ -533,7 +656,11 @@ export function pageNavStep(step: GuideStep, action: 'next' | 'prev', imported: 
  * - 登入後官網會直接進 API 管理列表：導覽先停在「簽署」，使用者按「前往 API 管理頁申請金鑰」或「下一步」才往下；
  *   已在簽署步驟時官網停在列表也不往前跳。
  */
-export function followSiteStep(current: GuideStep, site: ApplyPageStep): GuideStep {
+export function followSiteStep(current: GuideStep, site: ApplyPageStep, task: ApplyGuideTask = 'apply'): GuideStep {
+    // 只下載憑證、只簽署：登入後一律停在那一步；回到登入頁（登出、逾時）才回登入
+    if (task === 'ca' || task === 'sign') return site === 'login' ? 'login' : task;
+    // 正式金鑰在 CA 憑證這一步：除非開始申請另一把（身份驗證以後），都留在這一步
+    if (task === 'production' && current === 'ca' && !(site === 'verify' || site === 'form' || site === 'success')) return current;
     const next = guideStepOf(site);
     if (current === 'imported' && (site === 'list' || site === 'login' || signMarketOf(site))) return current;
     if (next === 'list' && (current === 'start' || current === 'login' || current === 'sign')) return 'sign';
@@ -544,35 +671,41 @@ export function allChosenSigned(guide: Pick<ApplyGuideController, 'markets' | 's
     return guide.markets.every(market => guide.signs[market] === 'signed');
 }
 
-function Progress({ step, imported, signDone, onSelect }: {
+function Progress({ step, imported, signDone, onSelect, task = 'apply' }: {
     step: GuideStep; imported: boolean;
     /** 「簽署」只在勾選的市場都已簽署時打勾；只是顯示，不擋任何步驟 */
     signDone: boolean;
     onSelect: (step: GuideStep) => void;
+    task?: ApplyGuideTask;
 }) {
-    const index = SITE_STEPS.indexOf(step);
-    const isDone = step === 'imported';
-    return <nav className={g.progressWrap} aria-label="申請進度">
+    const { steps, total } = progressStepsOf(task);
+    const index = steps.indexOf(step);
+    // 首次設定的「完成」是終點；App 裡的任務每一步都算一步
+    const isDone = task === 'apply' && step === 'imported';
+    const label = (item: GuideStep) => guideCopyOf(task, item).label;
+    return <nav className={g.progressWrap} aria-label={task === 'apply' ? '申請進度' : '導覽進度'}>
         <p className={g.progressCount} aria-live="polite">
-            {isDone ? '全部完成' : `第 ${index + 1} 步，共 ${TOTAL_SITE_STEPS} 步`}
-            <span className={g.progressCountMuted}>{isDone ? '' : `：${GUIDE_COPY[step].label}`}</span>
+            {isDone ? '全部完成' : `第 ${index + 1} 步，共 ${total} 步`}
+            <span className={g.progressCountMuted}>{isDone ? '' : `：${label(step)}`}</span>
         </p>
         <ol className={g.progress}>
-            {SITE_STEPS.map((item, i) => {
+            {steps.map((item, i) => {
                 const passed = i < index || (isDone && i === index);
                 const state = i === index && !isDone ? 'current' : passed && (item !== 'sign' || signDone) ? 'done' : 'todo';
-                const last = item === 'imported';
+                const last = task === 'apply' ? item === 'imported' : i === steps.length - 1;
+                // 「完成／存入 App」要等金鑰載入；首次設定的終點也是
+                const locked = item === 'imported' && !imported;
                 const stateText = state === 'done' ? '已完成' : state === 'current' ? '目前在這一步'
                     : passed ? '勾選的市場還沒全部確認已簽署' : '還沒開始';
                 return <li key={item} className={g.progressItem}>
                     {i > 0 && <span className={g.stepLine[i <= index ? 'done' : 'todo']} aria-hidden />}
                     <button className={g.step[state]} aria-current={state === 'current' ? 'step' : undefined}
-                        aria-label={`${GUIDE_COPY[item].label}，${stateText}`}
-                        disabled={last && !imported} onClick={() => onSelect(item)}>
+                        aria-label={`${label(item)}，${stateText}`}
+                        disabled={locked} onClick={() => onSelect(item)}>
                         <span className={g.dot[state]} aria-hidden>
                             {state === 'done' ? <Check size={18} strokeWidth={3} /> : last ? <Flag size={16} /> : i + 1}
                         </span>
-                        <span className={g.stepLabel}>{GUIDE_COPY[item].label}</span>
+                        <span className={g.stepLabel}>{label(item)}</span>
                     </button>
                 </li>;
             })}
@@ -580,41 +713,64 @@ function Progress({ step, imported, signDone, onSelect }: {
     </nav>;
 }
 
-export function ApplyGuide({ guide, settings, busy, docked = false, contentRef, onManual, onStart }: {
+export function ApplyGuide({ guide, settings, busy, docked = false, fab = docked, contentRef, onManual, onStart, inApp = false, onClose, onOpenAccount }: {
     guide: ApplyGuideController;
     settings: DesktopSettings;
     busy: boolean;
     /** 申請視窗蓋住主視窗右側：卡片縮成 428px 貼左，AI 浮鈕停在卡片右下。 */
     docked?: boolean;
+    /** 卡片右下要留 AI 浮鈕的位置（預設跟著 docked；App 裡的面板沒有浮鈕）。 */
+    fab?: boolean;
     /** AI 浮鈕對齊用：卡片內容區。 */
     contentRef?: Ref<HTMLDivElement>;
     onManual: () => void;
     onStart: (profileId: string) => Promise<void>;
+    /** 從 App 裡叫出（不是首次設定）：開始頁是「選擇要做的事」，沒有手動輸入的捷徑。 */
+    inApp?: boolean;
+    /** 頁首的關閉鈕（App 裡的導覽面板）。 */
+    onClose?: () => void;
+    /** 到帳號設定編輯這個帳號（輸入憑證密碼）。 */
+    onOpenAccount?: (profileId: string) => void;
 }) {
     const { step, windowState } = guide;
-    const copy = GUIDE_COPY[step];
+    const copy = guideCopyOf(guide.task, step);
     const windowOpen = windowState === 'open';
     const cardClass = docked ? g.cardDocked : g.card;
-    const bodyClass = docked ? g.bodyWithFab : g.body;
-    const manualLink = <div className={g.quietLinks}>
-        <button className={g.textButton} onClick={onManual}><SquarePen size={18} aria-hidden />{step === 'start' ? '我已經有 API Key' : '改用手動輸入或匯入 .env 檔'}</button>
-    </div>;
+    const bodyClass = fab ? g.bodyWithFab : g.body;
+    const manualLink = inApp
+        ? <div className={g.quietLinks}>
+            <button className={g.textButton} onClick={guide.backToTasks}><ListChecks size={18} aria-hidden />換一件要做的事</button>
+        </div>
+        : <div className={g.quietLinks}>
+            <button className={g.textButton} onClick={onManual}><SquarePen size={18} aria-hidden />{step === 'start' ? '我已經有 API Key' : '改用手動輸入或匯入 .env 檔'}</button>
+        </div>;
+    const label = inApp ? '申請／下載憑證導覽' : '申請 API Key 導覽';
 
     const header = <div className={g.header}>
         <div className={g.headerTitle}>
             <span className={g.headerIcon}><KeyRound size={20} aria-hidden /></span>
-            <p className={g.brand}>申請 API Key</p>
+            <p className={g.brand}>{inApp ? '申請／下載憑證' : '申請 API Key'}</p>
             {!docked && <span className={g.brandSub}>Shioaji Pro</span>}
         </div>
         <DisplayControls guide={windowOpen && step !== 'start' ? guide : undefined} />
+        {onClose && <button className={g.closeButton} aria-label="關閉導覽" title="關閉導覽" onClick={onClose}><X size={20} aria-hidden /></button>}
     </div>;
+    if (inApp && step === 'start') {
+        return <section className={cardClass} aria-label={label}>
+            {header}
+            <div className={bodyClass} ref={contentRef}>
+                <TaskChooser guide={guide} settings={settings} />
+                <SiteLogout guide={guide} />
+            </div>
+        </section>;
+    }
     const syncBanner = windowOpen && guide.synced && step !== 'imported' && <div className={g.syncBanner} role="status">
         <span className={g.syncDot} aria-hidden />
         <span><strong>已連動官網</strong>：官網換頁時，這裡會自動跳到對應步驟。</span>
     </div>;
 
     if (step === 'start') {
-        return <section className={cardClass} aria-label="申請 API Key 導覽">
+        return <section className={cardClass} aria-label={label}>
             {header}
             <div className={bodyClass} ref={contentRef}>
                 <div className={g.hero}>
@@ -648,19 +804,74 @@ export function ApplyGuide({ guide, settings, busy, docked = false, contentRef, 
     }
 
     const failure = guide.failure;
-    const failureCallout = failure && <Callout tone="danger" title="App 沒有收到 .env 檔"
-        actions={<button className={g.secondaryButton} onClick={onManual}><SquarePen size={18} aria-hidden />改用手動輸入</button>}>
-        {failure.message}。先不要關掉官網的「新增成功」視窗，再按一次「下載 .env」。還是不行的話，按「複製」把 API Key 和 Secret Key 貼到手動輸入。
-    </Callout>;
+    const failureCalloutNode = failureCallout(guide, onManual);
+
+    if (step === 'imported' && guide.imported && guide.task === 'production') {
+        const profile = settings.profiles.find(p => p.id === guide.imported!.profileId);
+        // 舊版原生殼不帶環境；帶了而且是模擬（例如設定沒送到）就提醒
+        const wrongEnvironment = (profile?.environment ?? guide.imported.environment) === 'simulation';
+        return <section className={cardClass} aria-label={label}>
+            {header}
+            <Progress step={step} imported task={guide.task} signDone={allChosenSigned(guide)} onSelect={guide.setStep} />
+            <div className={bodyClass} ref={contentRef}>
+                <div className={g.doneHero}>
+                    <span className={g.doneIcon}><Check size={34} strokeWidth={3} aria-hidden /></span>
+                    <h2 className={g.title}>{copy.title}</h2>
+                    <p className={g.lead}><Rich text={copy.lead} /></p>
+                </div>
+                {failureCallout(guide, onManual)}
+                <dl className={g.doneBox}>
+                    <dt className={g.doneTerm}>帳號名稱</dt>
+                    <dd className={g.doneValue}>{profile?.name ?? guide.imported.name}{!wrongEnvironment && <span className={g.prodBadge}>正式環境</span>}</dd>
+                    {profile?.apiKeyMasked && <><dt className={g.doneTerm}>API Key</dt><dd className={g.doneValue}><span className={g.mono}>{profile.apiKeyMasked}</span></dd></>}
+                </dl>
+                {wrongEnvironment && <Callout tone="warn" title="這把金鑰存成了模擬帳號"
+                    actions={onOpenAccount && <button className={g.secondaryButton} onClick={() => onOpenAccount(guide.imported!.profileId)}><SquarePen size={18} aria-hidden />到帳號設定改成正式環境</button>}>
+                    請到帳號設定把環境改成正式環境，再下載 CA 憑證。
+                </Callout>}
+                <p className={g.secondary}>這個帳號還不是使用中的帳號。要用它交易時，到「伺服器設定 › 帳號」按「切換使用」；正式環境的委託會動用真實資金。</p>
+                <div className={g.actions}>
+                    <button className={g.primary} onClick={() => guide.setStep('ca')}><FileKey size={20} aria-hidden />下一步：下載 CA 憑證</button>
+                </div>
+                <SiteLogout guide={guide} />
+            </div>
+        </section>;
+    }
+
+    if (step === 'ca') {
+        return <section className={cardClass} aria-label={label}>
+            {header}
+            {syncBanner}
+            <Progress step={step} imported={!!guide.imported} task={guide.task} signDone={allChosenSigned(guide)} onSelect={guide.setStep} />
+            <div className={bodyClass} ref={contentRef}>
+                <h2 className={g.title}>{copy.title}</h2>
+                <p className={g.lead}><Rich text={copy.lead} /></p>
+                {windowState === 'closed' && <Callout tone="warn" title="官網視窗已關閉"
+                    actions={<button className={g.secondaryButton} onClick={() => void guide.open()}><RotateCw size={18} aria-hidden />重新打開官網</button>}>
+                    按「重新打開官網」繼續。
+                </Callout>}
+                {guide.openError && <Callout tone="danger" title="打不開申請視窗">{guide.openError}</Callout>}
+                <CaStep guide={guide} settings={settings} windowOpen={windowOpen} onOpenAccount={onOpenAccount} />
+                {manualLink}
+                <SiteLogout guide={guide} />
+            </div>
+            <div className={g.footer}>
+                <button className={g.secondaryButton} disabled={!guide.canPrevious} onClick={() => guide.goPrevious()}><ChevronLeft size={20} aria-hidden />上一步</button>
+                {onClose
+                    ? <button className={g.secondaryButton} onClick={onClose}><Check size={20} aria-hidden />完成</button>
+                    : <button className={g.secondaryButton} disabled={!guide.canNext} onClick={() => guide.goNext()}>下一步<ChevronRight size={20} aria-hidden /></button>}
+            </div>
+        </section>;
+    }
 
     if (step === 'imported' && guide.imported) {
         const profile = settings.profiles.find(p => p.id === guide.imported!.profileId);
         // 匯入後使用者可能在帳號設定改成正式環境：導覽只啟動模擬環境
         const production = profile?.environment === 'production';
         const plaintext = (profile?.credentialBackend ?? settings.credentialBackend) === 'plaintext-fallback';
-        return <section className={cardClass} aria-label="申請 API Key 導覽">
+        return <section className={cardClass} aria-label={label}>
             {header}
-            <Progress step={step} imported={!!guide.imported} signDone={allChosenSigned(guide)} onSelect={guide.setStep} />
+            <Progress step={step} imported={!!guide.imported} task={guide.task} signDone={allChosenSigned(guide)} onSelect={guide.setStep} />
             <div className={bodyClass} ref={contentRef}>
                 <div className={g.doneHero}>
                     <span className={g.doneIcon}><Check size={34} strokeWidth={3} aria-hidden /></span>
@@ -669,7 +880,7 @@ export function ApplyGuide({ guide, settings, busy, docked = false, contentRef, 
                 </div>
                 {failure && <p className={g.secondary}>之後下載的 .env 沒有載入成功，目前使用的仍是下面這把金鑰。</p>}
                 {guide.downloaded && <p className={g.secondary}>{downloadedText(guide.downloaded)}</p>}
-                {failureCallout}
+                {failureCalloutNode}
                 <dl className={g.doneBox}>
                     <dt className={g.doneTerm}>帳號名稱</dt>
                     <dd className={g.doneValue}>{profile?.name ?? guide.imported.name}{!production && <span className={g.simBadge}>模擬環境</span>}</dd>
@@ -727,10 +938,10 @@ export function ApplyGuide({ guide, settings, busy, docked = false, contentRef, 
         </section>;
     }
 
-    return <section className={cardClass} aria-label="申請 API Key 導覽">
+    return <section className={cardClass} aria-label={label}>
         {header}
         {syncBanner}
-        <Progress step={step} imported={!!guide.imported} signDone={allChosenSigned(guide)} onSelect={guide.setStep} />
+        <Progress step={step} imported={!!guide.imported} task={guide.task} signDone={allChosenSigned(guide)} onSelect={guide.setStep} />
         <div className={bodyClass} ref={contentRef}>
             <h2 className={g.title}>{copy.title}</h2>
             <p className={g.lead}><Rich text={copy.lead} /></p>
@@ -745,7 +956,7 @@ export function ApplyGuide({ guide, settings, busy, docked = false, contentRef, 
                 actions={<button className={g.secondaryButton} onClick={onManual}><SquarePen size={18} aria-hidden />從 .env 檔匯入</button>}>
                 這個版本無法在 App 裡打開申請視窗。請照下面的步驟在瀏覽器申請，下載 .env 檔後回到這裡匯入。
             </Callout>}
-            {failureCallout}
+            {failureCalloutNode}
             {step === 'sign'
                 ? <SignStep guide={guide} windowOpen={windowOpen} />
                 : <PointList points={copy.points} canLocate={windowOpen} onLocate={guide.locate} />}
@@ -759,7 +970,118 @@ export function ApplyGuide({ guide, settings, busy, docked = false, contentRef, 
         </div>
         <div className={g.footer}>
             <button className={g.secondaryButton} disabled={!guide.canPrevious} onClick={() => guide.goPrevious()}><ChevronLeft size={20} aria-hidden />上一步</button>
-            <button className={g.secondaryButton} disabled={!guide.canNext} onClick={() => guide.goNext()}>下一步<ChevronRight size={20} aria-hidden /></button>
+            {onClose && guide.task === 'sign' && step === 'sign'
+                ? <button className={g.secondaryButton} onClick={onClose}><Check size={20} aria-hidden />完成</button>
+                : <button className={g.secondaryButton} disabled={!guide.canNext} onClick={() => guide.goNext()}>下一步<ChevronRight size={20} aria-hidden /></button>}
         </div>
     </section>;
+}
+
+function failureCallout(guide: ApplyGuideController, onManual: () => void) {
+    const failure = guide.failure;
+    return failure && <Callout tone="danger" title="App 沒有收到 .env 檔"
+        actions={<button className={g.secondaryButton} onClick={onManual}><SquarePen size={18} aria-hidden />改用手動輸入</button>}>
+        {failure.message}。先不要關掉官網的「新增成功」視窗，再按一次「下載 .env」。還是不行的話，按「複製」把 API Key 和 Secret Key 貼到手動輸入。
+    </Callout>;
+}
+
+const TASK_ICON = { production: KeyRound, ca: FileKey, sign: FileSignature } as const;
+
+/** App 裡叫出導覽時的開始頁：選擇要做的事。官網登入沿用申請視窗保存的資料。 */
+function TaskChooser({ guide, settings }: { guide: ApplyGuideController; settings: DesktopSettings }) {
+    const hasProduction = settings.profiles.some(profile => profile.environment === 'production');
+    return <>
+        <div className={g.hero}>
+            <h2 className={g.title}>要在官網上做什麼？</h2>
+            <p className={g.lead}>App 會在旁邊打開永豐金證券官網，一步一步告訴你要按哪裡。官網之前登入過的話，通常不用重新登入。</p>
+        </div>
+        {guide.openError && <Callout tone="danger" title="打不開申請視窗"
+            actions={<button className={g.secondaryButton} onClick={() => void guide.open()}><RotateCw size={18} aria-hidden />再試一次</button>}>
+            {guide.openError}
+        </Callout>}
+        <ul className={g.taskList} aria-label="選擇要做的事">
+            {IN_APP_TASKS.map(task => {
+                const Icon = TASK_ICON[task];
+                const choice = TASK_CHOICES[task];
+                const hint = task === 'ca' && !hasProduction ? '還沒有正式帳號：先申請正式 API Key，或到帳號設定新增。' : null;
+                return <li key={task}>
+                    <button className={g.taskButton} disabled={guide.opening} onClick={() => void guide.chooseTask(task)}>
+                        <span className={g.itemIcon} aria-hidden><Icon size={20} /></span>
+                        <span className={g.itemText}>
+                            <span className={g.itemTitle}>{choice.title}</span>
+                            <span className={g.itemBody}><Rich text={choice.body} /></span>
+                            {hint && <span className={g.taskHint}>{hint}</span>}
+                        </span>
+                        {guide.opening ? <Loader2 size={20} className={g.spinner} aria-hidden /> : <ChevronRight size={20} aria-hidden />}
+                    </button>
+                </li>;
+            })}
+        </ul>
+        <p className={g.secondary}>帳號密碼、驗證碼與憑證密碼都不經過導覽：登入在官網上完成，憑證密碼在「伺服器設定 › 帳號」輸入。</p>
+    </>;
+}
+
+/** 「同時把憑證檔存到『下載』資料夾」：預設關，只設定到帳號。 */
+function SaveCaOption({ guide }: { guide: ApplyGuideController }) {
+    const on = guide.saveCaFile;
+    return <label className={g.option}>
+        <input type="checkbox" className={g.optionBox} checked={on} aria-describedby="apply-save-ca-hint"
+            onChange={event => guide.setSaveCaFile(event.currentTarget.checked)} />
+        <span className={g.optionText}>
+            <span className={g.optionTitle}>同時存一份到「下載」資料夾</span>
+            <span id="apply-save-ca-hint" className={on ? g.optionHintWarn : g.optionHint}>
+                {on ? '憑證檔可以用來下正式委託，請妥善保管。' : '按「下載憑證」只會設定到選的帳號，不會另存檔案。'}
+            </span>
+        </span>
+    </label>;
+}
+
+/** CA 憑證這一步：選正式帳號、存檔選項、收到憑證後的結果與下一步（輸入憑證密碼）。 */
+function CaStep({ guide, settings, windowOpen, onOpenAccount }: {
+    guide: ApplyGuideController; settings: DesktopSettings; windowOpen: boolean;
+    onOpenAccount?: (profileId: string) => void;
+}) {
+    const copy = guideCopyOf(guide.task, 'ca');
+    const candidates = settings.profiles.filter(profile => profile.environment === 'production' && profile.secretState === 'stored');
+    const only = candidates.length === 1 ? candidates[0]!.id : null;
+    // 只有一個正式帳號時直接選它；選的帳號被刪掉或改成模擬就取消
+    useEffect(() => {
+        if (guide.caProfileId && !candidates.some(profile => profile.id === guide.caProfileId)) void guide.setCaProfile(only);
+        else if (!guide.caProfileId && only) void guide.setCaProfile(only);
+    }, [only, guide.caProfileId, candidates.map(profile => profile.id).join()]); // eslint-disable-line react-hooks/exhaustive-deps
+    const attached = guide.caAttached;
+    const attachedProfile = attached && settings.profiles.find(profile => profile.id === attached.profileId);
+    return <>
+        {candidates.length === 0
+            ? <Callout tone="warn" title="還沒有正式帳號"
+                actions={<button className={g.secondaryButton} onClick={() => void guide.chooseTask('production')}><KeyRound size={18} aria-hidden />申請正式 API Key</button>}>
+                憑證要設定到正式環境的帳號。先申請一把勾選「正式環境」的金鑰，或到帳號設定新增正式帳號。
+            </Callout>
+            : <fieldset className={g.marketSet}>
+                <legend className={g.marketLegend}>憑證要設定到哪個正式帳號？</legend>
+                <div className={g.profileOptions}>
+                    {candidates.map(profile => {
+                        const on = guide.caProfileId === profile.id;
+                        return <label key={profile.id} className={on ? g.profileOptionOn : g.profileOption}>
+                            <input type="radio" name="apply-ca-profile" className={g.optionBox} checked={on}
+                                onChange={() => void guide.setCaProfile(profile.id)} />
+                            <span className={g.optionText}>
+                                <span className={g.optionTitle}>{profile.name}</span>
+                                <span className={g.optionHint}>{profile.hasCA ? '已設定憑證，會換成新下載的' : '還沒有憑證'}</span>
+                            </span>
+                        </label>;
+                    })}
+                </div>
+            </fieldset>}
+        {guide.caError && <Callout tone="danger" title="憑證沒有存成">{guide.caError}。請確認選的帳號後，在官網再按一次「下載憑證」。</Callout>}
+        {attached && <Callout tone="success" title="憑證已設定到帳號"
+            actions={onOpenAccount && <button className={g.secondaryButton} onClick={() => onOpenAccount(attached.profileId)}><SquarePen size={18} aria-hidden />{attached.hasCaPassword ? '到帳號設定確認' : '到帳號設定輸入憑證密碼'}</button>}>
+            「{attached.fileName}」已存到這台電腦，設定給「{attachedProfile?.name ?? attached.name}」。{attached.hasCaPassword
+                ? '沿用之前輸入的憑證密碼；憑證換新後密碼若不同，請到帳號設定更新。'
+                : '還要輸入憑證密碼才能正式下單：到帳號設定編輯這個帳號，輸入憑證密碼後儲存。'}下次啟動或重啟伺服器時套用。
+        </Callout>}
+        {windowOpen && guide.caProfileId && <SaveCaOption guide={guide} />}
+        <PointList points={copy.points} canLocate={windowOpen && !!guide.caProfileId} onLocate={guide.locate} />
+        {guide.downloaded && <p className={g.secondary}>{downloadedText(guide.downloaded)}</p>}
+    </>;
 }

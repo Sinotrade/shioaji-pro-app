@@ -6,6 +6,7 @@ import { canTrade } from '../lib/account-tradable';
 import {
     Activity,
     Bot,
+    KeyRound,
     LayoutGrid,
     Palette,
     RefreshCw,
@@ -14,7 +15,7 @@ import {
     Volume2,
     X,
 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { AsyncStatus } from './async-status';
 import {
     ensureAccounts,
@@ -49,6 +50,8 @@ import {
     useRiskSettings,
 } from '../lib/risk';
 import { isTauri } from '../lib/runtime';
+import { loadDesktopSettings } from '../lib/desktop-credentials';
+import { onApplyGuideRequest, requestApplyGuide } from '../lib/apply-guide-reentry';
 import { setUsPnlSession, useUsPnlSession, type UsPnlSession } from '../lib/us/us-pnl-prefs';
 import { setUsTickDetail, useUsTickDetail, type UsTickDetail } from '../lib/us/us-tick-prefs';
 import { setSoundEnabled, soundEnabled } from '../lib/sounds';
@@ -317,6 +320,39 @@ function SoundPrivacySection() {
     );
 }
 
+/**
+ * 還沒有正式帳號（桌面版）：在帳號清單旁提供「申請正式 API Key」的捷徑，打開 App 裡的申請導覽。
+ * 讀不到本機設定（網頁版、子視窗）時不顯示。
+ */
+export function useHasProductionProfile(): boolean | null {
+    const [value, setValue] = useState<boolean | null>(null);
+    useEffect(() => {
+        if (!isTauri) return;
+        let active = true;
+        loadDesktopSettings()
+            .then((settings) => { if (active) setValue(settings.profiles.some((p) => p.environment === 'production')); })
+            .catch(() => undefined);
+        return () => { active = false; };
+    }, []);
+    return value;
+}
+
+export function ProductionKeyShortcut() {
+    const hasProduction = useHasProductionProfile();
+    if (hasProduction !== false) return null;
+    return (
+        <div className={styles.prodShortcut}>
+            <span className={hud.emptyHint}>
+                目前只有模擬帳號。要用真實資金交易，先申請正式環境的 API Key 並下載 CA 憑證。
+            </span>
+            <button className={hud.updateBtn} onClick={() => requestApplyGuide('production')}>
+                <KeyRound size={13} />
+                申請正式 API Key
+            </button>
+        </div>
+    );
+}
+
 export function AccountsSection() {
     const { accounts, selectedStock, selectedFutures, selectedIntl, loaded, loadError } = useAccounts();
     const simulation = useServerInfo()?.simulation === true;
@@ -432,6 +468,7 @@ export function AccountsSection() {
                     </>
                 )}
             </span>
+            <ProductionKeyShortcut />
             <button
                 className={hud.updateBtn}
                 disabled={refreshing}
@@ -770,6 +807,10 @@ export function SettingsDialog({
     onClose: () => void;
 }) {
     const [tab, setTab] = useState<SettingsTab>('appearance');
+    // 打開申請導覽時讓出畫面（導覽面板在主畫面左側）
+    const closeRef = useRef(onClose);
+    closeRef.current = onClose;
+    useEffect(() => onApplyGuideRequest(() => closeRef.current()), []);
 
     useEffect(() => {
         if (!open) return;
