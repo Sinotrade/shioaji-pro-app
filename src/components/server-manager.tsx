@@ -153,12 +153,19 @@ export function ServerManager({
     toggleRef.current = onToggle;
     // 申請視窗存好金鑰或憑證：不管導覽面板還開著沒，都重新讀帳號資料
     // （面板關掉後原生端才存完時，設定畫面也不會拿舊的資料）
+    // 重新讀取可能重疊（連續存兩次）：只有最後發出的那一次能更新畫面，較舊的結果晚到也不蓋掉
+    const settingsRead = useRef(0);
+    const refreshSettings = useCallback(async () => {
+        const read = ++settingsRead.current;
+        const fresh = await reloadDesktopSettings();
+        if (read === settingsRead.current) setSettings(fresh);
+    }, []);
     useEffect(() => {
         let active = true;
         let off: (() => void) | undefined;
         void listenApplyGuide(event => {
             if (event.kind === 'imported' || event.kind === 'ca-attached') {
-                void reloadDesktopSettings().then(fresh => { if (active) setSettings(fresh); }).catch(() => undefined);
+                void refreshSettings().catch(() => undefined);
             }
         }).then(unlisten => { if (active) off = unlisten; else unlisten(); });
         return () => { active = false; off?.(); };
@@ -1208,12 +1215,11 @@ export function ServerManager({
             )}
             {guideRequest && <ApplyGuidePanel settings={settings} request={guideRequest}
                 onClose={() => setGuideRequest(undefined)}
-                onChanged={() => { void reloadDesktopSettings().then(setSettings).catch(() => undefined); }}
+                onChanged={() => { void refreshSettings().catch(() => undefined); }}
                 onOpenAccount={profileId => {
                     // 先讀最新的帳號資料（剛設定的憑證路徑），編輯畫面才不會帶著舊的路徑存回去；
                     // 讀不到就不打開，請使用者再按一次
-                    void reloadDesktopSettings().then(fresh => {
-                        setSettings(fresh);
+                    void refreshSettings().then(() => {
                         setEditProfileId(profileId || undefined); setReadyLines([]);
                         toggleRef.current(true); setSettingsOpen(true);
                     }, (e: unknown) => {

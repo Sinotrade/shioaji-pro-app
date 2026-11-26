@@ -441,8 +441,10 @@ export function useApplyGuide(onImported?: (imported: ApplyImported) => void, op
                 if (next === 'production') { setOpenError(message); setStep('start'); }
                 else {
                     // 交接途中選的帳號被原生端拒絕：取消選取（原生端沒有在攔截）；之後又改選的不動
-                    if (caRequestRef.current === syncCaRequestRef.current) { caProfileRef.current = null; setCaProfileState(null); }
-                    setCaError(message);
+                    if (caRequestRef.current === syncCaRequestRef.current) {
+                        caProfileRef.current = null; setCaProfileState(null);
+                        setCaError(message);
+                    }
                 }
             }
             // 視窗在等待中被關掉：不自己重開（原生端已回到模擬、不攔截憑證），

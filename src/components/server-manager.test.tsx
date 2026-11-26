@@ -403,6 +403,18 @@ describe('credential profiles in server settings', () => {
         await click('僅儲存');
         expect(mocks.profile).toHaveBeenCalledWith({ id: 'two', name: '備用帳號', environment: 'production', caPath: '/fixture/picked.pfx' });
     });
+    it('keeps the newest profiles when an older refresh finishes last', async () => {
+        await open(); await click('編輯 備用帳號');
+        const withCa = (name: string) => ({ ...initial, profiles: [one, { ...two, caPath: `/fixture/ca/two/${name}.pfx` }] });
+        let finishOld!: (value: DesktopSettings) => void;
+        mocks.reread.mockImplementationOnce(() => new Promise<DesktopSettings>(resolve => { finishOld = resolve; }));
+        mocks.reread.mockImplementationOnce(async () => withCa('Sinopac-second'));
+        const attach = async () => act(async () => { for (const handler of [...mocks.guideHandlers]) handler({ kind: 'ca-attached' }); });
+        await attach(); await attach();
+        expect(text()).toContain('Sinopac-second.pfx');
+        await act(async () => finishOld(withCa('Sinopac-first')));
+        expect(text()).toContain('Sinopac-second.pfx');
+    });
     it('starts the production key task directly from the shortcut request', async () => {
         mocks.guideOpen.mockResolvedValue('overlay');
         await act(async () => { view = create(createElement(ServerManager, { open: true, onToggle: vi.fn() })); });

@@ -455,6 +455,25 @@ describe('in-app apply guide', () => {
         expect(radios().map(r => r.props.checked)).toEqual([false]);
     });
 
+    it('does not report a hand-over refusal for a recipient the user already switched away from', async () => {
+        const other: CredentialProfile = { ...prod, id: 'p3', name: '第二正式' };
+        await mount(withProfiles(sim, prod, other), 'sign');
+        await emit({ kind: 'step', step: 'list' });
+        await act(async () => button('換一件要做的事')!.props.onClick());
+        let finish!: () => void;
+        mocks.importEnvironment.mockImplementationOnce(() => new Promise<void>(resolve => { finish = resolve; }));
+        await act(async () => { void button('下載 CA 憑證')!.props.onClick(); });
+        const radios = () => view!.root.findAll(n => n.type === 'input' && n.props.type === 'radio');
+        await act(async () => radios()[0]!.props.onChange());
+        let refuse!: (error: Error) => void;
+        mocks.caTarget.mockImplementationOnce(() => new Promise<string>((_resolve, reject) => { refuse = reject; }));
+        await act(async () => finish());
+        await act(async () => radios()[1]!.props.onChange());
+        await act(async () => refuse(new Error('憑證要設定的帳號已經改變，請重新選擇')));
+        expect(json()).not.toContain('憑證沒有存成');
+        expect(radios().map(r => r.props.checked)).toEqual([false, true]);
+    });
+
     it('discloses plaintext storage for a production key like first-run setup', async () => {
         await mount({ ...withProfiles(sim), credentialBackend: 'plaintext-fallback', fallbackPath: '/fixture/credentials.json' }, 'production');
         await emit({ kind: 'imported', profileId: 'p2', name: 'ShioajiProProd', duplicate: false, environment: 'production' });
