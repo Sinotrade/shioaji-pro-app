@@ -6,7 +6,7 @@ import type { ApplyGuideEvent } from '../lib/apply-guide-native';
 const mocks = vi.hoisted(() => ({
     panel: vi.fn(() => null), defaults: vi.fn(), load: vi.fn(), save: vi.fn(), select: vi.fn(), start: vi.fn(),
     reload: vi.fn(), stop: vi.fn(), logout: vi.fn(), openLogs: vi.fn(), external: vi.fn(),
-    open: vi.fn(), close: vi.fn(), apiPage: vi.fn(), signPage: vi.fn(), focus: vi.fn(), clearSite: vi.fn(), saveEnv: vi.fn(),
+    open: vi.fn(), close: vi.fn(), apiPage: vi.fn(), signPage: vi.fn(), focus: vi.fn(), clearSite: vi.fn(), saveEnv: vi.fn(), card: vi.fn(),
     handler: null as ((event: ApplyGuideEvent) => void) | null,
 }));
 vi.mock('../lib/spawn-keys', () => ({ clearStoredSpawnKeyHash: vi.fn() }));
@@ -18,13 +18,13 @@ vi.mock('../lib/tauri', async () => ({
     serverStop: mocks.stop, logoutCredentialProfile: mocks.logout, openServerLogFolder: mocks.openLogs, openExternalUrl: mocks.external,
 }));
 vi.mock('../lib/apply-guide-native', () => ({
-    openApplyWindow: mocks.open, closeApplyWindow: mocks.close, clearApplySiteData: mocks.clearSite, setApplySaveEnv: mocks.saveEnv, showApplyApiPage: mocks.apiPage, showApplySignPage: mocks.signPage, focusApplyTarget: mocks.focus,
+    openApplyWindow: mocks.open, closeApplyWindow: mocks.close, clearApplySiteData: mocks.clearSite, setApplySaveEnv: mocks.saveEnv, showApplyApiPage: mocks.apiPage, showApplySignPage: mocks.signPage, focusApplyTarget: mocks.focus, setApplyGuideCard: mocks.card,
     listenApplyGuide: async (handler: (event: ApplyGuideEvent) => void) => { mocks.handler = handler; return () => { mocks.handler = null; }; },
 }));
 import { EMPTY_DESKTOP_SETTINGS, type DesktopSettings } from '../lib/desktop-credentials';
 import { OnboardingSetup } from './onboarding-setup';
 import { CredentialProfiles } from './credential-profiles';
-import { ApplyGuide, followSiteStep } from './apply-guide';
+import { ApplyGuide, followSiteStep, pageNavStep } from './apply-guide';
 import { AssistantFab } from './assistant-fab';
 
 let view: ReactTestRenderer | undefined;
@@ -707,5 +707,139 @@ describe('followSiteStep', () => {
         expect(followSiteStep('imported', 'login')).toBe('imported');
         expect(followSiteStep('imported', 'sign-s')).toBe('imported');
         expect(followSiteStep('imported', 'verify')).toBe('verify');
+    });
+});
+
+describe('the guide card on the page', () => {
+    const store = new Map<string, string>();
+    beforeEach(() => {
+        store.clear();
+        vi.stubGlobal('localStorage', {
+            getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => void store.set(k, v),
+            removeItem: (k: string) => void store.delete(k),
+        });
+    });
+    const lastCard = () => mocks.card.mock.calls.at(-1)?.[0] as { title: string; progress: string; canPrev: boolean; canNext: boolean } | null | undefined;
+    const open = async () => { await mount(); await act(async () => button('開始申請')!.props.onClick()); };
+    const nav = (action: 'next' | 'prev' | 'hide') => emit({ kind: 'nav', action });
+
+    it('is sent once the window is open and follows the guide step', async () => {
+        await mount();
+        expect(mocks.card).not.toHaveBeenCalled();
+        await act(async () => button('開始申請')!.props.onClick());
+        expect(lastCard()).toMatchObject({ title: '登入永豐金證券網站', progress: '第 1 步，共 6 步：登入', canPrev: false, canNext: true });
+        await emit({ kind: 'step', step: 'verify' });
+        expect(lastCard()).toMatchObject({ title: '收驗證碼完成身份驗證', canPrev: true });
+        await emit({ kind: 'step', step: 'success' });
+        // 載入金鑰前「下載 .env」是最後一步
+        expect(lastCard()).toMatchObject({ canNext: false });
+        // 視窗關掉就不再送
+        await emit({ kind: 'closed' });
+        mocks.card.mockClear();
+        await act(async () => button('上一步')!.props.onClick());
+        expect(mocks.card).not.toHaveBeenCalled();
+    });
+
+    it('moves the guide on 上一步／下一步 from the page, within the same limits as the app buttons', async () => {
+        await open();
+        await nav('prev'); // 第一步沒有上一步
+        expect(json()).toContain('登入永豐金證券網站');
+        await nav('next');
+        expect(json()).toContain('簽署 API 約定書');
+        expect(lastCard()).toMatchObject({ title: '簽署 API 約定書' });
+        await nav('prev');
+        expect(json()).toContain('登入永豐金證券網站');
+        await emit({ kind: 'step', step: 'success' });
+        await nav('next'); // 還沒載入金鑰：不能跳到完成
+        expect(json()).toContain('按「下載 .env」交給 App');
+        expect(mocks.apiPage).not.toHaveBeenCalled();
+        expect(mocks.signPage).not.toHaveBeenCalled();
+        expect(mocks.focus).not.toHaveBeenCalled();
+    });
+
+    it('leaving a signing page with 下一步 on the page card also switches the site to the API page, like the app button', async () => {
+        await open();
+        await emit({ kind: 'step', step: 'sign-f', sign: 'unknown' });
+        mocks.apiPage.mockClear();
+        await nav('next');
+        expect(json()).toContain('按「新增 API Key」');
+        expect(mocks.apiPage).toHaveBeenCalledOnce();
+        expect(mocks.signPage).not.toHaveBeenCalled();
+        // 官網已在 API 管理頁時，卡片的上一步／下一步不動官網
+        await emit({ kind: 'step', step: 'list' });
+        mocks.apiPage.mockClear();
+        await nav('prev');
+        await nav('next');
+        await nav('next');
+        expect(mocks.apiPage).not.toHaveBeenCalled();
+    });
+
+    it('can be switched off in the guide header or from the page, and remembers it', async () => {
+        await open();
+        expect(lastCard()).not.toBeNull();
+        await act(async () => button('網頁說明')!.props.onClick());
+        expect(lastCard()).toBeNull();
+        expect(store.get('sjpro.applyGuide.pageCard')).toBe('0');
+        expect(button('網頁說明')!.props['aria-pressed']).toBe(false);
+        // 關掉時頁面上的按鈕（或假造的回報）不移動導覽
+        await nav('next');
+        expect(json()).toContain('登入永豐金證券網站');
+        await act(async () => button('網頁說明')!.props.onClick());
+        expect(lastCard()).toMatchObject({ title: '登入永豐金證券網站' });
+        expect(store.has('sjpro.applyGuide.pageCard')).toBe(false);
+        await nav('hide');
+        expect(lastCard()).toBeNull();
+        expect(store.get('sjpro.applyGuide.pageCard')).toBe('0');
+        // 重新開 App：記住關掉
+        await act(async () => view!.unmount()); view = undefined; mocks.card.mockClear();
+        await open();
+        expect(mocks.card).toHaveBeenLastCalledWith(null);
+        expect(button('網頁說明')!.props['aria-pressed']).toBe(false);
+    });
+
+    it('moves from the latest step when several page presses arrive before a redraw', async () => {
+        await open();
+        await act(async () => { mocks.handler!({ kind: 'nav', action: 'next' }); mocks.handler!({ kind: 'nav', action: 'next' }); });
+        expect(json()).toContain('按「新增 API Key」');
+        await emit({ kind: 'step', step: 'success' });
+        // 金鑰剛載入、同一批又來一個「上一步」：完成頁不被蓋掉
+        await act(async () => {
+            mocks.handler!({ kind: 'imported', profileId: 'p1', name: 'ShioajiPro', duplicate: false });
+            mocks.handler!({ kind: 'nav', action: 'prev' });
+        });
+        expect(json()).toContain('金鑰已載入');
+    });
+
+    it('adds up page and app presses that arrive in the same batch', async () => {
+        await open();
+        // 從登入：網頁「下一步」＋ App「下一步」＝前進兩步
+        await act(async () => { mocks.handler!({ kind: 'nav', action: 'next' }); button('下一步')!.props.onClick(); });
+        expect(json()).toContain('按「新增 API Key」');
+        // 網頁「下一步」＋ App「上一步」＝留在原地
+        await act(async () => { mocks.handler!({ kind: 'nav', action: 'next' }); button('上一步')!.props.onClick(); });
+        expect(json()).toContain('按「新增 API Key」');
+    });
+
+    it('ignores page presses that arrive after the card was closed in the same batch', async () => {
+        await open();
+        await act(async () => { mocks.handler!({ kind: 'nav', action: 'hide' }); mocks.handler!({ kind: 'nav', action: 'next' }); });
+        expect(json()).toContain('登入永豐金證券網站');
+        expect(lastCard()).toBeNull();
+    });
+
+    it('keeps the same limits as the app buttons', () => {
+        expect(pageNavStep('login', 'prev', false)).toBe('login');
+        expect(pageNavStep('login', 'next', false)).toBe('sign');
+        expect(pageNavStep('success', 'next', false)).toBe('success');
+        expect(pageNavStep('success', 'next', true)).toBe('imported');
+        expect(pageNavStep('imported', 'prev', true)).toBe('imported');
+        expect(pageNavStep('start', 'next', false)).toBe('start');
+        expect(pageNavStep('form', 'prev', false)).toBe('verify');
+    });
+
+    it('carries the app theme and text size', async () => {
+        await open();
+        // 預設：深色、標準字級
+        expect(lastCard()).toMatchObject({ theme: 'dark', large: false });
     });
 });

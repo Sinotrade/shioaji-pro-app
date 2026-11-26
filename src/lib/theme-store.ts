@@ -149,6 +149,8 @@ export function useThemeSettings(): ThemeSettings {
             return () => listeners.delete(l);
         },
         () => settings,
+        // server render (tests render some screens to a string): same settings
+        () => settings,
     );
 }
 

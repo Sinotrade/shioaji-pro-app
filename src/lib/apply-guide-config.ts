@@ -307,3 +307,54 @@ export function signTargetId(step: ApplyPageStep | null, point: string): string 
 export function isApplyPageStep(value: unknown): value is ApplyPageStep {
     return typeof value === 'string' && APPLY_PAGE_RULES.steps.some(rule => rule.id === value);
 }
+
+// ── 網頁上的說明卡 ───────────────────────────────────────────────────
+// 申請視窗的注入腳本把目前這一步的說明畫在官網上、黃色框旁邊（見 apply-guide-native.ts 的
+// setApplyGuideCard）。內容由這裡的文案產生；原生殼（apply_window.rs）會再驗證一次。
+
+/** 說明卡的一項：網頁上框起其中一個 targets 時，卡片顯示這一項。 */
+export interface ApplyGuideCardPoint { targets: string[]; title: string; body: string; tone?: 'recommend' | 'caution' }
+export interface ApplyGuideCard {
+    /** 「第 2 步，共 6 步：登入」或「全部完成」 */
+    progress: string;
+    title: string;
+    lead: string;
+    points: ApplyGuideCardPoint[];
+    canPrev: boolean;
+    canNext: boolean;
+    theme: 'light' | 'dark';
+    large: boolean;
+}
+
+/** 原生殼的上限（apply_window.rs GuideCard::validate）；文案超過時整張卡會被拒絕。 */
+export const CARD_LIMITS = { progress: 40, title: 100, lead: 400, pointTitle: 100, pointBody: 600, points: 16, targets: 8 } as const;
+
+// 簽署頁上沒有對應說明的目標，顯示同一段說明（「下載副本」那段也說了要勾確認；「勾選帳戶後按簽署」也說了勾帳戶）
+const SIGN_POINT_ALSO: Record<string, string[]> = { download: ['confirm'], button: ['accounts'] };
+
+const GUIDE_SITE_STEPS: GuideStep[] = GUIDE_ORDER.filter(step => step !== 'start');
+
+/** 進度文字（同導覽進度列）。 */
+export function guideProgressText(step: GuideStep): string {
+    if (step === 'imported') return '全部完成';
+    return `第 ${GUIDE_SITE_STEPS.indexOf(step) + 1} 步，共 ${GUIDE_SITE_STEPS.length - 1} 步：${GUIDE_COPY[step].label}`;
+}
+
+function cardTargets(step: GuideStep, target: string): string[] {
+    if (step !== 'sign') return [target];
+    return [target, ...SIGN_POINT_ALSO[target] ?? []].flatMap(name => SIGNING_MARKETS.map(market => `${SIGN_STEPS[market]}-${name}`));
+}
+
+/** 導覽這一步要送到網頁上的說明卡；只放有網頁目標的項目。 */
+export function guideCardOf(step: GuideStep, options: { canPrev: boolean; canNext: boolean; theme: 'light' | 'dark'; large: boolean }): ApplyGuideCard {
+    const copy = GUIDE_COPY[step];
+    const points: ApplyGuideCardPoint[] = copy.points.flatMap(point => point.target
+        ? [{ targets: cardTargets(step, point.target), title: point.title, body: point.body, ...(point.tone ? { tone: point.tone } : {}) }]
+        : []);
+    if (step === 'imported') {
+        for (const item of PRODUCTION_NEXT_STEPS) {
+            if (item.target) points.push({ targets: [item.target], title: item.title, body: item.body });
+        }
+    }
+    return { progress: guideProgressText(step), title: copy.title, lead: copy.lead, points, ...options };
+}
