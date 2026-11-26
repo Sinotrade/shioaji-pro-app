@@ -1,17 +1,20 @@
 // src/lib/us/us-halts.ts — 美股停牌（halt book）
 //
-// SDK 1.8.0b1：POST /api/v1/stream/subscribe/us_halt 開始收停牌事件；
+// SDK 1.8.0：POST /api/v1/stream/subscribe/halt_stk_us 開始收停牌事件（1.8.0b1–b3 叫
+// subscribe/us_halt；新路徑 404／405 就退回舊路徑，見 us-stream-names.ts）；
 // GET /api/v1/stream/us_halts 回目前停牌中的項目（全市場、交易所、個股）。
 // halt book 只知道訂閱之後收到的事件。這裡用輪詢 us_halts（不多開一條
 // SSE 連線），所以狀態最多慢 US_HALT_POLL_MS。
 
 import { useEffect, useSyncExternalStore } from 'react';
-import { apiGet, apiPost } from '../api';
+import { apiGet } from '../api';
 import { registerCapabilitySubscription } from '../stream';
+import { postUsStreamAction } from './us-stream-names';
 
 export const US_HALT_POLL_MS = 15_000;
 export const US_HALTS_PATH = '/api/v1/stream/us_halts';
-export const US_HALT_CAPABILITY = 'us_halt';
+/** 重連重播的 registry key 與路徑（stream.ts 重播時依 sidecar 換成實際名稱） */
+export const US_HALT_CAPABILITY = 'halt_stk_us';
 
 export interface UsHaltEntry {
     scope: 'Symbol' | 'Exchange' | 'Market' | 'Unknown';
@@ -52,7 +55,7 @@ async function poll() {
 
 function subscribe(): Promise<void> {
     if (!subscribing) {
-        subscribing = apiPost<{ success: boolean }>(`/api/v1/stream/subscribe/${US_HALT_CAPABILITY}`, {})
+        subscribing = postUsStreamAction<{ success: boolean }>('subscribe', 'halt', {})
             .then(() => { registerCapabilitySubscription(US_HALT_CAPABILITY, US_HALT_CAPABILITY, {}); })
             .catch(() => { subscribing = null; });
     }

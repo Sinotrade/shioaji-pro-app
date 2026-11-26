@@ -18,7 +18,8 @@ import { forgetServerInfo, knownServerInfo } from './server-info-store';
 import { createSharedStream, type StreamWire } from './shared-stream';
 import { invalidateTradingMirror } from './trading-mirror-lease';
 import { invalidateProductCatalog } from './product-catalog-version';
-import { normalizeUsBidAsk, normalizeUsTick, recordUsTick, US_BIDASK_EVENT, US_STREAM_PATHS, US_TICK_EVENT, type RawUsBidAsk, type RawUsTick } from './us/us-quotes';
+import { normalizeUsBidAsk, normalizeUsTick, recordUsTick, type RawUsBidAsk, type RawUsTick } from './us/us-quotes';
+import { postUsStreamAction, probeUsStreamPath, usStreamDataPath, usStreamEventNames, usStreamKindOfEvent, US_STREAM_LEGACY_NAMES, US_STREAM_NAMES } from './us/us-stream-names';
 import { isUsTickFullRejection, isUsTickRegistryKey, noteUsTickFullRejected, rememberUsTickWire, usTickFullKnownAbsent, usTickWire, type UsTickWire } from './us/us-tick-wire';
 import { subscribeUsTickDetail } from './us/us-tick-prefs';
 
@@ -200,7 +201,8 @@ function handleUsBidAsk(raw: string) {
     if (bidask) ingestBidAsk(bidask);
 }
 
-// 美股行情走獨立 SSE（/stream/data/us_tick、/us_bidask），只在有美股訂閱時
+// 美股行情走獨立 SSE（/stream/data/tick_stk_us、/bidask_stk_us；1.8.0 前是 us_tick、
+// us_bidask，新路徑 404 就退回舊路徑，見 us-stream-names.ts），只在有美股訂閱時
 // 由串流擁有者開啟；收到的事件照樣轉給彈出視窗（shared publish）。
 let usStreamRefs = 0;
 /** 其他（非擁有者）視窗有美股訂閱：擁有者要替它們開美股 SSE 並轉送事件 */
@@ -229,32 +231,53 @@ export function onUsTickStreamReset(listener: () => void) {
     };
 }
 
+const US_QUOTE_STREAM_KINDS = ['tick', 'bidask'] as const;
+/**
+ * 這一輪斷線已經用掉「換名稱後馬上重開」：新舊路徑都 404（例如代理兩個都沒有）時，
+ * 之後只照 3 秒重連計時，不會一直互換名稱馬上重開。任一條美股 SSE 開成功或關掉美股
+ * 串流時重置。
+ */
+let usNameFallbackReopened = false;
+
 function openUsStreams() {
     if (!usWanted() || typeof EventSource === 'undefined') return;
     if (shared && !shared.isOwner()) return;
     if (serverUrlBlocked(getStreamBase()) !== null) { scheduleUsReopen(); return; }
-    for (const [name, path] of Object.entries(US_STREAM_PATHS)) {
-        if (usSources.has(name)) continue;
-        const source = new EventSource(`${getStreamBase()}${path}`);
-        source.addEventListener(name, (event) => {
-            const raw = (event as MessageEvent).data as string;
-            shared?.publish({ kind: 'event', name, raw });
-            if (name === US_TICK_EVENT) handleUsTick(raw); else handleUsBidAsk(raw);
-        });
+    for (const kind of US_QUOTE_STREAM_KINDS) {
+        if (usSources.has(kind)) continue;
+        const base = getApiBase();
+        const source = new EventSource(`${getStreamBase()}${usStreamDataPath(kind, base)}`);
+        let opened = false;
+        // 新舊事件名稱都收：sidecar 只會用其中一個名字送
+        for (const name of usStreamEventNames(kind)) {
+            source.addEventListener(name, (event) => {
+                const raw = (event as MessageEvent).data as string;
+                shared?.publish({ kind: 'event', name, raw });
+                if (kind === 'tick') handleUsTick(raw); else handleUsBidAsk(raw);
+            });
+        }
         source.onerror = () => {
             source.close();
-            usSources.delete(name);
-            if (name === US_TICK_EVENT) { usTickStreamDropped = true; broadcastUsTickStreamReset(); }
+            if (usSources.get(kind) === source) usSources.delete(kind);
+            if (kind === 'tick') { usTickStreamDropped = true; broadcastUsTickStreamReset(); }
+            // 從沒開成功：可能是 sidecar 不認得這套名稱（404），查一次，換了名稱就馬上重開
+            if (!opened) {
+                void probeUsStreamPath(kind, base).then((switched) => {
+                    if (!switched || usNameFallbackReopened || !usWanted() || usSources.has(kind)) return;
+                    usNameFallbackReopened = true;
+                    openUsStreams();
+                });
+            }
             scheduleUsReopen();
         };
-        if (name === US_TICK_EVENT) {
-            source.onopen = () => {
-                if (!usTickStreamDropped) return;
-                usTickStreamDropped = false;
-                broadcastUsTickStreamReset();
-            };
-        }
-        usSources.set(name, source);
+        source.onopen = () => {
+            opened = true;
+            usNameFallbackReopened = false;
+            if (kind !== 'tick' || !usTickStreamDropped) return;
+            usTickStreamDropped = false;
+            broadcastUsTickStreamReset();
+        };
+        usSources.set(kind, source);
     }
 }
 
@@ -283,6 +306,7 @@ export function retainUsQuoteStreams(): () => void {
 function closeUsStreams() {
     usSources.forEach(source => source.close());
     usSources.clear();
+    usNameFallbackReopened = false;
     if (usReopenTimer) { clearTimeout(usReopenTimer); usReopenTimer = null; }
 }
 
@@ -787,10 +811,13 @@ async function replayOnce(onlyCapabilities = false) {
     for (const { path, body } of [...capabilityRegistry.values()]) {
         await pace();
         try {
-            const response = await apiPost<{ success: boolean; message: string }>(
-                `/api/v1/stream/subscribe/${path}`,
-                body,
-            );
+            // 美股停牌：依 sidecar 用新（halt_stk_us）或舊（us_halt）名稱，404／405 自動換
+            const response = usStreamKindOfEvent(path) === 'halt'
+                ? await postUsStreamAction<{ success: boolean; message: string }>('subscribe', 'halt', body)
+                : await apiPost<{ success: boolean; message: string }>(
+                    `/api/v1/stream/subscribe/${path}`,
+                    body,
+                );
             if (!response.success) throw new Error(response.message);
         } catch {
             failed = true;
@@ -1010,8 +1037,8 @@ function dispatchWire(wire: StreamWire) {
     if (name === 'tick_stk' || name === 'tick_fop') handleTick(raw);
     else if (name === 'bidask_stk' || name === 'bidask_fop') handleBidAsk(raw);
     else if (name === 'quote_idx') handleIndexQuote(raw);
-    else if (name === US_TICK_EVENT) handleUsTick(raw);
-    else if (name === US_BIDASK_EVENT) handleUsBidAsk(raw);
+    else if (name === US_STREAM_NAMES.tick || name === US_STREAM_LEGACY_NAMES.tick) handleUsTick(raw);
+    else if (name === US_STREAM_NAMES.bidask || name === US_STREAM_LEGACY_NAMES.bidask) handleUsBidAsk(raw);
     else if (name === 'order_event') handleOrderEvent(raw);
     else if (name === 'contract_event') {
         const change = JSON.parse(raw) as ContractChangeEvent;

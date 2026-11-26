@@ -1,7 +1,7 @@
 // src/components/depth-ladder.tsx — 5-level bid/ask "energy bars".
 // Clicking a price loads it into the order ticket.
 //
-// 美股（region US）走同一個元件：行情只有最佳一檔（us_bidask），只畫一列；
+// 美股（region US）走同一個元件：行情只有最佳一檔（bidask_stk_us），只畫一列；
 // 即時一檔到達前用美股快照的買賣價墊底（標「快照一檔」）。美股下單面板
 // 不接點價帶入，美股價格不可點。
 
