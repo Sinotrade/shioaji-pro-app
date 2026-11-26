@@ -49,7 +49,9 @@ it('toggles each event switch independently', async () => {
 it('clamps the rate and the cooldown into range', async () => {
     const m = await import('./broadcast-settings');
     m.setBroadcastSettings({ rate: 99, cooldownSec: -5 });
-    expect(m.getBroadcastSettings().rate).toBe(10);
+    // 語速上限已從 10 放寬到 20（Web Speech 對應 3.0 倍），下限不變
+    expect(m.getBroadcastSettings().rate).toBe(m.RATE_MAX);
+    expect(m.getBroadcastSettings().rate).toBe(20);
     expect(m.getBroadcastSettings().cooldownSec).toBe(0);
     m.setBroadcastSettings({ rate: -99, cooldownSec: 999 });
     expect(m.getBroadcastSettings().rate).toBe(-10);

@@ -5,7 +5,7 @@
 //
 // 沿用 repo 既有的 useSyncExternalStore 寫法（見 toast-prefs.ts / privacy.ts）。
 //
-// 註：語速是「抽象刻度 -10~10」，各 engine 自行映射成自己的語意
+// 註：語速是「抽象刻度 -10~20」，各 engine 自行映射成自己的語意
 // （見 lib/tts/web-speech-engine.ts 的 rateToSpeed）。共用層不做映射。
 
 import { useSyncExternalStore } from 'react';
@@ -13,7 +13,12 @@ import { useSyncExternalStore } from 'react';
 export interface BroadcastSettings {
     /** 總開關 */
     enabled: boolean;
-    /** 語速，-10 ~ 10（沿用 WPF 的刻度，0 = 正常） */
+    /**
+     * 語速，-10 ~ 20（沿用 WPF 的刻度，0 = 正常，每格約 10%）。
+     * 上限從 10 放寬到 20：舊的 ±10 在 Web Speech 只到 2.0 倍，
+     * 而 engine 本來就允許到 3.0 倍（見 rateToSpeed）。既有使用者的
+     * rate=10 仍然是 2.0 倍，行為不變，只是多了更快的檔位。
+     */
     rate: number;
     /** 冷卻秒數，0 ~ 60；只對「沒有狀態詞」的一般播報生效 */
     cooldownSec: number;
@@ -42,7 +47,7 @@ export const DEFAULT_SETTINGS: BroadcastSettings = {
 };
 
 export const RATE_MIN = -10;
-export const RATE_MAX = 10;
+export const RATE_MAX = 20;
 export const COOLDOWN_MIN = 0;
 export const COOLDOWN_MAX = 60;
 

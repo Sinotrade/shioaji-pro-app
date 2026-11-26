@@ -11,7 +11,7 @@
 import type { TtsEngine, TtsProbe, TtsSpeakOptions, TtsVoice } from './tts-engine';
 
 /**
- * 抽象語速刻度（-10~10，0 = 正常）→ Web Speech 的倍率（1 = 正常）。
+ * 抽象語速刻度（-10~20，0 = 正常）→ Web Speech 的倍率（1 = 正常）。
  * WPF 的 SpeechSynthesizer.Rate 每格約 10%，這裡採同樣的近似比例。
  *
  * 為什麼放在 engine 裡而不是共用層：各平台的「語速」語意不同
@@ -19,7 +19,8 @@ import type { TtsEngine, TtsProbe, TtsSpeakOptions, TtsVoice } from './tts-engin
  * 映射是平台相關的，必須各做各的。
  */
 export function rateToSpeed(rate: number): number {
-    const normalized = Math.min(10, Math.max(-10, rate));
+    // 刻度上限 20 → 倍率 3.0；舊刻度 10 → 2.0，所以放寬不影響既有設定值。
+    const normalized = Math.min(20, Math.max(-10, rate));
     return Math.min(3, Math.max(0.1, 1 + normalized * 0.1));
 }
 
