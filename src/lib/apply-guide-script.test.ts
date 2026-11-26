@@ -252,7 +252,7 @@ describe.skipIf(!hasScript)('apply window guide card', () => {
         // 框起「新增 API Key」：卡片顯示那一項
         expect(text(page.card()!.querySelector('.title'))).toBe('按「新增APIKey」'); // 「」只給讀螢幕軟體
         expect(page.card()!.querySelector('.title .chip')!.textContent).toContain('新增 API Key');
-        expect(text(page.card()!.querySelector('.progress'))).toBe('第3步，共6步：API管理');
+        expect(text(page.card()!.querySelector('.progress'))).toBe('第3步，共6步：API管理・第1／2項');
         expect(text(page.card())).toContain('黃色框就是這一項的位置');
         // App 要標示「下載憑證」：卡片跟著換
         page.focus('download-ca');
@@ -318,7 +318,8 @@ describe.skipIf(!hasScript)('apply window guide card', () => {
     });
 
     it('reports the buttons through the title marker only, without touching the site', () => {
-        const page = load(LIST_URL, listPage(), false, { rect: layout, viewport: VIEW });
+        // 只有「新增 API Key」：沒有同一步的下一項，下一步交給 App
+        const page = load(LIST_URL, '<div class="ant-table-title"><button data-rect="900,20,140,40">新增 API Key</button></div>', false, { rect: layout, viewport: VIEW });
         let siteClicks = 0;
         for (const type of ['click', 'pointerdown', 'mousedown', 'keydown']) page.win.document.addEventListener(type, () => { siteClicks++; });
         page.guide.card(CARD_KEY, guideCardOf('list', { ...options, canPrev: false }));
@@ -355,8 +356,36 @@ describe.skipIf(!hasScript)('apply window guide card', () => {
         expect(siteClicks).toBe(0);
     });
 
+    it('walks through the points of a step on the page before leaving it', () => {
+        const field = (y: number, attrs: string) => `<input ${attrs} data-rect="300,${y},400,32" />`;
+        const html = `<div class="ant-modal" data-rect="260,100,520,600"><div class="ant-modal-title">新增 API KEY</div>
+            ${field(200, 'id="apiKeyName"')}${field(250, 'id="expireTime"')}<button data-rect="300,600,80,32">確定</button></div>`;
+        const page = load(LIST_URL, html, false, { rect: layout, viewport: VIEW });
+        page.guide.card(CARD_KEY, guideCardOf('form', options));
+        const title = () => text(page.card()!.querySelector('.title'));
+        const buttons = () => [...page.card()!.querySelectorAll('.foot button')] as unknown as HTMLButtonElement[];
+        expect(title()).toBe('APIKey名稱');
+        expect(text(page.card()!.querySelector('.progress'))).toContain('第1／');
+        // 下一步：框移到下一個找得到的欄位，不通知 App
+        buttons()[1]!.click();
+        expect(title()).toBe('到期時間');
+        expect(page.nav()).toBeNull();
+        expect(page.highlighted().map(el => el.id)).toEqual(['expireTime']);
+        // 頁面上找不到的項目（權限、帳戶、IP）跳過，直接到「確定」
+        buttons()[1]!.click();
+        expect(title()).toBe('按「確定」');
+        expect(page.nav()).toBeNull();
+        // 上一步回到前一個欄位
+        buttons()[0]!.click();
+        expect(title()).toBe('到期時間');
+        buttons()[1]!.click();
+        // 最後一項再按下一步：交給 App 換下一步
+        buttons()[1]!.click();
+        expect(page.nav()).toMatch(/^next\.\d+$/);
+    });
+
     it('drops the button marker from the title after a moment and keeps the site title', async () => {
-        const page = load(LIST_URL, listPage(), false, { rect: layout, viewport: VIEW });
+        const page = load(LIST_URL, '<div class="ant-table-title"><button data-rect="900,20,140,40">新增 API Key</button></div>', false, { rect: layout, viewport: VIEW });
         page.guide.card(CARD_KEY, guideCardOf('list', options));
         (page.card()!.querySelectorAll('.foot button')[1] as unknown as HTMLButtonElement).click();
         expect(page.win.document.title.startsWith('簽署中心' + NAV_MARK)).toBe(true);
