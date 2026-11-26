@@ -483,9 +483,12 @@ export function debugDecision(
         const t = { ...target(code) };
         t.lastStatus = result.status || '（一般報價，無狀態詞）';
         if (result.speak) {
-            t.lastSpokeText = result.text;
-            t.lastSpokeAt = Date.now();
-            d.counters.spoke += 1;
+            // 這裡刻意**不**計入 counters.spoke、也**不**寫 lastSpokeText：
+            // 「判定要念」不等於「真的念了」——進佇列後還可能被去重擋下或過時丟棄。
+            // 實測（broadcast-trace-20261126-211647.txt，200 行窗口）：
+            // 判定要念 34 次，真正 speak 只有 7 次。若兩處都 +1，面板的「已播」
+            // 會把「想播」加進「已播」，使用者看到的數字就不是事實。
+            // 這兩個欄位只由 debugSpoke()（佇列真正發聲時）更新。
             if (!result.status) d.counters.generalQuotes += 1;
         } else {
             t.lastSkipReason = result.reason;

@@ -4,6 +4,7 @@ import {
     debugDecision,
     debugNoQuote,
     debugQuoteArrived,
+    debugSpoke,
     debugSubscribed,
     formatBroadcastTrace,
     getBroadcastDebug,
@@ -110,6 +111,25 @@ describe('語音播報 trace', () => {
         debugNoQuote('2330', 'x');
         debugNoQuote('2330', 'x');
         expect(formatBroadcastTrace()).toContain('(×2)');
+    });
+
+    it('「已播」只算真正發聲，判定要念不算（實測 trace 抓到的計數謊報）', () => {
+        // 實測 200 行窗口：判定要念 34 次、真正 speak 只有 7 次。
+        // counters.spoke 若在「判定」與「發聲」兩處都 +1，數字就不是事實。
+        const readSpoke = () =>
+            Number(formatBroadcastTrace().match(/已播 (\d+)/)?.[1] ?? -1);
+        const before = readSpoke();
+        expect(before).toBeGreaterThanOrEqual(0);
+
+        debugDecision('2330', {
+            status: '創新高',
+            speak: true,
+            text: '台積電 創新高 1900',
+        });
+        expect(readSpoke()).toBe(before); // 只是「決定要念」→ 不算已播
+
+        debugSpoke('台積電 創新高 1900', '2330');
+        expect(readSpoke()).toBe(before + 1); // 真正發聲 → 才算
     });
 
     it('trace 是旁路：記錄不改變既有的計數與開關狀態', () => {
