@@ -337,8 +337,8 @@ export function BroadcastPanel({ codes, onCodesChange }: BroadcastPanelProps) {
                         ⚠ 有 {noQuoteTargets.length} 個商品（{noQuoteTargets
                             .map((t) => t.code)
                             .join('、')}）已訂閱但沒有即時報價 ——
-                        當下可能不是這些商品的交易時段（台股盤中 09:00–13:30、
-                        盤後定價 14:00–14:30；期貨另有夜盤）。
+                        可能是這些商品當下沒有成交，或不在交易時段（台股盤中
+                        09:00–13:30、盤後定價 14:00–14:30；期貨另有夜盤）。
                         模擬與正式環境的行情覆蓋相同，這些商品不會語音播報。
                     </span>
                 )}
