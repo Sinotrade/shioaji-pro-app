@@ -12,6 +12,7 @@ import type { TtsEngine } from '../tts';
 import {
     debugDuplicateSuppressed,
     debugDroppedStale,
+    debugSpeakFailed,
     debugQueuePending,
     debugSpeakingDone,
     debugSpoke,
@@ -118,6 +119,7 @@ export class BroadcastQueue {
                     debugDroppedStale(message.symbolCode);
                     continue;
                 }
+                const startedAt = this.now();
                 try {
                     debugSpoke(message.text, message.symbolCode);
                     // ★ 在 await 之前回報：這一句確定要念了（冷卻／去重擋下的句子
@@ -125,10 +127,15 @@ export class BroadcastQueue {
                     // 讓面板「立刻」看到目前正在播的內容。
                     this.onSpeak?.(message.text, message.symbolCode);
                     await this.engine.speak(message.text);
-                    debugSpeakingDone();
-                } catch {
-                    // 單次發音失敗不影響後續的句子
-                    debugSpeakingDone();
+                    debugSpeakingDone(this.now() - startedAt);
+                } catch (err) {
+                    // 單次發音失敗不影響後續的句子 —— 但**不可以靜默吞掉**：
+                    // 記進 trace，否則使用者只會覺得「怎麼沒聲音」。
+                    debugSpeakFailed(
+                        err instanceof Error ? err.message : String(err),
+                        this.now() - startedAt,
+                    );
+                    debugSpeakingDone(this.now() - startedAt);
                 }
             }
         } finally {

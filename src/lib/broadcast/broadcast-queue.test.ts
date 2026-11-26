@@ -54,6 +54,34 @@ it('announces the same sentence for different symbols', async () => {
     expect(spoken).toEqual(['漲停', '漲停']);
 });
 
+it('一句發聲失敗不會讓後面的句子停擺（失敗要記錄，不可靜默吞掉）', async () => {
+    const spoken: string[] = [];
+    const engine: TtsEngine = {
+        id: 'fake-failing',
+        available: true,
+        probe: async () => ({ available: true }),
+        get speaking() {
+            return false;
+        },
+        speak(text: string) {
+            spoken.push(text);
+            // 模擬 Web Speech 的 onerror（例如被系統打斷）
+            return text.includes('失敗')
+                ? Promise.reject(new Error('interrupted'))
+                : Promise.resolve();
+        },
+        cancelAll() {},
+        listVoices: () => [],
+    };
+    const queue = new BroadcastQueue(engine);
+    queue.enqueue('這句會失敗', { symbolCode: '2330' });
+    queue.enqueue('這句要念出來', { symbolCode: '2317' });
+    await flush();
+    await flush();
+    await flush();
+    expect(spoken).toEqual(['這句會失敗', '這句要念出來']);
+});
+
 it('drops a queued announcement that went stale while waiting', async () => {
     let now = 0;
     const { engine, spoken, finish } = makeEngine();

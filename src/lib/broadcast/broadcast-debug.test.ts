@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import {
     clearBroadcastTrace,
     debugDecision,
+    debugSpeakFailed,
+    debugSpeakingDone,
     isBroadcastTraceEnabled,
     setBroadcastTraceEnabled,
     debugNoQuote,
@@ -134,6 +136,26 @@ describe('語音播報 trace', () => {
         expect(trace).toHaveLength(2);
         expect(trace.at(0)?.text).toContain('不念');
         expect(trace.at(-1)?.text).toContain('念 «');
+    });
+
+    it('念完要帶秒數；異常短的發聲會被標成可疑', () => {
+        // 實測出現過 speak → speak-done 只隔 27ms（正常一句約 1.9 秒）
+        debugSpeakingDone(27);
+        debugSpeakingDone(1900);
+        const trace = getBroadcastTrace();
+        expect(trace).toHaveLength(2);
+        expect(trace.at(0)?.text).toContain('可疑');
+        expect(trace.at(0)?.text).toContain('27ms');
+        expect(trace.at(-1)?.text).toContain('1.9 秒');
+    });
+
+    it('發聲失敗會留下原因，不是靜默吞掉', () => {
+        debugSpeakFailed('interrupted', 27);
+        const trace = getBroadcastTrace();
+        expect(trace).toHaveLength(1);
+        expect(trace.at(0)?.kind).toBe('speak-error');
+        expect(trace.at(0)?.text).toContain('interrupted');
+        expect(trace.at(0)?.text).toContain('27ms');
     });
 
     it('折疊的次數會出現在匯出文字裡', () => {

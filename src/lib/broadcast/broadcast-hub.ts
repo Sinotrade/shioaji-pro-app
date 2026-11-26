@@ -103,7 +103,7 @@ function getQueue(): BroadcastQueue {
  * 把「目前的全域設定」（語速、語音）注入每次發聲 ——
  * 使用者在設定面板調整語速後，下一句就用新語速，不用重開面板。
  *
- * rate 傳的是「抽象刻度 -10~10」，各 engine 自行映射成自己的語意。
+ * rate 傳的是「抽象刻度 -10~20」，各 engine 自行映射成自己的語意。
  */
 function createSettingsAwareEngine(): TtsEngine {
     const engine = getTtsEngine();

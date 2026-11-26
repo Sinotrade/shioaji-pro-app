@@ -114,7 +114,7 @@ export function createWebSpeechEngine(): TtsEngine {
         },
 
         speak(text: string, options?: TtsSpeakOptions): Promise<void> {
-            return new Promise<void>((resolve) => {
+            return new Promise<void>((resolve, reject) => {
                 if (!text.trim()) {
                     resolve();
                     return;
@@ -126,19 +126,32 @@ export function createWebSpeechEngine(): TtsEngine {
                 const voice = pickVoice(voices, options?.voiceUri);
                 if (voice) utterance.voice = voice;
 
-                const finish = () => {
+                const settle = () => {
                     if (current?.utterance === utterance) current = null;
+                };
+                utterance.onend = () => {
+                    settle();
                     resolve();
                 };
-                utterance.onend = finish;
                 utterance.onerror = (event) => {
-                    // 不要靜默吞掉：語音失敗（例如瀏覽器未啟用語音、找不到語音）
-                    // 使用者只會看到「沒反應」，這裡留一行告警方便追查。
-                    console.warn('[tts] 語音播放失敗', event);
-                    finish();
+                    // 不要靜默吞掉：把原因往上拋。語音失敗（瀏覽器未啟用語音、
+                    // 找不到語音、被系統打斷）使用者只會覺得「沒聲音」，
+                    // 只有把 reason 傳到上層，診斷層才寫得出「為什麼沒念」。
+                    const reason =
+                        (event as SpeechSynthesisErrorEvent).error || 'tts-error';
+                    console.warn('[tts] 語音播放失敗', reason, event);
+                    settle();
+                    reject(new Error(reason));
                 };
 
-                current = { utterance, resolve: finish };
+                // cancelAll() 會呼叫這個 resolve（取消不是錯誤，要正常收斂）
+                current = {
+                    utterance,
+                    resolve: () => {
+                        settle();
+                        resolve();
+                    },
+                };
                 synth.speak(utterance);
             });
         },

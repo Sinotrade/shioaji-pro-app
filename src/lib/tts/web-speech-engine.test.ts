@@ -1,7 +1,7 @@
 import { expect, it } from 'vitest';
 import { rateToSpeed } from './web-speech-engine';
 
-it('maps the abstract rate scale (-10~10) onto the Web Speech speed', () => {
+it('maps the abstract rate scale (-10~20) onto the Web Speech speed', () => {
     expect(rateToSpeed(0)).toBeCloseTo(1);
     expect(rateToSpeed(4)).toBeCloseTo(1.4);
     expect(rateToSpeed(10)).toBeCloseTo(2); // 舊上限：2.0 倍（既有設定值不受影響）

@@ -205,6 +205,7 @@ export type BroadcastTraceKind =
     | 'decision'
     | 'speak'
     | 'speak-done'
+    | 'speak-error'
     | 'no-quote'
     | 'quote-arrived'
     | 'deal'
@@ -555,8 +556,25 @@ export function debugSpoke(text: string, code: string) {
     });
 }
 
-export function debugSpeakingDone() {
-    pushTrace('speak-done', '念完');
+/**
+ * 一句話念完。
+ *
+ * `elapsedMs` 是「從送出到真的結束」的時間，用來抓「假念完」：
+ * 實測（broadcast-trace-20261126-213424.txt:28-29）出現過 speak → speak-done
+ * 只隔 **27ms**，而同一句話正常要 1.9 秒。那種情況多半是被中斷或根本沒發聲，
+ * 但沒有秒數就完全看不出來，所以這裡把它寫進 trace。
+ */
+export function debugSpeakingDone(elapsedMs?: number) {
+    if (elapsedMs === undefined) {
+        pushTrace('speak-done', '念完');
+    } else if (elapsedMs < 300) {
+        pushTrace(
+            'speak-done',
+            `念完，但只花 ${elapsedMs}ms —— 可疑：可能被中斷或沒真的發聲（正常一句約 1～2 秒）`,
+        );
+    } else {
+        pushTrace('speak-done', `念完（${(elapsedMs / 1000).toFixed(1)} 秒）`);
+    }
     update((d) => {
         d.queue.speakingText = undefined;
         d.queue.speakingSince = undefined;
@@ -567,6 +585,13 @@ export function debugQueuePending(n: number) {
     update((d) => {
         d.queue.pending = n;
     });
+}
+
+export function debugSpeakFailed(reason: string, elapsedMs?: number) {
+    pushTrace(
+        'speak-error',
+        `${reason}${elapsedMs === undefined ? '' : `（${elapsedMs}ms 後失敗）`}`,
+    );
 }
 
 export function debugDroppedStale(code?: string) {
