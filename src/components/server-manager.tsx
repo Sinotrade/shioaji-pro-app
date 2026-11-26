@@ -1196,8 +1196,11 @@ export function ServerManager({
                 onClose={() => setGuideRequest(undefined)}
                 onChanged={() => { void loadDesktopSettings().then(setSettings).catch(() => undefined); }}
                 onOpenAccount={profileId => {
-                    setEditProfileId(profileId || undefined); setReadyLines([]);
-                    toggleRef.current(true); setSettingsOpen(true);
+                    // 先讀最新的帳號資料（剛設定的憑證路徑），編輯畫面才不會帶著舊的路徑存回去
+                    void loadDesktopSettings().then(setSettings).catch(() => undefined).finally(() => {
+                        setEditProfileId(profileId || undefined); setReadyLines([]);
+                        toggleRef.current(true); setSettingsOpen(true);
+                    });
                 }} />}
         </div>
     );

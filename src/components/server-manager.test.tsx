@@ -356,7 +356,10 @@ describe('credential profiles in server settings', () => {
         expect(text()).toContain('要在官網上做什麼？');
         expect(mocks.guideOpen).not.toHaveBeenCalled();
         // 導覽要求到帳號設定輸入憑證密碼：直接打開那個帳號的編輯畫面
+        const reads = mocks.load.mock.calls.length;
         await act(async () => view.root.findByType(ApplyGuidePanel).props.onOpenAccount('two'));
+        // 先重新讀帳號資料（剛設定的憑證路徑）再打開編輯畫面
+        expect(mocks.load.mock.calls.length).toBeGreaterThan(reads);
         expect(view.root.findByType(ServerSettingsDialog).props.initialEditId).toBe('two');
         expect(view.root.findByType(CredentialProfiles).findAllByType('input').length).toBeGreaterThan(0);
         expect(view.root.findByType(ApplyGuidePanel)).toBeDefined();

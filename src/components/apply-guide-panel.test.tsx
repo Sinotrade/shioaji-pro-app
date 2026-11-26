@@ -237,6 +237,23 @@ describe('in-app apply guide', () => {
         expect(props.onOpenAccount).toHaveBeenCalledWith('p2');
     });
 
+    it('keeps the just-imported production profile as the CA target while the profile list refreshes', async () => {
+        const older: CredentialProfile = { ...prod, id: 'p0', name: '舊正式帳號' };
+        await mount(withProfiles(sim, older), 'production');
+        await emit({ kind: 'step', step: 'success' });
+        // 清單還沒讀進新帳號就到 CA 這一步
+        await emit({ kind: 'imported', profileId: 'p2', name: 'ShioajiProProd', duplicate: false, environment: 'production' });
+        await act(async () => button('下一步：下載 CA 憑證')!.props.onClick());
+        expect(mocks.caTarget).toHaveBeenLastCalledWith('p2');
+        expect(mocks.caTarget).not.toHaveBeenCalledWith('p0');
+        await rerender(withProfiles(sim, older, prod));
+        const radios = view!.root.findAll(n => n.type === 'input' && n.props.type === 'radio');
+        expect(radios.map(r => r.props.checked)).toEqual([false, true]);
+        // 列過的帳號被刪掉：取消選擇
+        await rerender(withProfiles(sim, older));
+        expect(mocks.caTarget).toHaveBeenLastCalledWith(null);
+    });
+
     it('only signs in the signing task', async () => {
         await mount(withProfiles(sim), 'sign');
         expect(mocks.importEnvironment).toHaveBeenCalledWith('simulation');

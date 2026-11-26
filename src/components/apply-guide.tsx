@@ -1059,14 +1059,21 @@ function CaStep({ guide, settings, windowOpen, onOpenAccount }: {
     const candidates = settings.profiles.filter(profile => profile.environment === 'production' && profile.secretState === 'stored');
     const only = candidates.length === 1 ? candidates[0]!.id : null;
     // 只有一個正式帳號時直接選它；選的帳號被刪掉或改成模擬就取消。
-    // 自動選同一個帳號只試一次：原生端拒絕後等使用者自己選，不會一直重試
+    // 自動選只做一次：原生端拒絕或選過帳號以後，等使用者自己選，不會一直重試
     const autoTried = useRef<string | null>(null);
+    const listed = useRef(new Set<string>());
     useEffect(() => {
         const current = guide.caProfileId;
-        if (current && candidates.some(profile => profile.id === current)) return;
-        const next = only && autoTried.current !== only ? only : null;
-        if (next) autoTried.current = next;
-        if (current || next) void guide.setCaProfile(next);
+        for (const profile of candidates) listed.current.add(profile.id);
+        if (current) {
+            // 選過帳號以後不再自動選（被取消時不會偷偷換成另一個帳號）
+            autoTried.current ??= current;
+            // 帳號清單還沒重新讀進剛存的正式帳號：保留這個選擇，不改選別的帳號；
+            // 列過的帳號被刪掉或改成模擬才取消
+            if (listed.current.has(current) && !candidates.some(profile => profile.id === current)) void guide.setCaProfile(null);
+            return;
+        }
+        if (only && autoTried.current === null) { autoTried.current = only; void guide.setCaProfile(only); }
     }, [only, guide.caProfileId, candidates.map(profile => profile.id).join()]); // eslint-disable-line react-hooks/exhaustive-deps
     const attached = guide.caAttached;
     const attachedProfile = attached && settings.profiles.find(profile => profile.id === attached.profileId);
