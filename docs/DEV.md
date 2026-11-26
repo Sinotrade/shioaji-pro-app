@@ -124,14 +124,23 @@ test coverage 門檻、quality metrics 等。落地時更新本節。
 
 ## Dev／候選版的版本識別
 
-- 原生開發使用 `pnpm desktop:dev`；debug QA bundle 使用 `pnpm desktop:qa`。
+- 原生開發使用 `pnpm desktop:dev`；QA bundle 使用 `pnpm desktop:qa`。
   兩者均載入 private overlay 的 `src-tauri/tauri.dev.conf.json`，以
   `com.sinotrade.shioaji-pro.dev` 與 `Shioaji Pro Dev` 隔離正式 app-data／憑證庫。
   `scripts/build_and_run.sh` 也使用此入口。不要以未帶 dev config 的
   `pnpm tauri dev`／本機 build 驗收，否則仍會共用正式 identifier。
+- QA bundle 與正式版同為 Cargo release profile（`panic = "abort"`、LTO 等），
+  不帶 `--debug`：debug／dev build 的 `panic = "unwind"` 會吞掉 panic，正式版卻
+  直接閃退（#453 popup 關閉閃退），因此驗收崩潰類問題必須用 QA bundle，
+  不能只看 `pnpm desktop:dev`。`desktop:qa` 另疊加 `scripts/tauri.qa.conf.json`：
+  前端以 `vite build --mode qa` 建置、不產生 updater artifacts。
+- qa mode 與 dev 一樣只連 `VITE_DEV_SERVER_PORT` 指定的隔離服務，不探測、
+  接手或啟動 `21322`、`8080` 等正式／fallback 埠，也不檢查更新。此值在 build
+  時寫入前端，必須執行 `VITE_DEV_SERVER_PORT=21323 pnpm desktop:qa`；未設定時
+  `vite build --mode qa` 直接失敗，不會產出連到正式 sidecar 的 QA App。
 
 - App 畫面與複製診斷統一使用 build identity。`vite dev`、未帶 release tag
-  的 `vite build`、本機 debug bundle 都顯示 `dev · <public short SHA>`；
+  的 `vite build`（含 `--mode qa` 的 QA bundle）都顯示 `dev · <public short SHA>`；
   build／dev server 啟動時有未提交內容則加 `+dirty`，無 Git metadata 顯示
   `dev · unknown`。commit 後重新啟動 Vite 才會更新這份 build-time identity。
 - Tauri／Cargo／package.json 的占位版本不能當成候選版版本對外顯示；
@@ -150,7 +159,7 @@ test coverage 門檻、quality metrics 等。落地時更新本節。
 ## 每次開發交付：備妥可試用的 dev App
 
 - 同機已有正式 sidecar 時，隔離 dev App 設定 `VITE_DEV_SERVER_PORT=21323`。
-  此設定只在 development 生效，將原生服務管理、REST 與直接 SSE 鎖定到指定埠；
+  此設定只在 development 與 QA bundle（qa mode）生效，將原生服務管理、REST 與直接 SSE 鎖定到指定埠；
   不可因 `21323` 停機或占用而探測、接手或啟動到 `21322`、`8080` 或其他 fallback 埠。
   舊 localStorage 的正式服務埠／PID 不能成為隔離 dev 的操作目標。
 - `VITE_API_BASE` 通常不另設；若設定，必須與隔離服務的 scheme、`127.0.0.1`

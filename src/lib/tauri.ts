@@ -783,7 +783,7 @@ export async function serverPersonHash(
  * AND the spawned process must still be alive (or the native shell owns it
  * in this App process) — a record left behind by a sidecar that exited
  * proves nothing about whoever listens on that port now (#285). The isolated
- * dev port (VITE_DEV_SERVER_PORT, dev builds only) counts as this App's: the
+ * dev port (VITE_DEV_SERVER_PORT, dev and QA builds only) counts as this App's: the
  * developer chose exactly that server for this dev App.
  */
 export async function ownsServer(status: ServerStatus | null | undefined): Promise<boolean> {
@@ -1666,9 +1666,9 @@ function updateDownloadProgress(event: DownloadEvent) {
 
 export async function checkForUpdates(silent: boolean) {
     if (!isTauri || updateInFlight) return;
-    // dev build（vite dev / target/debug）不檢查更新 — 否則 dev 環境會
-    // 下載正式版並在重啟時把 debug app 換掉
-    if (import.meta.env.DEV) {
+    // dev build（vite dev）與 QA bundle（vite build --mode qa）不檢查更新 —
+    // 否則會下載正式版並在重啟時把 dev／QA app 換掉
+    if (import.meta.env.DEV || import.meta.env.MODE === 'qa') {
         if (!silent) {
             notify({
                 kind: 'info',

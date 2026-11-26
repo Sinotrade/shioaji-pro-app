@@ -9,9 +9,15 @@ export const isTauri =
 // range, so it's essentially never taken by another service.
 export const DEFAULT_PORT = 21322;
 // 隔離 dev App 的整組服務，包含原生管理與 SSE；不可只覆寫 REST URL。
+// QA bundle（pnpm desktop:qa）是 release profile 的 vite build --mode qa，DEV 為
+// false，但同樣必須鎖定隔離埠；qa mode 未設定埠時拒絕啟動，不可回到正式 21322。
 export function getDevServerPort(): number | undefined {
-    const raw = import.meta.env.DEV ? import.meta.env.VITE_DEV_SERVER_PORT : undefined;
-    if (!raw) return undefined;
+    const qa = import.meta.env.MODE === 'qa';
+    const raw = import.meta.env.DEV || qa ? import.meta.env.VITE_DEV_SERVER_PORT : undefined;
+    if (!raw) {
+        if (qa) throw new Error('QA build 必須設定 VITE_DEV_SERVER_PORT，拒絕連到正式服務');
+        return undefined;
+    }
     const port = Number(raw);
     if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error('VITE_DEV_SERVER_PORT 必須是 1024–65535');
     return port;

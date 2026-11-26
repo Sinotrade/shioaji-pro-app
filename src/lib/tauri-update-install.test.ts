@@ -49,6 +49,14 @@ describe('in-app update goes through the App so it can stop the local server fir
     });
     afterEach(() => vi.unstubAllEnvs());
 
+    it('QA bundle (qa mode, release build) never checks for or downloads the formal update', async () => {
+        vi.stubEnv('MODE', 'qa');
+        const tauri = await import('./tauri');
+        await tauri.checkForUpdates(true);
+        expect(native.check).not.toHaveBeenCalled();
+        expect(native.invoke).not.toHaveBeenCalledWith('app_update_download', expect.anything());
+    });
+
     it('downloads through the App, not the plugin handle, and reports progress', async () => {
         const tauri = await import('./tauri');
         const phases: string[] = [];

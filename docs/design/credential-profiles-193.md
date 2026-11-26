@@ -66,7 +66,7 @@ Rust 用 active UUID 讀憑證並決定環境，拒絕 renderer 提供這些 env
 
 native service 是 `<app identifier>.credentials`，account 是純 UUID，值為
 `{"apiKey":"…","secretKey":"…","caPassword":"…"}`。開發／QA 指令分別為
-`pnpm desktop:dev`／`pnpm desktop:qa`，均載入 private 的 `tauri.dev.conf.json`，
+`pnpm desktop:dev`／`pnpm desktop:qa`（QA bundle 為 release profile、vite qa mode），均載入 private 的 `tauri.dev.conf.json`，
 使用 `com.sinotrade.shioaji-pro.dev` 隔離正式資料。revision 改為 HMAC-SHA-256，
 機器隨機金鑰只保存在 native 憑證庫（Linux fallback 則在受保護檔）。
 settings 只保存非秘密索引。新增／遷移先寫 pending journal，秘密寫入讀回一致後才完成；

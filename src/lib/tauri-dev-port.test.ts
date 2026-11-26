@@ -17,3 +17,13 @@ it('does not probe or adopt the formal default server when the isolated dev serv
     expect(native.fetch.mock.calls.every(([url]) => String(url).includes(':21323/'))).toBe(true);
     expect(native.execute).not.toHaveBeenCalled();
 });
+it('QA bundle (qa mode, DEV=false) never probes the formal 21322 or legacy 8080 servers', async () => {
+    vi.stubEnv('DEV', false); vi.stubEnv('MODE', 'qa'); vi.stubEnv('VITE_DEV_SERVER_PORT', '21323');
+    vi.stubGlobal('window', { setTimeout, clearTimeout });
+    vi.stubGlobal('fetch', native.fetch);
+    native.fetch.mockImplementation(async (url: string) => new Response('{}', { status: /:(21322|8080)\//.test(url) ? 200 : 503 }));
+    expect(await serverStatus()).toEqual({ running: false });
+    expect(native.fetch.mock.calls.length).toBeGreaterThan(0);
+    expect(native.fetch.mock.calls.every(([url]) => String(url).includes(':21323/'))).toBe(true);
+    expect(native.execute).not.toHaveBeenCalled();
+});
