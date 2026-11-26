@@ -12,7 +12,7 @@ import { useEffect, useRef, useState, type ReactNode, type Ref } from 'react';
 import { SIGNING_URLS, type SigningMarket } from '../lib/account-signing';
 import {
     GUIDE_COPY, GUIDE_ORDER, PRODUCTION_NEXT_STEPS, SIGN_MARKET_COPY, SIGN_STATE_LABEL, SIGNING_MARKETS,
-    guideStepOf, nextGuideStep, previousGuideStep, signMarketOf, signTargetId,
+    guideStepOf, nextGuideStep, previousGuideStep, signMarketOf, signTargetId, sitePageOf, targetPageOf,
     type ApplyPageStep, type GuidePoint, type GuideStep, type SignState,
 } from '../lib/apply-guide-config';
 import {
@@ -54,6 +54,8 @@ export interface ApplyGuideController {
     signError: string;
     /** 在申請視窗打開該市場的簽署頁（視窗沒開就先打開）。 */
     openSignPage: (market: SigningMarket) => Promise<void>;
+    /** 在官網上標示目標；官網不在目標所在的頁面時先切過去，載入後再標示。 */
+    locate: (target: string) => Promise<void>;
 }
 
 const SAVE_ENV_KEY = 'sjpro.applyGuide.saveEnvFile';
@@ -104,6 +106,10 @@ export function useApplyGuide(onImported?: (imported: ApplyImported) => void): A
     saveEnvRef.current = saveEnvFile;
     const importedRef = useRef(onImported);
     importedRef.current = onImported;
+    const syncedRef = useRef<ApplyPageStep | null>(null);
+    syncedRef.current = synced;
+    /** 切頁後要標示的目標：官網換到它所在的頁面時標示 */
+    const pendingFocusRef = useRef<string | null>(null);
     useEffect(() => {
         let active = true;
         let off: (() => void) | undefined;
@@ -111,6 +117,16 @@ export function useApplyGuide(onImported?: (imported: ApplyImported) => void): A
             switch (event.kind) {
                 case 'step': {
                     setSynced(event.step);
+                    syncedRef.current = event.step;
+                    const pending = pendingFocusRef.current;
+                    if (pending) {
+                        // 回到登入頁（沒登入或逾時）就放棄；到了目標所在的頁面才標示
+                        if (event.step === 'login') pendingFocusRef.current = null;
+                        else if (sitePageOf(event.step) === targetPageOf(pending)) {
+                            pendingFocusRef.current = null;
+                            void focusApplyTarget(pending);
+                        }
+                    }
                     setWindowState('open');
                     const market = signMarketOf(event.step);
                     // 官網回到登入頁＝登出或逾時，下一個登入的可能是別人：先前讀到的簽署狀態不能沿用
@@ -122,7 +138,7 @@ export function useApplyGuide(onImported?: (imported: ApplyImported) => void): A
                     }
                     // 載入後關掉「新增成功」會回到列表、從完成頁打開簽署頁：都留在完成頁；
                     // 開始申請另一把（身份驗證以後）才跟著官網走，完成頁仍可從進度列回去
-                    setStep(current => current === 'imported' && (event.step === 'list' || event.step === 'login' || market) ? current : guideStepOf(event.step));
+                    setStep(current => followSiteStep(current, event.step));
                     break;
                 }
                 case 'imported': {
@@ -174,6 +190,23 @@ export function useApplyGuide(onImported?: (imported: ApplyImported) => void): A
             }
         }
     };
+    const locate = async (target: string) => {
+        const page = targetPageOf(target);
+        const current = syncedRef.current ? sitePageOf(syncedRef.current) : null;
+        if (!page || page === current) {
+            pendingFocusRef.current = null;
+            await focusApplyTarget(target);
+            return;
+        }
+        pendingFocusRef.current = target;
+        const market = signMarketOf(page);
+        try {
+            if (market) await showApplySignPage(market);
+            else await showApplyApiPage();
+        } catch {
+            pendingFocusRef.current = null;
+        }
+    };
     const setMarket = (market: SigningMarket, on: boolean) => {
         setMarkets(current => {
             const next = SIGNING_MARKETS.filter(m => m === market ? on : current.includes(m));
@@ -201,7 +234,7 @@ export function useApplyGuide(onImported?: (imported: ApplyImported) => void): A
     };
     return {
         step, setStep, windowState, placement, synced, imported, failure, downloaded, opening, openError, open,
-        siteClear, clearSiteData, saveEnvFile, setSaveEnvFile, markets, setMarket, signs, signError, openSignPage,
+        siteClear, clearSiteData, saveEnvFile, setSaveEnvFile, markets, setMarket, signs, signError, openSignPage, locate,
     };
 }
 
@@ -364,8 +397,10 @@ function DisplayControls() {
     </div>;
 }
 
-function PointList({ points, canLocate, numbered = true, resolveTarget = target => target }: {
+function PointList({ points, canLocate, numbered = true, resolveTarget = target => target, onLocate = focusApplyTarget }: {
     points: GuidePoint[]; canLocate: boolean; numbered?: boolean;
+    /** 按「在網頁上標示」：預設直接標示；導覽主畫面會先把官網切到目標所在的頁面 */
+    onLocate?: (target: string) => Promise<unknown>;
     /** 設定檔裡的目標名稱 → 申請視窗的目標 id；null 表示目前頁面沒有 */
     resolveTarget?: (target: string) => string | null;
 }) {
@@ -388,7 +423,7 @@ function PointList({ points, canLocate, numbered = true, resolveTarget = target 
                         className={g.locate} disabled={!can}
                         title={can ? '在申請視窗中把這個位置框起來' : '開啟申請視窗後可以標示'}
                         aria-label={`在網頁上標示：${point.title}`}
-                        onClick={() => { if (id) void focusApplyTarget(id); }}
+                        onClick={() => { if (id) void onLocate(id); }}
                     ><Crosshair size={17} aria-hidden />{can ? '在網頁上標示' : '開啟官網後可標示'}</button>;
                 })()}
             </div>
@@ -412,6 +447,19 @@ function Callout({ tone, title, children, actions }: { tone: 'danger' | 'warn' |
 }
 
 /** 勾選的市場全部讀到「已簽署」（沒勾任何市場也算）：進度列的「簽署」才打勾。 */
+/**
+ * 官網換頁時導覽要停在哪一步。
+ * - 完成頁：關掉「新增成功」回到列表、登出、打開簽署頁都留在完成頁；開始申請另一把（身份驗證以後）才跟著官網走。
+ * - 登入後官網會直接進 API 管理列表：導覽先停在「簽署」，使用者按「前往 API 管理頁申請金鑰」或「下一步」才往下；
+ *   已在簽署步驟時官網停在列表也不往前跳。
+ */
+export function followSiteStep(current: GuideStep, site: ApplyPageStep): GuideStep {
+    const next = guideStepOf(site);
+    if (current === 'imported' && (site === 'list' || site === 'login' || signMarketOf(site))) return current;
+    if (next === 'list' && (current === 'start' || current === 'login' || current === 'sign')) return 'sign';
+    return next;
+}
+
 export function allChosenSigned(guide: Pick<ApplyGuideController, 'markets' | 'signs'>) {
     return guide.markets.every(market => guide.signs[market] === 'signed');
 }
@@ -579,6 +627,10 @@ export function ApplyGuide({ guide, settings, busy, docked = false, contentRef, 
                                 <div className={g.itemText}>
                                     <p className={g.itemTitle}><Rich text={item.title} /></p>
                                     <p className={g.itemBody}><Rich text={item.body} /></p>
+                                    {item.target && guide.windowState === 'open' && <button className={g.locate}
+                                        title="在申請視窗中把這個位置框起來" aria-label={`在網頁上標示：${item.title}`}
+                                        onClick={() => void guide.locate(item.target!)}
+                                    ><Crosshair size={17} aria-hidden />在網頁上標示</button>}
                                     {item.links.length > 0 && <div className={g.linkRow}>
                                         {item.links.map(link => <button key={link.label} className={g.textButton} onClick={() => void openExternalUrl(link.url)}>
                                             {link.label}<ExternalLink size={16} aria-label="（在瀏覽器開啟）" />
@@ -595,6 +647,12 @@ export function ApplyGuide({ guide, settings, busy, docked = false, contentRef, 
         </section>;
     }
 
+    // 從簽署到 API 管理：官網還停在簽署頁時一起切回 API 管理頁，和「前往 API 管理頁申請金鑰」相同
+    const goNext = () => {
+        const next = nextGuideStep(step);
+        if (step === 'sign' && next === 'list' && windowState === 'open' && signMarketOf(guide.synced)) void showApplyApiPage();
+        guide.setStep(next);
+    };
     return <section className={cardClass} aria-label="申請 API Key 導覽">
         {header}
         {syncBanner}
@@ -602,6 +660,8 @@ export function ApplyGuide({ guide, settings, busy, docked = false, contentRef, 
         <div className={bodyClass} ref={contentRef}>
             <h2 className={g.title}>{copy.title}</h2>
             <p className={g.lead}><Rich text={copy.lead} /></p>
+            {/* 放在最上面：按「下載 .env」之前就要看到 */}
+            {step === 'success' && windowState !== 'browser' && <SaveEnvOption guide={guide} />}
             {windowState === 'closed' && <Callout tone="warn" title="官網視窗已關閉"
                 actions={<button className={g.secondaryButton} onClick={() => void guide.open()}><RotateCw size={18} aria-hidden />重新打開官網</button>}>
                 按「重新打開官網」繼續。{step === 'success' ? '如果已經看到「新增成功」但還沒下載 .env，Secret Key 已經看不到了，請再新增一把金鑰。' : ''}
@@ -614,11 +674,10 @@ export function ApplyGuide({ guide, settings, busy, docked = false, contentRef, 
             {failureCallout}
             {step === 'sign'
                 ? <SignStep guide={guide} windowOpen={windowOpen} />
-                : <PointList points={copy.points} canLocate={windowOpen} />}
+                : <PointList points={copy.points} canLocate={windowOpen} onLocate={guide.locate} />}
             {step === 'login' && windowOpen && <div className={g.actions}>
                 <button className={g.secondaryButton} onClick={() => void showApplyApiPage()}><ArrowRight size={18} aria-hidden />回到 API 管理頁</button>
             </div>}
-            {step === 'success' && windowState !== 'browser' && <SaveEnvOption guide={guide} />}
             {guide.downloaded && step === 'success' && <p className={g.secondary}>{downloadedText(guide.downloaded)}</p>}
             {copy.note && <p className={g.secondary}>{copy.note}</p>}
             {manualLink}
@@ -626,7 +685,7 @@ export function ApplyGuide({ guide, settings, busy, docked = false, contentRef, 
         </div>
         <div className={g.footer}>
             <button className={g.secondaryButton} disabled={step === 'login'} onClick={() => guide.setStep(previousGuideStep(step))}><ChevronLeft size={20} aria-hidden />上一步</button>
-            <button className={g.secondaryButton} disabled={step === 'success' && !guide.imported} onClick={() => guide.setStep(nextGuideStep(step))}>下一步<ChevronRight size={20} aria-hidden /></button>
+            <button className={g.secondaryButton} disabled={step === 'success' && !guide.imported} onClick={() => goNext()}>下一步<ChevronRight size={20} aria-hidden /></button>
         </div>
     </section>;
 }

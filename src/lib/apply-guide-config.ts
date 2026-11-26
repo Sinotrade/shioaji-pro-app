@@ -85,6 +85,8 @@ export const APPLY_PAGE_RULES: ApplyPageRules = {
         { id: 'login', pathPrefix: '/' },
     ],
     targets: [
+        // 登入框（含憑證部署視窗關掉後回到的登入畫面）先標「登入」，沒有登入框才標右上角「客戶登入」
+        { id: 'login-submit', step: 'login', selector: '[class*="login__box"] button.ant-btn-primary', auto: true },
         { id: 'login-button', step: 'login', text: '客戶登入', auto: true },
         { id: 'add-key', step: 'list', text: '新增 API Key', auto: true },
         { id: 'download-ca', step: 'list', text: '下載憑證' },
@@ -178,6 +180,7 @@ export const GUIDE_COPY: Record<GuideStep, GuideStepCopy> = {
         lead: '在右邊的官網按「客戶登入」，用證券網路帳號和密碼登入。',
         points: [
             { title: '按「客戶登入」', body: '在官網右上角。按下後會跳出登入框。', target: 'login-button' },
+            { title: '輸入帳號密碼後按「登入」', body: '第一次在這台電腦登入會跳出電子憑證安裝視窗，裝好會自動關閉並回到登入畫面，這時要再按一次「登入」。', target: 'login-submit' },
             { title: '登入後到下一步', body: '登入後如果還停在首頁，按下面的「回到 API 管理頁」，或按「下一步」先看 API 約定書。' },
         ],
     },
@@ -199,6 +202,7 @@ export const GUIDE_COPY: Record<GuideStep, GuideStepCopy> = {
         points: [
             { title: '按「新增 API Key」', body: '按下後會先確認是本人（身份驗證）。', target: 'add-key' },
             { title: '已有金鑰？', body: '舊金鑰的 Secret Key 已經看不到了，App 需要完整的金鑰，所以請新增一把。舊的可以留著。' },
+            { title: '正式環境還要「下載憑證」', body: '模擬環境用不到，可以先略過。之後要在正式環境下單，回到這一頁按「下載憑證」取得 CA 憑證（Sinopac.pfx），再到 App 的「伺服器設定 › 帳號」選擇憑證檔並輸入憑證密碼，才能開始正式交易。', target: 'download-ca' },
         ],
     },
     verify: {
@@ -249,7 +253,7 @@ export const GUIDE_COPY: Record<GuideStep, GuideStepCopy> = {
 
 /** 完成後的下一步：正式交易另外需要的條件（只說明，不在這裡辦理）。 */
 export interface NextStepLink { label: string; url: string }
-export interface NextStep { title: string; body: string; links: NextStepLink[] }
+export interface NextStep { title: string; body: string; links: NextStepLink[]; /** 可在官網上標示的目標 */ target?: string }
 export const PRODUCTION_NEXT_STEPS: NextStep[] = [
     {
         title: '金鑰要有「正式環境」權限',
@@ -268,8 +272,9 @@ export const PRODUCTION_NEXT_STEPS: NextStep[] = [
     },
     {
         title: '下載 CA 憑證',
-        body: '在 API 管理頁按「下載憑證」取得 Sinopac.pfx，再到帳號設定選擇憑證檔並輸入密碼。',
+        body: '正式環境下單一定要有 CA 憑證。在 API 管理頁按「下載憑證」取得 Sinopac.pfx，再到「伺服器設定 › 帳號」選擇憑證檔並輸入憑證密碼，才能開始正式交易。',
         links: [],
+        target: 'download-ca',
     },
 ];
 
@@ -280,6 +285,21 @@ export function previousGuideStep(step: GuideStep): GuideStep {
     return GUIDE_ORDER[Math.max(GUIDE_ORDER.indexOf(step) - 1, 0)]!;
 }
 /** 簽署步驟的標示目標：依目前打開的簽署頁（sign-s-terms…）。 */
+/**
+ * 這一步在官網的哪個頁面：身份驗證、新增表單、新增成功都是 API 管理頁上的彈出框；
+ * 登入頁沒有固定網址（null），不能替使用者切過去。
+ */
+export function sitePageOf(step: ApplyPageStep): ApplyPageStep | null {
+    if (step === 'login') return null;
+    return signMarketOf(step) ? step : 'list';
+}
+
+/** 標示目標所在的官網頁面（不認得的目標回 null）。 */
+export function targetPageOf(id: string): ApplyPageStep | null {
+    const target = APPLY_PAGE_RULES.targets.find(t => t.id === id);
+    return target ? sitePageOf(target.step) : null;
+}
+
 export function signTargetId(step: ApplyPageStep | null, point: string): string | null {
     const market = signMarketOf(step);
     return market ? `${SIGN_STEPS[market]}-${point}` : null;
