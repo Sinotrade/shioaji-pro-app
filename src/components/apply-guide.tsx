@@ -144,6 +144,7 @@ export function useApplyGuide(onImported?: (imported: ApplyImported) => void, op
     taskRef.current = task;
     const [caProfileId, setCaProfileState] = useState<string | null>(null);
     const caProfileRef = useRef<string | null>(null);
+    const caRequestRef = useRef(0);
     const [caAttached, setCaAttached] = useState<ApplyCaAttached | null>(null);
     const [caError, setCaError] = useState('');
     const [saveCaFile, setSaveCaState] = useState(readSaveCaPref);
@@ -264,12 +265,16 @@ export function useApplyGuide(onImported?: (imported: ApplyImported) => void, op
     const syncTask = async (current: ApplyGuideTask) => {
         await setApplyImportEnvironment(current === 'production' ? 'production' : 'simulation');
         const target = current === 'production' || current === 'ca' ? caProfileRef.current : null;
+        ++caRequestRef.current;
         await setApplyCaTarget(target);
     };
     const selectCa = async (profileId: string | null) => {
         caProfileRef.current = profileId; setCaProfileState(profileId); setCaError('');
         if (windowRef.current !== 'open') return;
+        const request = ++caRequestRef.current;
         try { await setApplyCaTarget(profileId); } catch (error) {
+            // 使用者已經改選別的帳號：舊的結果不算
+            if (request !== caRequestRef.current) return;
             caProfileRef.current = null; setCaProfileState(null);
             setCaError(error instanceof Error ? error.message : String(error));
         }
@@ -1049,10 +1054,15 @@ function CaStep({ guide, settings, windowOpen, onOpenAccount }: {
     const copy = guideCopyOf(guide.task, 'ca');
     const candidates = settings.profiles.filter(profile => profile.environment === 'production' && profile.secretState === 'stored');
     const only = candidates.length === 1 ? candidates[0]!.id : null;
-    // 只有一個正式帳號時直接選它；選的帳號被刪掉或改成模擬就取消
+    // 只有一個正式帳號時直接選它；選的帳號被刪掉或改成模擬就取消。
+    // 自動選同一個帳號只試一次：原生端拒絕後等使用者自己選，不會一直重試
+    const autoTried = useRef<string | null>(null);
     useEffect(() => {
-        if (guide.caProfileId && !candidates.some(profile => profile.id === guide.caProfileId)) void guide.setCaProfile(only);
-        else if (!guide.caProfileId && only) void guide.setCaProfile(only);
+        const current = guide.caProfileId;
+        if (current && candidates.some(profile => profile.id === current)) return;
+        const next = only && autoTried.current !== only ? only : null;
+        if (next) autoTried.current = next;
+        if (current || next) void guide.setCaProfile(next);
     }, [only, guide.caProfileId, candidates.map(profile => profile.id).join()]); // eslint-disable-line react-hooks/exhaustive-deps
     const attached = guide.caAttached;
     const attachedProfile = attached && settings.profiles.find(profile => profile.id === attached.profileId);

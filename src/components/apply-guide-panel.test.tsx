@@ -168,6 +168,36 @@ describe('in-app apply guide', () => {
         expect(mocks.importEnvironment).toHaveBeenLastCalledWith('production');
     });
 
+    it('tries the only production profile once when the shell refuses it', async () => {
+        await mount(withProfiles(sim, prod), 'ca');
+        mocks.caTarget.mockImplementation(async (id: string | null) => {
+            if (id) throw new Error('CA 憑證只能存到正式環境的帳號');
+            return null;
+        });
+        await emit({ kind: 'step', step: 'list' });
+        await emit({ kind: 'step', step: 'list' });
+        expect(mocks.caTarget.mock.calls.filter(([id]) => id === 'p2')).toHaveLength(1);
+        expect(json()).toContain('憑證沒有存成');
+        // 使用者自己再選一次才重送
+        const radio = view!.root.find(n => n.type === 'input' && n.props.type === 'radio');
+        await act(async () => radio.props.onChange());
+        expect(mocks.caTarget.mock.calls.filter(([id]) => id === 'p2')).toHaveLength(2);
+    });
+
+    it('ignores a refusal for a profile the user already switched away from', async () => {
+        const other: CredentialProfile = { ...prod, id: 'p3', name: '第二正式' };
+        await mount(withProfiles(sim, prod, other), 'ca');
+        await emit({ kind: 'step', step: 'list' });
+        let refuse!: (error: Error) => void;
+        mocks.caTarget.mockImplementationOnce(() => new Promise((_resolve, reject) => { refuse = reject; }));
+        const radios = () => view!.root.findAll(n => n.type === 'input' && n.props.type === 'radio');
+        await act(async () => { void radios()[0]!.props.onChange(); });
+        await act(async () => radios()[1]!.props.onChange());
+        await act(async () => refuse(new Error('憑證要設定的帳號已經改變，請重新選擇')));
+        expect(json()).not.toContain('憑證沒有存成');
+        expect(radios().map(r => r.props.checked)).toEqual([false, true]);
+    });
+
     it('only signs in the signing task', async () => {
         await mount(withProfiles(sim), 'sign');
         expect(mocks.importEnvironment).toHaveBeenCalledWith('simulation');
