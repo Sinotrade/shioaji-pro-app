@@ -283,6 +283,21 @@ export function previousGuideStep(step: GuideStep): GuideStep {
     return GUIDE_ORDER[Math.max(GUIDE_ORDER.indexOf(step) - 1, 0)]!;
 }
 /** 簽署步驟的標示目標：依目前打開的簽署頁（sign-s-terms…）。 */
+/**
+ * 這一步在官網的哪個頁面：身份驗證、新增表單、新增成功都是 API 管理頁上的彈出框；
+ * 登入頁沒有固定網址（null），不能替使用者切過去。
+ */
+export function sitePageOf(step: ApplyPageStep): ApplyPageStep | null {
+    if (step === 'login') return null;
+    return signMarketOf(step) ? step : 'list';
+}
+
+/** 標示目標所在的官網頁面（不認得的目標回 null）。 */
+export function targetPageOf(id: string): ApplyPageStep | null {
+    const target = APPLY_PAGE_RULES.targets.find(t => t.id === id);
+    return target ? sitePageOf(target.step) : null;
+}
+
 export function signTargetId(step: ApplyPageStep | null, point: string): string | null {
     const market = signMarketOf(step);
     return market ? `${SIGN_STEPS[market]}-${point}` : null;

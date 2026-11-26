@@ -559,6 +559,36 @@ describe('signing the API agreements', () => {
         expect(signStep().props['aria-label']).toBe('簽署，勾選的市場還沒全部確認已簽署');
     });
 
+    it('switches the site back to the API page before pointing at 新增 API Key from a signing page', async () => {
+        await mount();
+        await act(async () => button('開始申請')!.props.onClick());
+        await emit({ kind: 'step', step: 'sign-s', sign: 'unknown' });
+        await act(async () => button('前往 API 管理頁申請金鑰')!.props.onClick());
+        mocks.apiPage.mockClear(); mocks.focus.mockClear();
+        await act(async () => byLabel('在網頁上標示：按「新增 API Key」')!.props.onClick());
+        expect(mocks.apiPage).toHaveBeenCalledTimes(1);
+        expect(mocks.focus).not.toHaveBeenCalled();
+        await emit({ kind: 'step', step: 'list' });
+        expect(mocks.focus).toHaveBeenCalledWith('add-key');
+        // 已在 API 管理頁：直接標示，不再切頁
+        mocks.apiPage.mockClear(); mocks.focus.mockClear();
+        await act(async () => byLabel('在網頁上標示：按「新增 API Key」')!.props.onClick());
+        expect(mocks.apiPage).not.toHaveBeenCalled();
+        expect(mocks.focus).toHaveBeenCalledWith('add-key');
+    });
+
+    it('drops a pending highlight when the site falls back to its login page', async () => {
+        await mount();
+        await act(async () => button('開始申請')!.props.onClick());
+        await emit({ kind: 'step', step: 'sign-f', sign: 'unknown' });
+        await act(async () => button('前往 API 管理頁申請金鑰')!.props.onClick());
+        mocks.focus.mockClear();
+        await act(async () => byLabel('在網頁上標示：按「新增 API Key」')!.props.onClick());
+        await emit({ kind: 'step', step: 'login' });
+        await emit({ kind: 'step', step: 'list' });
+        expect(mocks.focus).not.toHaveBeenCalled();
+    });
+
     it('shows why the signing page could not open and lets the user press again', async () => {
         mocks.signPage.mockRejectedValueOnce(new Error('無法打開簽署頁：apply window is gone'));
         await mount();
