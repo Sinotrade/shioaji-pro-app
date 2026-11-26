@@ -323,7 +323,7 @@ export function AccountsSection() {
     const priv = usePrivacyMode();
     const [refreshing, setRefreshing] = useState(false);
     useEffect(ensureAccounts, []);
-    const unsignedTypes = (['S', 'F'] as const).filter((t) =>
+    const unsignedTypes = (['S', 'F', 'H'] as const).filter((t) =>
         accounts.some((a) => a.account_type === t && !a.signed),
     );
     const groups: { label: string; type: 'S' | 'F' | 'H'; selected: string }[] = [

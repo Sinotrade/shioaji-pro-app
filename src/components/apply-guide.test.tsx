@@ -6,7 +6,7 @@ import type { ApplyGuideEvent } from '../lib/apply-guide-native';
 const mocks = vi.hoisted(() => ({
     panel: vi.fn(() => null), defaults: vi.fn(), load: vi.fn(), save: vi.fn(), select: vi.fn(), start: vi.fn(),
     reload: vi.fn(), stop: vi.fn(), logout: vi.fn(), openLogs: vi.fn(), external: vi.fn(),
-    open: vi.fn(), close: vi.fn(), apiPage: vi.fn(), focus: vi.fn(), clearSite: vi.fn(), saveEnv: vi.fn(),
+    open: vi.fn(), close: vi.fn(), apiPage: vi.fn(), signPage: vi.fn(), focus: vi.fn(), clearSite: vi.fn(), saveEnv: vi.fn(),
     handler: null as ((event: ApplyGuideEvent) => void) | null,
 }));
 vi.mock('../lib/spawn-keys', () => ({ clearStoredSpawnKeyHash: vi.fn() }));
@@ -18,7 +18,7 @@ vi.mock('../lib/tauri', async () => ({
     serverStop: mocks.stop, logoutCredentialProfile: mocks.logout, openServerLogFolder: mocks.openLogs, openExternalUrl: mocks.external,
 }));
 vi.mock('../lib/apply-guide-native', () => ({
-    openApplyWindow: mocks.open, closeApplyWindow: mocks.close, clearApplySiteData: mocks.clearSite, setApplySaveEnv: mocks.saveEnv, showApplyApiPage: mocks.apiPage, focusApplyTarget: mocks.focus,
+    openApplyWindow: mocks.open, closeApplyWindow: mocks.close, clearApplySiteData: mocks.clearSite, setApplySaveEnv: mocks.saveEnv, showApplyApiPage: mocks.apiPage, showApplySignPage: mocks.signPage, focusApplyTarget: mocks.focus,
     listenApplyGuide: async (handler: (event: ApplyGuideEvent) => void) => { mocks.handler = handler; return () => { mocks.handler = null; }; },
 }));
 import { EMPTY_DESKTOP_SETTINGS, type DesktopSettings } from '../lib/desktop-credentials';
@@ -412,5 +412,225 @@ describe('apply guide review round 3', () => {
         // 完成頁仍可從進度列回去
         const progress = view!.root.findAllByProps({ 'aria-label': '申請進度' })[0]!.findAllByType('button');
         expect(progress.at(-1)!.props.disabled).toBe(false);
+    });
+});
+
+describe('signing the API agreements', () => {
+    const store = new Map<string, string>();
+    beforeEach(() => {
+        store.clear();
+        vi.stubGlobal('localStorage', {
+            getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => void store.set(k, v),
+            removeItem: (k: string) => void store.delete(k),
+        });
+    });
+    const byLabel = (text: string) => view!.root.findAllByProps({ 'aria-label': text }).find(n => n.type === 'button');
+    const marketBox = (title: string) => view!.root.findAll(n => n.type === 'label' && JSON.stringify(n.children.map(c => typeof c === 'string' ? c : (c as ReactTestInstance).props?.children)).includes(title))[0]!
+        .findByType('input');
+    const rows = () => view!.root.findAllByProps({ 'aria-label': 'API 約定書簽署狀態' })[0]?.findAllByType('li') ?? [];
+
+    it('comes right after login, asks which markets to trade and shows only those (all three the first time)', async () => {
+        await mount();
+        await act(async () => button('開始申請')!.props.onClick());
+        await act(async () => button('下一步')!.props.onClick());
+        expect(json()).toContain('簽署 API 約定書');
+        expect(json()).toContain('順序不限');
+        expect(json()).toContain('第 2 步，共 6 步');
+        for (const title of ['證券（台股）', '期貨／選擇權', '美股（複委託）']) expect(marketBox(title).props.checked).toBe(true);
+        expect(rows()).toHaveLength(3);
+        expect(json()).toContain('未確認');
+        // 取消美股：少一列，選擇記住
+        await act(async () => marketBox('美股（複委託）').props.onChange({ currentTarget: { checked: false } }));
+        expect(rows()).toHaveLength(2);
+        expect(JSON.parse(store.get('sjpro.applyGuide.markets')!)).toEqual(['S', 'F']);
+        await act(async () => byLabel('打開期貨／選擇權簽署頁')!.props.onClick());
+        expect(mocks.signPage).toHaveBeenCalledWith('F');
+        expect(byLabel('打開美股（複委託）簽署頁')).toBeUndefined();
+        // 不擋：隨時可以去申請金鑰
+        await act(async () => button('前往 API 管理頁申請金鑰')!.props.onClick());
+        expect(mocks.apiPage).toHaveBeenCalled();
+        expect(json()).toContain('按「新增 API Key」');
+    });
+
+    it('follows the signing page, shows what it read and keeps a known state over a later unknown', async () => {
+        store.set('sjpro.applyGuide.markets', JSON.stringify(['S', 'H']));
+        await mount();
+        await act(async () => button('開始申請')!.props.onClick());
+        await emit({ kind: 'step', step: 'sign-h', sign: 'unknown' });
+        expect(json()).toContain('簽署 API 約定書');
+        expect(json()).toContain('官網目前在這個簽署頁');
+        expect(json()).toContain('在簽署頁上照順序做');
+        await emit({ kind: 'step', step: 'sign-h', sign: 'unsigned' });
+        expect(json()).toContain('未簽署');
+        const locate = view!.root.findAllByProps({ 'aria-label': '在網頁上標示：下載約定書副本' })[0]!;
+        await act(async () => locate.props.onClick());
+        expect(mocks.focus).toHaveBeenCalledWith('sign-h-download');
+        await emit({ kind: 'step', step: 'sign-h', sign: 'signed' });
+        await emit({ kind: 'step', step: 'sign-h', sign: 'unknown' });
+        expect(json()).toContain('已簽署');
+        expect(rows()).toHaveLength(2);
+        // 已簽署的市場仍可再打開簽署頁查看
+        await emit({ kind: 'step', step: 'list' });
+        await act(async () => button('上一步')!.props.onClick());
+        expect(byLabel('打開美股（複委託）簽署頁')).toBeDefined();
+        expect(byLabel('打開證券（台股）簽署頁')).toBeDefined();
+    });
+
+    it('keeps a stored choice, including none', async () => {
+        store.set('sjpro.applyGuide.markets', JSON.stringify(['F']));
+        await mount();
+        await act(async () => button('開始申請')!.props.onClick());
+        await act(async () => button('下一步')!.props.onClick());
+        expect(marketBox('證券（台股）').props.checked).toBe(false);
+        expect(marketBox('期貨／選擇權').props.checked).toBe(true);
+        expect(rows()).toHaveLength(1);
+        await act(async () => view!.unmount()); view = undefined;
+        store.set('sjpro.applyGuide.markets', '[]');
+        await mount();
+        await act(async () => button('開始申請')!.props.onClick());
+        await act(async () => button('下一步')!.props.onClick());
+        expect(rows()).toHaveLength(0);
+        expect(json()).toContain('還沒選市場');
+    });
+
+    it('checks 簽署 in the progress bar only when every chosen market reads signed, and never blocks', async () => {
+        store.set('sjpro.applyGuide.markets', JSON.stringify(['S', 'F']));
+        const signStep = () => view!.root.findAllByProps({ 'aria-label': '申請進度' })[0]!.findAllByType('button')
+            .find(b => String(b.props['aria-label']).startsWith('簽署，'))!;
+        await mount();
+        await act(async () => button('開始申請')!.props.onClick());
+        expect(signStep().props['aria-label']).toBe('簽署，還沒開始');
+        // 跳過簽署直接到 API 管理：不擋，簽署不打勾也不是錯誤
+        await emit({ kind: 'step', step: 'list' });
+        expect(json()).toContain('按「新增 API Key」');
+        expect(signStep().props['aria-label']).toBe('簽署，勾選的市場還沒全部確認已簽署');
+        expect(button('下一步')!.props.disabled).toBe(false);
+        expect(button('上一步')!.props.disabled).toBe(false);
+        await emit({ kind: 'step', step: 'sign-s', sign: 'signed' });
+        await emit({ kind: 'step', step: 'sign-f', sign: 'pending' });
+        await emit({ kind: 'step', step: 'list' });
+        expect(signStep().props['aria-label']).toBe('簽署，勾選的市場還沒全部確認已簽署');
+        await emit({ kind: 'step', step: 'sign-f', sign: 'signed' });
+        expect(signStep().props['aria-label']).toBe('簽署，目前在這一步');
+        await emit({ kind: 'step', step: 'verify' });
+        expect(signStep().props['aria-label']).toBe('簽署，已完成');
+        // 多勾一個還沒確認的市場：又變回未打勾
+        await act(async () => signStep().props.onClick());
+        await act(async () => marketBox('美股（複委託）').props.onChange({ currentTarget: { checked: true } }));
+        await act(async () => button('下一步')!.props.onClick());
+        expect(signStep().props['aria-label']).toBe('簽署，勾選的市場還沒全部確認已簽署');
+        expect(button('前往 API 管理頁申請金鑰')).toBeUndefined(); // 已在 API 管理步驟
+    });
+
+    it('forgets what it read after logging out of the site, since another identity may log in', async () => {
+        store.set('sjpro.applyGuide.markets', JSON.stringify(['S']));
+        mocks.clearSite.mockResolvedValue('cleared');
+        await mount();
+        await act(async () => button('開始申請')!.props.onClick());
+        await emit({ kind: 'step', step: 'sign-s', sign: 'signed' });
+        expect(json()).toContain('已簽署');
+        await act(async () => button('登出並清除官網資料')!.props.onClick());
+        await act(async () => button('確認登出並清除')!.props.onClick());
+        expect(json()).not.toContain('已簽署');
+        expect(byLabel('打開證券（台股）簽署頁')).toBeDefined();
+    });
+
+    it('forgets what it read when the site is back at its login page (logout or session timeout)', async () => {
+        store.set('sjpro.applyGuide.markets', JSON.stringify(['S']));
+        await mount();
+        await act(async () => button('開始申請')!.props.onClick());
+        await emit({ kind: 'step', step: 'sign-s', sign: 'signed' });
+        await emit({ kind: 'step', step: 'list' });
+        const signStep = () => view!.root.findAllByProps({ 'aria-label': '申請進度' })[0]!.findAllByType('button')
+            .find(b => String(b.props['aria-label']).startsWith('簽署，'))!;
+        expect(signStep().props['aria-label']).toBe('簽署，已完成');
+        await emit({ kind: 'step', step: 'login' });
+        await emit({ kind: 'step', step: 'list' });
+        expect(signStep().props['aria-label']).toBe('簽署，勾選的市場還沒全部確認已簽署');
+        await act(async () => button('上一步')!.props.onClick());
+        expect(json()).not.toContain('已簽署');
+        expect(json()).toContain('未確認');
+    });
+
+    it('shows why the signing page could not open and lets the user press again', async () => {
+        mocks.signPage.mockRejectedValueOnce(new Error('無法打開簽署頁：apply window is gone'));
+        await mount();
+        await act(async () => button('開始申請')!.props.onClick());
+        await act(async () => button('下一步')!.props.onClick());
+        await act(async () => byLabel('打開證券（台股）簽署頁')!.props.onClick());
+        expect(json()).toContain('打不開簽署頁');
+        expect(json()).toContain('apply window is gone');
+        await act(async () => byLabel('打開證券（台股）簽署頁')!.props.onClick());
+        expect(json()).not.toContain('打不開簽署頁');
+    });
+
+    it('announces each market status politely with the market name', async () => {
+        store.set('sjpro.applyGuide.markets', JSON.stringify(['H']));
+        await mount();
+        await act(async () => button('開始申請')!.props.onClick());
+        await emit({ kind: 'step', step: 'sign-h', sign: 'pending' });
+        const live = view!.root.findAllByProps({ 'aria-live': 'polite' }).filter(n => n.type === 'span');
+        expect(live).toHaveLength(1);
+        expect(JSON.stringify(live[0]!.children.map(c => typeof c === 'string' ? c : (c as ReactTestInstance).props?.children))).toContain('美股（複委託）');
+        expect(JSON.stringify(live[0]!.children.map(c => typeof c === 'string' ? c : (c as ReactTestInstance).props?.children))).toContain('審核中');
+    });
+
+    it('opens the signing page in the browser when the app could only use the browser', async () => {
+        mocks.open.mockResolvedValue('browser');
+        await mount();
+        await act(async () => button('開始申請')!.props.onClick());
+        await act(async () => button('下一步')!.props.onClick());
+        await act(async () => byLabel('打開證券（台股）簽署頁')!.props.onClick());
+        expect(mocks.signPage).not.toHaveBeenCalled();
+        expect(mocks.external).toHaveBeenCalledWith('https://www.sinotrade.com.tw/newweb/signCenter/S_openAPI/');
+    });
+
+    it('reopens a closed window before opening the signing page', async () => {
+        await mount();
+        await act(async () => button('開始申請')!.props.onClick());
+        await emit({ kind: 'closed' });
+        await act(async () => button('下一步')!.props.onClick());
+        mocks.open.mockClear();
+        await act(async () => byLabel('打開證券（台股）簽署頁')!.props.onClick());
+        expect(mocks.open).toHaveBeenCalledOnce();
+        expect(mocks.signPage).toHaveBeenCalledWith('S');
+    });
+
+    it('shows a failed reopen from the 完成 page next to its signing buttons', async () => {
+        store.set('sjpro.applyGuide.markets', JSON.stringify(['F']));
+        await mount();
+        await act(async () => button('開始申請')!.props.onClick());
+        mocks.load.mockResolvedValue({ ...EMPTY_DESKTOP_SETTINGS, activeProfileId: 'p1', profiles: [profile] });
+        await emit({ kind: 'imported', profileId: 'p1', name: 'ShioajiPro', duplicate: false });
+        await emit({ kind: 'closed' });
+        mocks.open.mockRejectedValueOnce(new Error('建立視窗失敗'));
+        await act(async () => byLabel('打開期貨／選擇權簽署頁')!.props.onClick());
+        expect(json()).toContain('金鑰已載入');
+        expect(json()).toContain('建立視窗失敗');
+        expect(mocks.signPage).not.toHaveBeenCalled();
+        await act(async () => button('重新打開官網')!.props.onClick());
+        expect(json()).not.toContain('建立視窗失敗');
+    });
+
+    it('lists the chosen markets that still need signing on the 完成 page and stays there while signing', async () => {
+        store.set('sjpro.applyGuide.markets', JSON.stringify(['S', 'F']));
+        await mount();
+        await act(async () => button('開始申請')!.props.onClick());
+        await emit({ kind: 'step', step: 'sign-s', sign: 'signed' });
+        mocks.load.mockResolvedValue({ ...EMPTY_DESKTOP_SETTINGS, activeProfileId: 'p1', profiles: [profile] });
+        await emit({ kind: 'imported', profileId: 'p1', name: 'ShioajiPro', duplicate: false });
+        expect(json()).toContain('金鑰已載入');
+        expect(json()).toContain('還有約定書沒簽或還沒確認');
+        expect(rows()).toHaveLength(2);
+        // 官網還停在證券簽署頁：該列顯示所在位置，不重複放按鈕
+        expect(byLabel('打開證券（台股）簽署頁')).toBeUndefined();
+        expect(json()).toContain('官網目前在這個簽署頁');
+        await act(async () => byLabel('打開期貨／選擇權簽署頁')!.props.onClick());
+        expect(mocks.signPage).toHaveBeenCalledWith('F');
+        await emit({ kind: 'step', step: 'sign-f', sign: 'signed' });
+        expect(json()).toContain('金鑰已載入');
+        expect(json()).toContain('你選的市場都已簽署');
+        expect(rows()).toHaveLength(2);
+        expect(byLabel('打開美股（複委託）簽署頁')).toBeUndefined();
     });
 });

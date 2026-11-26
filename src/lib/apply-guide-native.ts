@@ -4,15 +4,16 @@
 // 官網登入與憑證存在申請視窗自己的資料區（與主視窗分開、關掉後保留），
 // clearApplySiteData 會關掉申請視窗並清掉這個資料區。
 // 這裡只從主視窗呼叫 apply_window_* 指令，並接收原生殼送來的事件：
-// 步驟（step）、.env 已載入（只帶帳號 id 與金鑰名稱，不含金鑰）、
+// 步驟（step；簽署頁另帶讀到的簽署狀態）、.env 已載入（只帶帳號 id 與金鑰名稱，不含金鑰）、
 // 載入失敗、其他下載、視窗關閉。舊版原生殼沒有這些指令時退回系統瀏覽器。
 
-import { APPLY_PAGE_RULES, APPLY_URL, isApplyPageStep, type ApplyPageStep } from './apply-guide-config';
+import { SIGNING_URLS, type SigningMarket } from './account-signing';
+import { APPLY_PAGE_RULES, APPLY_URL, isApplyPageStep, isSignState, signMarketOf, type ApplyPageStep, type SignState } from './apply-guide-config';
 import { isTauri } from './runtime';
 import { openExternalUrlOrThrow } from './tauri';
 
 export type ApplyGuideEvent =
-    | { kind: 'step'; step: ApplyPageStep }
+    | { kind: 'step'; step: ApplyPageStep; sign?: SignState }
     | { kind: 'imported'; profileId: string; name: string; duplicate: boolean }
     | { kind: 'import-failed'; message: string }
     | { kind: 'downloaded'; fileName: string; status: DownloadStatus }
@@ -73,6 +74,21 @@ async function call(command: string, args?: Record<string, unknown>) {
 
 export const closeApplyWindow = () => call('apply_window_close');
 export const showApplyApiPage = () => call('apply_window_show_api_page');
+/**
+ * 申請視窗切到該市場的 API 約定書簽署頁（網址由原生殼固定，只傳市場代號）。
+ * 失敗（例如視窗剛好關掉）時丟出原因，讓側欄顯示並重試；舊版原生殼沒有這個指令就改用瀏覽器開。
+ */
+export async function showApplySignPage(market: SigningMarket) {
+    if (!isTauri) return;
+    try {
+        const { invoke } = await core();
+        await invoke('apply_window_show_sign_page', { market });
+    } catch (error) {
+        if (isUnknownCommand(error)) { await openExternalUrlOrThrow(SIGNING_URLS[market].url); return; }
+        const reason = errorText(error);
+        throw new Error(reason ? `無法打開簽署頁：${reason}` : '無法打開簽署頁');
+    }
+}
 export const focusApplyTarget = (target: string) => call('apply_window_focus', { target });
 /** 「下載 .env」時是否同時把檔案存到下載資料夾（預設不存，只匯入 App）。舊版原生殼沒有這個指令：照舊只匯入。 */
 export const setApplySaveEnv = (save: boolean) => call('apply_window_set_save_env', { save });
@@ -99,8 +115,12 @@ export async function clearApplySiteData(): Promise<'cleared' | 'unsupported'> {
 export function parseApplyGuideEvent(name: string, payload: unknown): ApplyGuideEvent | null {
     const record = (payload ?? {}) as Record<string, unknown>;
     switch (name) {
-        case 'apply-guide:step':
-            return isApplyPageStep(record.step) ? { kind: 'step', step: record.step } : null;
+        case 'apply-guide:step': {
+            if (!isApplyPageStep(record.step)) return null;
+            if (record.sign === undefined) return { kind: 'step', step: record.step };
+            // 簽署狀態只會出現在簽署頁；其他組合當成格式錯誤
+            return signMarketOf(record.step) && isSignState(record.sign) ? { kind: 'step', step: record.step, sign: record.sign } : null;
+        }
         case 'apply-guide:imported':
             return typeof record.profileId === 'string' && typeof record.name === 'string'
                 ? { kind: 'imported', profileId: record.profileId, name: record.name, duplicate: record.duplicate === true }

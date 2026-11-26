@@ -7,16 +7,25 @@
 //    id 只能用小寫英數與 -，每條規則只能有 modalTitle 或 pathPrefix 其一。
 // 2. APPLY_STEPS：側欄每一步的說明文字。
 //
-// 依據：2026-11-24 在正式官網實際走過的申請流程（Ant Design 元件）。
+// 依據：2026-11-24 在正式官網實際走過的申請流程（Ant Design 元件）；
+// API 約定書簽署頁（signCenter）依 2026-11-26 公開頁面的程式結構
+// （未登入時看不到帳戶表格，登入後的實際畫面尚待以 debug build 的結構摘要校正）。
 
-import { API_MANAGEMENT_URL, SIGNING_URLS } from './account-signing';
+import { API_MANAGEMENT_URL, SIGNING_URLS, type SigningMarket } from './account-signing';
 
 export const APPLY_URL = API_MANAGEMENT_URL;
 
 /** 官網上偵測得到的步驟（順序即判斷優先序：先看開著的對話框，再看網址）。 */
-export type ApplyPageStep = 'success' | 'form' | 'verify' | 'list' | 'login';
+export type SignPageStep = 'sign-s' | 'sign-f' | 'sign-h';
+export type ApplyPageStep = 'success' | 'form' | 'verify' | SignPageStep | 'list' | 'login';
 
-export interface ApplyStepRule { id: ApplyPageStep; modalTitle?: string; pathPrefix?: string }
+export interface ApplyStepRule {
+    id: ApplyPageStep;
+    modalTitle?: string;
+    pathPrefix?: string;
+    // 簽署頁：注入腳本另外回報「簽署狀態」（見 signStatus）
+    sign?: boolean;
+}
 export interface ApplyTarget {
     id: string;
     step: ApplyPageStep;
@@ -25,15 +34,41 @@ export interface ApplyTarget {
     closest?: string;
     // 依按鈕文字找（忽略空白與大小寫，「確 定」＝「確定」）
     text?: string;
-    // 進入該步驟時自動標示
+    // 頁面上出現這個元素時跳過（代表這一步已做完）
+    unless?: string;
+    // 進入該步驟時自動標示；同一步有好幾個時，依順序標示第一個找得到的
     auto?: boolean;
 }
+/**
+ * 簽署頁的帳戶表格：每一列找狀態文字。有一列「未簽署」就算未簽署；
+ * 讀不到任何狀態（還在載入、沒登入、沒有這類帳戶）一律回報 unknown（未確認）。
+ */
+export interface SignStatusRules { rowSelector: string; signed: string; unsigned: string; pending: string }
 export interface ApplyPageRules {
     modalSelector: string;
     modalTitleSelector: string;
     steps: ApplyStepRule[];
     targets: ApplyTarget[];
+    signStatus: SignStatusRules;
 }
+
+/** 三個市場的簽署頁步驟。 */
+export const SIGN_STEPS: Record<SigningMarket, SignPageStep> = { S: 'sign-s', F: 'sign-f', H: 'sign-h' };
+export const SIGNING_MARKETS: SigningMarket[] = ['S', 'F', 'H'];
+export function signMarketOf(step: ApplyPageStep | null): SigningMarket | null {
+    return SIGNING_MARKETS.find(market => SIGN_STEPS[market] === step) ?? null;
+}
+
+// 簽署頁上要標示的東西（三個市場的頁面結構相同）。auto 依序：
+// 逐條勾「已閱讀」→ 下載 PDF 副本 → 勾「我已確認簽署並已下載」→ 勾帳戶 → 「簽署」。
+// 只標示，App 不會替使用者勾選或按下。
+const SIGN_TARGETS = (step: SignPageStep): ApplyTarget[] => [
+    { id: `${step}-terms`, step, selector: 'label[class*="paragraphTitle"]:not(.ant-checkbox-wrapper-checked)', auto: true },
+    { id: `${step}-download`, step, selector: '[class*="red__btn"]', text: '下載【 API 電子交易風險預告書暨使用同意書 】', unless: 'h5 label.ant-checkbox-wrapper', auto: true },
+    { id: `${step}-confirm`, step, selector: 'h5 label.ant-checkbox-wrapper:not(.ant-checkbox-wrapper-checked)', auto: true },
+    { id: `${step}-accounts`, step, selector: '.ant-table-wrapper', unless: 'tr.ant-table-row-selected', auto: true },
+    { id: `${step}-button`, step, selector: 'button[class*="sign__btn"]', auto: true },
+];
 
 export const APPLY_PAGE_RULES: ApplyPageRules = {
     modalSelector: '.ant-modal',
@@ -42,6 +77,9 @@ export const APPLY_PAGE_RULES: ApplyPageRules = {
         { id: 'success', modalTitle: '新增成功' },
         { id: 'form', modalTitle: '新增 API KEY' },
         { id: 'verify', modalTitle: '身份驗證' },
+        { id: 'sign-s', pathPrefix: '/newweb/signCenter/S_openAPI', sign: true },
+        { id: 'sign-f', pathPrefix: '/newweb/signCenter/F_openApi', sign: true },
+        { id: 'sign-h', pathPrefix: '/newweb/signCenter/H_openApi', sign: true },
         { id: 'list', pathPrefix: '/newweb/PythonAPIKey' },
         // 未登入時 API 管理頁會轉回首頁
         { id: 'login', pathPrefix: '/' },
@@ -67,14 +105,41 @@ export const APPLY_PAGE_RULES: ApplyPageRules = {
         { id: 'submit', step: 'form', text: '確定' },
         { id: 'secret-key', step: 'success', text: 'Secret Key' },
         { id: 'download-env', step: 'success', text: '下載 .env', auto: true },
+        ...SIGNING_MARKETS.flatMap(market => SIGN_TARGETS(SIGN_STEPS[market])),
     ],
+    signStatus: {
+        rowSelector: '.ant-table-tbody > tr.ant-table-row',
+        signed: '已簽署',
+        unsigned: '未簽署',
+        pending: '審核中',
+    },
+};
+
+/** 簽署頁讀到的狀態；unknown＝未確認（沒讀到、還沒打開過）。 */
+export type SignState = 'unknown' | 'signed' | 'unsigned' | 'pending';
+export const SIGN_STATES: readonly SignState[] = ['unknown', 'signed', 'unsigned', 'pending'];
+export function isSignState(value: unknown): value is SignState {
+    return typeof value === 'string' && (SIGN_STATES as readonly string[]).includes(value);
+}
+export const SIGN_STATE_LABEL: Record<SignState, string> = {
+    unknown: '未確認', signed: '已簽署', unsigned: '未簽署', pending: '審核中',
+};
+export const SIGN_MARKET_COPY: Record<SigningMarket, { title: string; body: string }> = {
+    S: { title: '證券（台股）', body: '台股現股、ETF 的 API 下單。' },
+    F: { title: '期貨／選擇權', body: '台灣期貨與選擇權的 API 下單。' },
+    H: { title: '美股（複委託）', body: '透過複委託下美股的 API 下單。' },
 };
 
 // ── 側欄步驟 ─────────────────────────────────────────────────────────
 
 /** 導覽的全部步驟：開始前、官網五步、App 載入、完成。 */
-export type GuideStep = 'start' | 'login' | 'list' | 'verify' | 'form' | 'success' | 'imported';
-export const GUIDE_ORDER: GuideStep[] = ['start', 'login', 'list', 'verify', 'form', 'success', 'imported'];
+export type GuideStep = 'start' | 'login' | 'sign' | 'list' | 'verify' | 'form' | 'success' | 'imported';
+export const GUIDE_ORDER: GuideStep[] = ['start', 'login', 'sign', 'list', 'verify', 'form', 'success', 'imported'];
+
+/** 官網步驟對應的導覽步驟：三個簽署頁都是「簽署」。 */
+export function guideStepOf(step: ApplyPageStep): GuideStep {
+    return signMarketOf(step) ? 'sign' : step as Exclude<ApplyPageStep, SignPageStep>;
+}
 
 export interface GuidePoint {
     title: string;
@@ -113,7 +178,18 @@ export const GUIDE_COPY: Record<GuideStep, GuideStepCopy> = {
         lead: '在右邊的官網按「客戶登入」，用證券網路帳號和密碼登入。',
         points: [
             { title: '按「客戶登入」', body: '在官網右上角。按下後會跳出登入框。', target: 'login-button' },
-            { title: '登入後回到 API 管理頁', body: '登入後如果還停在首頁，按下面的「回到 API 管理頁」。' },
+            { title: '登入後到下一步', body: '登入後如果還停在首頁，按下面的「回到 API 管理頁」，或按「下一步」先看 API 約定書。' },
+        ],
+    },
+    sign: {
+        label: '簽署',
+        title: '簽署 API 約定書',
+        lead: '要用 API 交易的市場，都要簽該市場的 API 約定書。順序不限：可以現在先簽，也可以申請完金鑰再回來簽。',
+        points: [
+            { title: '逐條閱讀並勾選', body: '每一條都要勾選「已閱讀條款」，等倒數結束才能按「簽署」。App 只會框出位置，不會替你勾選或簽署。', target: 'terms' },
+            { title: '下載約定書副本', body: '按「下載【 API 電子交易風險預告書暨使用同意書 】」存一份 PDF，再勾選「我已確認簽署並已下載」。', target: 'download' },
+            { title: '勾選帳戶後按「簽署」', body: '在下方表格勾選要簽署的帳戶，按「簽署」。會用到登入時設定好的電子憑證，可能要輸入憑證密碼。', target: 'button' },
+            { title: '簽完還要測試', body: '簽署後要先在模擬環境完成 API 測試，正式環境才能下單；申請完金鑰後就能用 App 測試。' },
         ],
     },
     list: {
@@ -182,8 +258,8 @@ export const PRODUCTION_NEXT_STEPS: NextStep[] = [
     },
     {
         title: '簽署 API 約定書',
-        body: '依要交易的商品簽署對應的約定書。',
-        links: [SIGNING_URLS.S, SIGNING_URLS.F],
+        body: '要交易的市場都要簽署對應的約定書（上方可以直接打開各市場的簽署頁）。',
+        links: [SIGNING_URLS.S, SIGNING_URLS.F, SIGNING_URLS.H],
     },
     {
         title: '完成模擬環境測試',
@@ -202,6 +278,11 @@ export function nextGuideStep(step: GuideStep): GuideStep {
 }
 export function previousGuideStep(step: GuideStep): GuideStep {
     return GUIDE_ORDER[Math.max(GUIDE_ORDER.indexOf(step) - 1, 0)]!;
+}
+/** 簽署步驟的標示目標：依目前打開的簽署頁（sign-s-terms…）。 */
+export function signTargetId(step: ApplyPageStep | null, point: string): string | null {
+    const market = signMarketOf(step);
+    return market ? `${SIGN_STEPS[market]}-${point}` : null;
 }
 export function isApplyPageStep(value: unknown): value is ApplyPageStep {
     return typeof value === 'string' && APPLY_PAGE_RULES.steps.some(rule => rule.id === value);

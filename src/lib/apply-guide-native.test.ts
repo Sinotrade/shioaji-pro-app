@@ -4,7 +4,7 @@ const mocks = vi.hoisted(() => ({ invoke: vi.fn(), openOrThrow: vi.fn(), open: v
 vi.mock('./runtime', () => ({ isTauri: true }));
 vi.mock('./tauri', () => ({ openExternalUrl: mocks.open, openExternalUrlOrThrow: mocks.openOrThrow }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke: mocks.invoke }));
-import { clearApplySiteData, openApplyWindow, setApplySaveEnv } from './apply-guide-native';
+import { clearApplySiteData, openApplyWindow, setApplySaveEnv, showApplySignPage } from './apply-guide-native';
 
 beforeEach(() => { vi.clearAllMocks(); });
 
@@ -72,5 +72,25 @@ describe('setApplySaveEnv', () => {
         expect(mocks.invoke).toHaveBeenCalledWith('apply_window_set_save_env', { save: true });
         mocks.invoke.mockRejectedValue('Command apply_window_set_save_env not found');
         await expect(setApplySaveEnv(false)).resolves.toBeUndefined();
+    });
+});
+
+describe('showApplySignPage', () => {
+    it('passes only the market code to the shell', async () => {
+        mocks.invoke.mockResolvedValue(null);
+        await showApplySignPage('H');
+        expect(mocks.invoke).toHaveBeenCalledWith('apply_window_show_sign_page', { market: 'H' });
+    });
+
+    it('opens the signing page in the browser on an older shell', async () => {
+        mocks.invoke.mockRejectedValue('Command apply_window_show_sign_page not found');
+        mocks.openOrThrow.mockResolvedValue(undefined);
+        await showApplySignPage('F');
+        expect(mocks.openOrThrow).toHaveBeenCalledWith('https://www.sinotrade.com.tw/newweb/signCenter/F_openApi/');
+    });
+
+    it('passes on why the signing page could not open', async () => {
+        mocks.invoke.mockRejectedValue('apply window is gone');
+        await expect(showApplySignPage('S')).rejects.toThrow('無法打開簽署頁：apply window is gone');
     });
 });
