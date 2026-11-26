@@ -223,7 +223,10 @@ export interface BroadcastTraceEntry {
     repeat: number;
 }
 
-const TRACE_LIMIT = 200;
+// 200 筆在實測中只夠記 2.5 分鐘（冷卻／去重的雜訊佔絕大多數，
+// 見 broadcast-trace-20261126-211647.txt：匯出時已滿 200/200、最早只回到 2 分半前）。
+// 1000 筆約 100KB，對記憶體無感，但足以覆蓋一次完整的實測流程。
+const TRACE_LIMIT = 1000;
 const TRACE_COLLAPSE_MS = 1000;
 
 let trace: BroadcastTraceEntry[] = [];
@@ -231,10 +234,15 @@ let trace: BroadcastTraceEntry[] = [];
 function pushTrace(kind: BroadcastTraceKind, text: string, code?: string) {
     const now = Date.now();
     const last = trace[trace.length - 1];
+    // 折疊的判斷必須含 text：同商品同種類但**內容不同**的兩筆是兩件事。
+    // 真實案例：21:14:52.169「不念（first-tick）」與 21:14:52.307「念 «…2160»」
+    // 相隔 138ms；只看 (kind, code) 會把「念」吞進「不念」，匯出檔就出現
+    // 「只判定不念」卻又有 speak 的自相矛盾（broadcast-trace-20261126-211647）。
     if (
         last &&
         last.kind === kind &&
         last.code === code &&
+        last.text === text &&
         now - last.at < TRACE_COLLAPSE_MS
     ) {
         // 折疊：不新增一行，只把上一筆的次數 +1（參考值一定換新，陣列本身不變長）
@@ -520,15 +528,15 @@ export function debugQueuePending(n: number) {
     });
 }
 
-export function debugDroppedStale() {
-    pushTrace('dropped', '過時丟棄（佇列裡已經不是最新報價）');
+export function debugDroppedStale(code?: string) {
+    pushTrace('dropped', '過時丟棄（佇列裡已經不是最新報價）', code);
     update((d) => {
         d.counters.droppedStale += 1;
     });
 }
 
-export function debugDuplicateSuppressed() {
-    pushTrace('duplicate', '去重擋下（同商品同句話）');
+export function debugDuplicateSuppressed(code?: string) {
+    pushTrace('duplicate', '去重擋下（同商品同句話）', code);
     update((d) => {
         d.counters.duplicateSuppressed += 1;
     });

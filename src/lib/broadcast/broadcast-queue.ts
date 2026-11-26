@@ -81,7 +81,7 @@ export class BroadcastQueue {
         // 智慧過濾：同一商品跟「上一句」一模一樣就不念
         if (symbolCode) {
             if (this.lastTextBySymbol.get(symbolCode) === text) {
-                debugDuplicateSuppressed();
+                debugDuplicateSuppressed(symbolCode);
                 return;
             }
             this.lastTextBySymbol.set(symbolCode, text);
@@ -115,7 +115,7 @@ export class BroadcastQueue {
                     !message.interrupt &&
                     this.now() - message.requestedAt > this.staleAfterMs
                 ) {
-                    debugDroppedStale();
+                    debugDroppedStale(message.symbolCode);
                     continue;
                 }
                 try {

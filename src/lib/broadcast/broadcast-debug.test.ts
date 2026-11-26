@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
     clearBroadcastTrace,
+    debugDecision,
     debugNoQuote,
     debugQuoteArrived,
     debugSubscribed,
@@ -50,16 +51,16 @@ describe('語音播報 trace', () => {
         ]);
     });
 
-    it('上限 200 筆，超過時丟掉最舊的', () => {
-        for (let i = 0; i < 250; i += 1) {
+    it('上限 1000 筆，超過時丟掉最舊的', () => {
+        for (let i = 0; i < 1050; i += 1) {
             // 用不同代碼讓每一筆都是獨立事件，不會被折疊
             debugNoQuote(`C${i}`, 'x');
         }
 
         const trace = getBroadcastTrace();
-        expect(trace).toHaveLength(200);
+        expect(trace).toHaveLength(1000);
         expect(trace.at(0)?.code).toBe('C50');
-        expect(trace.at(-1)?.code).toBe('C249');
+        expect(trace.at(-1)?.code).toBe('C1049');
     });
 
     it('報價只在「沒有 → 有」的轉折記一筆，之後每筆 tick 不灌進來', () => {
@@ -83,6 +84,26 @@ describe('語音播報 trace', () => {
         expect(text).toMatch(
             /\d{2}:\d{2}:\d{2}\.\d{3}\s+subscribe\s+2330 訂閱 tick/,
         );
+    });
+
+    it('同商品同種類但內容不同的判定不得被折疊（實測 trace 抓到的 bug）', () => {
+        // 真實案例（broadcast-trace-20261126-211647.txt:36-37）：
+        // 21:14:52.169 decision CDFR1 不念（原因：first-tick）
+        // 21:14:52.307 speak    CDFR1 «台積電期貨 近月 2160»
+        // 兩筆判定相隔 138ms、同商品同種類，但一個不念、一個要念。
+        // 折疊若只看 (kind, code)，「念」那筆會被吞進「不念」那行，
+        // trace 就會出現「只判定不念」卻又有 speak 的自相矛盾。
+        debugDecision('CDFR1', { status: '', speak: false, reason: 'first-tick' });
+        debugDecision('CDFR1', {
+            status: '',
+            speak: true,
+            text: '台積電期貨 近月 2160',
+        });
+
+        const trace = getBroadcastTrace();
+        expect(trace).toHaveLength(2);
+        expect(trace.at(0)?.text).toContain('不念');
+        expect(trace.at(-1)?.text).toContain('念 «');
     });
 
     it('折疊的次數會出現在匯出文字裡', () => {
