@@ -236,7 +236,6 @@ async function attach(code: string) {
         debugSubscribed(code, [type]);
         // 「訂閱了卻一直沒資料」要講清楚：伺服器端可能訂閱成功（desired=true），
         // 也可能是該商品當下沒有成交（冷門期貨／非活躍時段）→ 上游沒有即時成交可推。
-        // 模擬與正式環境的行情覆蓋相同，不要誤導成「模擬環境沒有股票 tick」。
         // 沒有這段，使用者只會看到「沒聲音」，分不出是沒開關還是沒資料。
         const timer = setTimeout(() => {
             noQuoteTimers.delete(code);
