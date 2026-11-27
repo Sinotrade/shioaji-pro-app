@@ -14,6 +14,7 @@ import { useWorkspaceGrid } from './hooks/use-workspace-grid';
 import * as styles from './App.css';
 import { BottomDock } from './components/bottom-dock';
 import { AsyncStatus, type AsyncPhase } from './components/async-status';
+import { BroadcastPanel } from './components/broadcast-panel';
 import { CandleChart } from './components/candle-chart';
 import { ChainMap } from './components/chain-map';
 import { PortfolioSectorPanel } from './components/portfolio-sector-panel';
@@ -248,6 +249,7 @@ function BlockBody({
     flashTargetRef,
     groupPending,
     onSessionConfigChange,
+    onBroadcastCodesChange,
     refreshTrading,
     workspaceGen,
 }: {
@@ -280,6 +282,7 @@ function BlockBody({
     onFlashCreditChange: (id: string, credit: FlashCredit) => void;
     onFlashOrderChange: (id: string, order: FlashOrderOpts) => void;
     onSessionConfigChange: (id: string, patch: SessionConfigPatch) => void;
+    onBroadcastCodesChange: (id: string, codes: string[]) => void;
     refreshTrading: () => void;
     /** bumps whenever a whole workspace is applied (layout / preset / reset / agent) */
     workspaceGen: number;
@@ -501,6 +504,15 @@ function BlockBody({
             );
         case 'notices':
             return <NoticeCenter />;
+        case 'broadcast':
+            return (
+                <BroadcastPanel
+                    codes={block.broadcastCodes ?? []}
+                    onCodesChange={(codes) =>
+                        onBroadcastCodesChange(block.id, codes)
+                    }
+                />
+            );
         case 'debug':
             return <DebugPanel />;
         case 'grid':
@@ -694,6 +706,7 @@ interface BlockViewProps {
     onFlashOrderChange: (id: string, order: FlashOrderOpts) => void;
     onFlashLinkChange: (id: string, link: FlashLink) => void;
     onSessionConfigChange: (id: string, patch: SessionConfigPatch) => void;
+    onBroadcastCodesChange: (id: string, codes: string[]) => void;
     refreshTrading: () => void;
     /** bumps whenever a whole workspace is applied (layout / preset / reset / agent) */
     workspaceGen: number;
@@ -1415,6 +1428,18 @@ function MainApp() {
         store: (id, pin) => storePinRef.current(id, pin),
     }));
 
+    const setBlockBroadcastCodes = useCallback(
+        (id: string, codes: string[]) => {
+            updateWorkspace({
+                ...workspace,
+                blocks: workspace.blocks.map((block) =>
+                    block.id === id ? { ...block, broadcastCodes: codes } : block,
+                ),
+            });
+        },
+        [workspace, updateWorkspace],
+    );
+
     const setBlockWallConfig = useCallback(
         (id: string, wallList: string, wallCols: number, wallRows: number) => {
             updateWorkspace({
@@ -1845,6 +1870,7 @@ function MainApp() {
                                     onFlashOrderChange={setBlockFlashOrder}
                                     onFlashLinkChange={setBlockFlashLink}
                                     onSessionConfigChange={setBlockSessionConfig}
+                                    onBroadcastCodesChange={setBlockBroadcastCodes}
                                     refreshTrading={refreshTrading}
                                     workspaceGen={workspaceGen}
                                 />
