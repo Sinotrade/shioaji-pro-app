@@ -185,8 +185,10 @@ describe('廣播面板版面', () => {
         expect(body).toContain('行情狀態');
         expect(body).toContain('成交／委託');
         expect(body).toContain('通知／條件單');
-        // 總開關仍在 header
+        // 總開關仍在 header，且分成「設定 / 診斷」兩頁
         expect(body).toContain('播報中');
+        expect(body).toContain('設定');
+        expect(body).toContain('診斷');
         r.unmount();
     });
 
@@ -232,14 +234,25 @@ describe('廣播面板版面', () => {
         r.unmount();
     });
 
-    it('診斷區預設收合，摘要顯示計數；展開後才出現商品狀態與 trace 按鈕', async () => {
+    it('預設停在設定頁；切到診斷頁才出現計數與 trace 按鈕', async () => {
         const r = await render();
-        const details = r.root.findAll((n) => n.type === 'details');
-        expect(details).toHaveLength(1);
-        expect(at(details, 0, '診斷區').props.open).toBeUndefined();
-        expect(textOf(at(details, 0, '診斷區').props.children)).toContain('tick 157');
-        expect(textOf(at(details, 0, '診斷區').props.children)).toContain('已播 4');
-        expect(textOf(at(details, 0, '診斷區').props.children)).toContain('記錄 trace：關');
+        // 設定頁有控制卡，沒有任何診斷計數
+        expect(textOf(r.toJSON())).toContain('播報控制');
+        expect(textOf(r.toJSON())).not.toContain('冷卻擋');
+
+        const diagTab = buttonByText(r, '診斷');
+        expect(diagTab.props['aria-selected']).toBe(false);
+        await act(async () => {
+            diagTab.props.onClick();
+        });
+
+        const body = textOf(r.toJSON());
+        expect(body).toContain('冷卻擋');
+        expect(body).toContain('一般報價');
+        expect(body).toContain('記錄 trace：關');
+        expect(body).toContain('TICK');
+        // 診斷頁不再顯示控制卡
+        expect(body).not.toContain('播報控制');
         r.unmount();
     });
 

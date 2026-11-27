@@ -473,52 +473,86 @@ export const testBtn = style({
     },
 });
 
-// ---- 可收合的診斷區 ----
+// ---- 分頁（設定 / 診斷）----
 
-export const diag = style({
-    marginTop: vars.space.md,
+export const tabs = style({
+    display: 'flex',
+    gap: vars.space.xs,
+    padding: `0 ${vars.space.md}`,
+    borderBottom: `1px solid ${vars.color.border}`,
+    flexShrink: 0,
+});
+
+export const tab = style({
+    padding: '5px 10px',
+    fontFamily: vars.font.body,
+    fontSize: '0.7rem',
+    color: vars.color.mutedForeground,
+    background: 'transparent',
+    border: 'none',
+    borderBottom: '2px solid transparent',
+    cursor: 'pointer',
+    ':hover': { color: vars.color.foreground },
+});
+
+export const tabActive = style({
+    color: vars.color.foreground,
+    borderBottomColor: vars.color.accent,
+});
+
+export const tabBadge = style({
+    marginLeft: '4px',
+    fontFamily: vars.font.mono,
+    fontSize: '0.6rem',
+    color: vars.color.mutedForeground,
+    fontVariantNumeric: 'tabular-nums',
+});
+
+export const pane = style({
+    flex: 1,
+    minHeight: 0,
+    overflowY: 'auto',
+    padding: `${vars.space.sm} ${vars.space.md} ${vars.space.md}`,
+    display: 'flex',
+    flexDirection: 'column',
+});
+
+// ---- 診斷頁的計數格 ----
+
+export const counterGrid = style({
+    display: 'grid',
+    gridTemplateColumns: 'repeat(4, minmax(0,1fr))',
+    gap: vars.space.xs,
+    marginTop: vars.space.xs,
+});
+
+export const counterCell = style({
+    padding: '4px 6px',
     background: vars.color.panelRaised,
     border: `1px solid ${vars.color.border}`,
     borderRadius: vars.radius.sm,
 });
 
-export const diagSummary = style({
-    display: 'flex',
-    alignItems: 'center',
-    gap: vars.space.sm,
-    padding: '5px 8px',
-    fontFamily: vars.font.display,
-    fontSize: '0.62rem',
-    fontWeight: 600,
-    letterSpacing: '0.08em',
-    textTransform: 'uppercase',
-    color: vars.color.mutedForeground,
-    cursor: 'pointer',
-    listStyle: 'none',
-    selectors: { '&::-webkit-details-marker': { display: 'none' } },
-});
-
-export const diagArrow = style({
-    fontSize: '0.55rem',
-    transition: 'transform 120ms ease',
-    selectors: {
-        'details[open] &': { transform: 'rotate(90deg)' },
-    },
-});
-
-export const diagKv = style({
-    marginLeft: 'auto',
+export const counterKey = style({
+    display: 'block',
     fontFamily: vars.font.mono,
-    fontSize: '0.62rem',
-    letterSpacing: 0,
-    textTransform: 'none',
-    color: vars.color.foreground,
-    fontVariantNumeric: 'tabular-nums',
+    fontSize: '0.55rem',
+    letterSpacing: '0.04em',
+    color: vars.color.mutedForeground,
 });
 
-export const diagBody = style({
-    display: 'flex',
-    flexDirection: 'column',
-    padding: `${vars.space.sm} 8px ${vars.space.sm}`,
-    borderTop: `1px solid ${vars.color.border}`,
+export const counterVal = style({
+    display: 'block',
+    fontFamily: vars.font.mono,
+    fontSize: '0.9rem',
+    fontVariantNumeric: 'tabular-nums',
+    color: vars.color.foreground,
+});
+
+export const diagNote = style({
+    marginTop: vars.space.sm,
+    fontFamily: vars.font.body,
+    fontSize: '0.6rem',
+    lineHeight: 1.5,
+    color: vars.color.mutedForeground,
 });
