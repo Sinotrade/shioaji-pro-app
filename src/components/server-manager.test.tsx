@@ -1,11 +1,11 @@
 import { createElement, type ReactElement } from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-const mocks = vi.hoisted(() => ({ load: vi.fn(), save: vi.fn(), profile: vi.fn(), select: vi.fn(), remove: vi.fn(), logout: vi.fn(), start: vi.fn(), stop: vi.fn(), status: vi.fn(), env: vi.fn(), envCandidate: vi.fn(), ca: vi.fn(), notify: vi.fn(), info: vi.fn(), prepare: vi.fn(), reload: vi.fn() }));
+const mocks = vi.hoisted(() => ({ load: vi.fn(), reread: vi.fn(), save: vi.fn(), profile: vi.fn(), select: vi.fn(), remove: vi.fn(), logout: vi.fn(), start: vi.fn(), stop: vi.fn(), status: vi.fn(), env: vi.fn(), envCandidate: vi.fn(), ca: vi.fn(), notify: vi.fn(), info: vi.fn(), prepare: vi.fn(), reload: vi.fn(), guideOpen: vi.fn(), guideClose: vi.fn(), guideHandlers: [] as ((event: { kind: string }) => void)[] }));
 vi.mock('../lib/tauri', async () => ({
     ...await import('../lib/desktop-credentials'),
     isTauri: true, appVersion: async () => 'dev · test',
-    loadDesktopSettings: mocks.load, saveDesktopSettings: mocks.save,
+    loadDesktopSettings: mocks.load, reloadDesktopSettings: mocks.reread, saveDesktopSettings: mocks.save,
     saveCredentialProfile: mocks.profile, selectCredentialProfile: mocks.select,
     deleteCredentialProfile: mocks.remove, logoutCredentialProfile: mocks.logout,
     stopAgentsForServerChange: mocks.prepare,
@@ -14,6 +14,15 @@ vi.mock('../lib/tauri', async () => ({
     subscribeAgentHarnessEnabled: () => () => {}, subscribeAppUpdateState: () => () => {},
     getAppUpdateState: () => updateState, checkForUpdates: vi.fn(), ensureLocalTlsCert: vi.fn(),
     openLatestRelease: vi.fn(), reloadWhenHealthy: vi.fn(), restartAndInstallUpdate: vi.fn(),
+}));
+vi.mock('../lib/apply-guide-native', () => ({
+    openApplyWindow: mocks.guideOpen, closeApplyWindow: mocks.guideClose, clearApplySiteData: vi.fn(), setApplySaveEnv: vi.fn(),
+    setApplySaveCa: vi.fn(), setApplyImportEnvironment: vi.fn(async () => undefined), setApplyCaTarget: vi.fn(async () => null),
+    showApplyApiPage: vi.fn(), showApplySignPage: vi.fn(), focusApplyTarget: vi.fn(), setApplyGuideCard: vi.fn(),
+    listenApplyGuide: async (handler: (event: { kind: string }) => void) => {
+        mocks.guideHandlers.push(handler);
+        return () => { mocks.guideHandlers.splice(mocks.guideHandlers.indexOf(handler), 1); };
+    },
 }));
 vi.mock('../hooks/use-stream', () => ({ useStreamStatus: () => 'live' }));
 vi.mock('../lib/shioaji', () => ({ fetchHealth: async () => null, fetchInfo: mocks.info, fetchAccounts: async () => [], fetchCaExpire: vi.fn() }));
@@ -25,6 +34,8 @@ import { ServerEnvNotice } from './server-env-notice';
 import { reloadWhenHealthy } from '../lib/tauri';
 import { endTiming } from '../lib/startup-timing';
 import { CredentialProfiles } from './credential-profiles';
+import { ApplyGuidePanel } from './apply-guide-panel';
+import { requestApplyGuide } from '../lib/apply-guide-reentry';
 import { getStoredSpawnKeyHash, setStoredSpawnKeyHash } from '../lib/spawn-keys';
 import { recordAgentRuntimeFailure } from '../lib/agent-diagnostics';
 const updateState = { phase: 'idle' };
@@ -40,7 +51,7 @@ describe('credential profiles in server settings', () => {
         const storage = new Map<string, string>();
         vi.stubGlobal('localStorage', { getItem: (key: string) => storage.get(key) ?? null, setItem: (key: string, value: string) => storage.set(key, value), removeItem: (key: string) => storage.delete(key) });
         vi.clearAllMocks();
-        mocks.load.mockResolvedValue(structuredClone(initial)); mocks.save.mockResolvedValue(initial); mocks.profile.mockResolvedValue(initial);
+        mocks.load.mockResolvedValue(structuredClone(initial)); mocks.reread.mockImplementation(() => mocks.load()); mocks.save.mockResolvedValue(initial); mocks.profile.mockResolvedValue(initial);
         mocks.select.mockResolvedValue({ ...initial, activeProfileId: 'two', production: true, credentialRevision: 'two-rev', caPath: two.caPath, hasCaPassword: true });
         mocks.remove.mockResolvedValue({ ...initial, profiles: [two], activeProfileId: null, configured: false });
         mocks.logout.mockResolvedValue({ ...initial, activeProfileId: null, configured: false });
@@ -336,5 +347,106 @@ describe('credential profiles in server settings', () => {
             await vi.waitFor(() => expect(copy).toHaveBeenCalledWith(expect.stringContaining('exit code: 3\nInvalid settings')));
         });
         expect(copy.mock.calls[0]![0]).not.toContain('hidden-token');
+    });
+    it('opens the in-app apply guide from 伺服器設定 › 帳號 and returns to the account editor for the CA password', async () => {
+        mocks.guideOpen.mockResolvedValue('overlay');
+        await open();
+        expect(view.root.findAllByType(ApplyGuidePanel)).toHaveLength(0);
+        await click('申請／下載憑證導覽');
+        // 設定對話框讓位給導覽面板；開始頁先選要做的事，還沒打開官網
+        expect(view.root.findAllByType(ServerSettingsDialog)).toHaveLength(0);
+        expect(view.root.findByType(ApplyGuidePanel).props.request.task).toBeNull();
+        expect(text()).toContain('要在官網上做什麼？');
+        expect(mocks.guideOpen).not.toHaveBeenCalled();
+        // 導覽要求到帳號設定輸入憑證密碼：直接打開那個帳號的編輯畫面
+        const reads = mocks.reread.mock.calls.length;
+        await act(async () => view.root.findByType(ApplyGuidePanel).props.onOpenAccount('two'));
+        // 先重新讀帳號資料（剛設定的憑證路徑）再打開編輯畫面
+        expect(mocks.reread.mock.calls.length).toBeGreaterThan(reads);
+        expect(view.root.findByType(ServerSettingsDialog).props.initialEditId).toBe('two');
+        expect(view.root.findByType(CredentialProfiles).findAllByType('input').length).toBeGreaterThan(0);
+        expect(view.root.findByType(ApplyGuidePanel)).toBeDefined();
+        // 讀不到最新帳號資料：不打開編輯畫面（避免帶著舊的憑證路徑存回去）
+        await click('關閉伺服器設定');
+        mocks.load.mockRejectedValueOnce(new Error('無法讀取'));
+        await act(async () => view.root.findByType(ApplyGuidePanel).props.onOpenAccount('two'));
+        expect(view.root.findAllByType(ServerSettingsDialog)).toHaveLength(0);
+        expect(mocks.notify).toHaveBeenCalledWith(expect.objectContaining({ title: '帳號資料讀取失敗' }));
+        await act(async () => view.root.findByType(ApplyGuidePanel).props.onClose());
+        expect(view.root.findAllByType(ApplyGuidePanel)).toHaveLength(0);
+    });
+    it('reloads the profiles when the apply window saves a key or certificate, even with the panel closed', async () => {
+        await act(async () => { view = create(createElement(ServerManager, { open: true, onToggle: vi.fn() })); });
+        expect(view.root.findAllByType(ApplyGuidePanel)).toHaveLength(0);
+        const reads = mocks.reread.mock.calls.length;
+        await act(async () => { for (const handler of [...mocks.guideHandlers]) handler({ kind: 'ca-attached' }); });
+        // 一定重新讀一次（不沿用存檔前就開始的讀取）
+        expect(mocks.reread.mock.calls.length).toBeGreaterThan(reads);
+    });
+    it('saves the certificate attached in the background, not the path the open editor started with', async () => {
+        await open(); await click('編輯 備用帳號');
+        // 編輯畫面開著時，申請視窗替這個帳號收下新憑證（原生端已刪掉舊檔）
+        const attached = { ...two, caPath: '/fixture/ca/two/Sinopac-0123456789abcdef.pfx', hasCaPassword: false, revision: 'two-rev-2' };
+        mocks.load.mockResolvedValue({ ...initial, profiles: [one, attached] });
+        await act(async () => { for (const handler of [...mocks.guideHandlers]) handler({ kind: 'ca-attached' }); });
+        expect(text()).toContain('Sinopac-0123456789abcdef.pfx');
+        await change(3, 'fixture-ca-password'); await click('僅儲存');
+        // 送出的密碼在存檔後就從物件清掉，這裡只看路徑
+        expect(mocks.profile).toHaveBeenCalledWith({ id: 'two', name: '備用帳號', environment: 'production', caPath: attached.caPath });
+    });
+    it('keeps a certificate file the user picked in the editor over one attached in the background', async () => {
+        mocks.ca.mockResolvedValue('/fixture/picked.pfx');
+        await open(); await click('編輯 備用帳號'); await click('更換');
+        mocks.load.mockResolvedValue({ ...initial, profiles: [one, { ...two, caPath: '/fixture/ca/two/Sinopac-0123456789abcdef.pfx', revision: 'two-rev-2' }] });
+        await act(async () => { for (const handler of [...mocks.guideHandlers]) handler({ kind: 'ca-attached' }); });
+        expect(text()).toContain('picked.pfx');
+        await click('僅儲存');
+        expect(mocks.profile).toHaveBeenCalledWith({ id: 'two', name: '備用帳號', environment: 'production', caPath: '/fixture/picked.pfx' });
+    });
+    it('keeps the newest profiles when an older refresh finishes last', async () => {
+        await open(); await click('編輯 備用帳號');
+        const withCa = (name: string) => ({ ...initial, profiles: [one, { ...two, caPath: `/fixture/ca/two/${name}.pfx` }] });
+        let finishOld!: (value: DesktopSettings) => void;
+        mocks.reread.mockImplementationOnce(() => new Promise<DesktopSettings>(resolve => { finishOld = resolve; }));
+        mocks.reread.mockImplementationOnce(async () => withCa('Sinopac-second'));
+        const attach = async () => act(async () => { for (const handler of [...mocks.guideHandlers]) handler({ kind: 'ca-attached' }); });
+        await attach(); await attach();
+        expect(text()).toContain('Sinopac-second.pfx');
+        await act(async () => finishOld(withCa('Sinopac-first')));
+        expect(text()).toContain('Sinopac-second.pfx');
+    });
+    it('opens the account editor only after the newest profile refresh has arrived', async () => {
+        await act(async () => { view = create(createElement(ServerManager, { open: true, onToggle: vi.fn() })); });
+        await act(async () => { requestApplyGuide(null); });
+        const withCa = (name: string) => ({ ...initial, profiles: [one, { ...two, caPath: `/fixture/ca/two/${name}.pfx` }] });
+        let finishOld!: (value: DesktopSettings) => void; let finishNew!: (value: DesktopSettings) => void;
+        mocks.reread.mockImplementationOnce(() => new Promise<DesktopSettings>(resolve => { finishOld = resolve; }));
+        // 憑證事件會讓伺服器設定和導覽面板各要求一次重新讀取：都還沒回來
+        const pending = new Promise<DesktopSettings>(resolve => { finishNew = resolve; });
+        mocks.reread.mockImplementation(() => pending);
+        await act(async () => view.root.findByType(ApplyGuidePanel).props.onOpenAccount('two'));
+        await act(async () => { for (const handler of [...mocks.guideHandlers]) handler({ kind: 'ca-attached' }); });
+        await act(async () => finishOld(withCa('Sinopac-first')));
+        expect(view.root.findAllByType(ServerSettingsDialog)).toHaveLength(0);
+        await act(async () => finishNew(withCa('Sinopac-second')));
+        expect(view.root.findByType(ServerSettingsDialog).props.initialEditId).toBe('two');
+        expect(text()).toContain('Sinopac-second.pfx');
+    });
+    it('starts the production key task directly from the shortcut request', async () => {
+        mocks.guideOpen.mockResolvedValue('overlay');
+        await act(async () => { view = create(createElement(ServerManager, { open: true, onToggle: vi.fn() })); });
+        await act(async () => { expect(requestApplyGuide('production')).toBe(true); });
+        expect(view.root.findByType(ApplyGuidePanel).props.request.task).toBe('production');
+        expect(mocks.guideOpen).toHaveBeenCalledOnce();
+        expect(text()).toContain('登入永豐金證券網站');
+    });
+    it('shows the guide entry only where the caller wires it', async () => {
+        const props = { settings: initial, busy: false, running: false, onSave: vi.fn(), onAction: vi.fn(), onImported: vi.fn() };
+        await act(async () => { view = create(createElement(CredentialProfiles, props)); });
+        expect(text()).not.toContain('申請／下載憑證導覽');
+        const onOpenGuide = vi.fn();
+        await act(async () => { view.update(createElement(CredentialProfiles, { ...props, onOpenGuide })); });
+        await click('申請／下載憑證導覽');
+        expect(onOpenGuide).toHaveBeenCalledOnce();
     });
 });

@@ -1,4 +1,4 @@
-import { AlertTriangle, ArrowLeft, Check, CheckCircle2, Circle, CircleCheck, FileKey, FileUp, FolderOpen, KeyRound, Loader2, Pencil, Play, Plus, RotateCw, ShieldAlert, ShieldCheck, ShieldOff, Trash2, X } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, Check, CheckCircle2, Circle, CircleCheck, FileKey, FileUp, FolderOpen, KeyRound, Loader2, Pencil, Play, Plus, RotateCw, ShieldAlert, ShieldCheck, ShieldOff, Signpost, Trash2, X } from 'lucide-react';
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { importEnvCandidate, loadDesktopSettings, pickCaFile, pickEnvFile, type CredentialDraft, type CredentialProfile, type DesktopSettings, type EnvImportResult, type EnvSelection } from '../lib/tauri';
 import * as s from './server-settings-dialog.css';
@@ -40,10 +40,14 @@ function Callout({ tone, icon, title, children, actions }: { tone: 'danger' | 'w
     </div>;
 }
 
-export function CredentialProfiles({ settings, busy, running, applyOnSwitch = false, onSave, onAction, onImported, onStart, onBusyChange, onEditingChange }: {
+export function CredentialProfiles({ settings, busy, running, applyOnSwitch = false, initialEditId, onOpenGuide, onSave, onAction, onImported, onStart, onBusyChange, onEditingChange }: {
     settings: DesktopSettings; busy: boolean; running: boolean;
     // 切換後由外層直接重新啟動（#370）；首次設定畫面仍由使用者按「啟動」
     applyOnSwitch?: boolean;
+    // 打開時直接編輯這個帳號（導覽收下憑證後「到帳號設定輸入憑證密碼」）
+    initialEditId?: string;
+    // 「申請／下載憑證導覽」：申請正式 API Key、下載 CA 憑證、簽署約定書（首次設定畫面沒有，那裡本來就是導覽）
+    onOpenGuide?: () => void;
     onSave: (draft: CredentialDraft, apply: boolean) => Promise<DesktopSettings>;
     onAction: (action: 'select' | 'delete', id: string) => Promise<DesktopSettings>;
     onImported: (settings: DesktopSettings) => void;
@@ -55,9 +59,18 @@ export function CredentialProfiles({ settings, busy, running, applyOnSwitch = fa
 }) {
     const ids = useId();
     const migrating = !!settings.migrationError;
-    const [draft, setDraft] = useState(() => editDraft(settings.profiles.find(p => p.id === settings.activeProfileId)));
+    const initialEdit = initialEditId && !settings.migrationError
+        ? settings.profiles.find(p => p.id === initialEditId && p.secretState === 'stored') : undefined;
+    const [draft, setDraft] = useState(() => editDraft(initialEdit ?? settings.profiles.find(p => p.id === settings.activeProfileId)));
+    // 使用者在這張表單裡自己選過或清除過憑證檔
+    const [caTouched, setCaTouched] = useState(false);
+    const load = (next: CredentialDraft) => { setDraft(next); setCaTouched(false); };
+    const selectedProfile = settings.profiles.find(p => p.id === draft.id);
+    // 編輯畫面開著時，申請視窗在背景替這個帳號換了憑證（舊檔已刪）：沒動過憑證欄位就跟著最新的路徑，
+    // 存檔不會把舊路徑寫回去；自己選過檔案或清除過，就照表單上的
+    const caPath = selectedProfile && !caTouched ? selectedProfile.caPath : draft.caPath;
     // 列表為主，新增或編輯時才展開表單；完全沒有帳號（首次設定）直接進新增
-    const [editing, setEditingState] = useState(() => settings.profiles.length === 0 && !settings.migrationError);
+    const [editing, setEditingState] = useState(() => !!initialEdit || (settings.profiles.length === 0 && !settings.migrationError));
     const setEditing = (next: boolean) => { setEditingState(next); onEditingChange?.(next); };
     const [pending, setPending] = useState(false);
     const [confirmation, setConfirmation] = useState('');
@@ -114,7 +127,7 @@ export function CredentialProfiles({ settings, busy, running, applyOnSwitch = fa
         if (!draft.id && (!draft.apiKey || !draft.secretKey)) { setError('請填入 API Key 與 Secret Key。'); return; }
         if (!draft.id && !confirm(`save:${apply}`, apply ? 'save-apply' : 'save-only')) return;
         const profileId = draft.id;
-        const input: CredentialDraft = { id: draft.id, name: draft.name, environment: draft.environment, caPath: draft.caPath,
+        const input: CredentialDraft = { id: draft.id, name: draft.name, environment: draft.environment, caPath,
             ...(draft.apiKey ? { apiKey: draft.apiKey } : {}), ...(draft.secretKey ? { secretKey: draft.secretKey } : {}),
             ...(draft.caPassword ? { caPassword: draft.caPassword } : {}),
         };
@@ -128,7 +141,7 @@ export function CredentialProfiles({ settings, busy, running, applyOnSwitch = fa
             try { next = await onSave(input, apply); }
             finally { delete input.apiKey; delete input.secretKey; delete input.caPassword; }
             const profile = next.profiles.find(p => p.id === profileId) ?? next.profiles.at(-1);
-            setDraft(editDraft(profile));
+            load(editDraft(profile));
             toList(profile ? `edit:${profile.id}` : opener.current);
             setMessage(apply ? '帳號已儲存，正在等待伺服器連線。' : '帳號已儲存，下次啟動或重啟伺服器時套用。');
         });
@@ -137,7 +150,7 @@ export function CredentialProfiles({ settings, busy, running, applyOnSwitch = fa
         if (!confirm(`${action}:${profile.id}`)) return;
         void operation(async () => {
             const next = await onAction(action, profile.id);
-            setDraft(editDraft(next.profiles.find(p => p.id === next.activeProfileId)));
+            load(editDraft(next.profiles.find(p => p.id === next.activeProfileId)));
             focusAfterRender(action === 'select' ? `edit:${profile.id}` : 'add');
             setMessage(action === 'select'
                 ? applyOnSwitch ? '已切換使用中的帳號，正在等待伺服器連線。' : '已切換使用中的帳號，按「啟動」即可套用。'
@@ -150,7 +163,7 @@ export function CredentialProfiles({ settings, busy, running, applyOnSwitch = fa
         else if (found.kind === 'error') setError(found.error);
         else {
             onImported(found.settings);
-            setDraft(editDraft(found.settings.profiles.find(p => p.id === found.profileId)));
+            load(editDraft(found.settings.profiles.find(p => p.id === found.profileId)));
             setSelection(null);
             toList(`edit:${found.profileId}`);
             setMessage(`已從 ${found.fileName} 匯入並儲存帳號。`);
@@ -162,15 +175,14 @@ export function CredentialProfiles({ settings, busy, running, applyOnSwitch = fa
             ? await importEnvCandidate(selection, candidate, draft.environment)
             : await pickEnvFile(mode, draft.environment)));
     };
-    const selectedProfile = settings.profiles.find(p => p.id === draft.id);
     const open = (next: CredentialDraft, from: string) => {
         opener.current = from; confirmOrigin.current = '';
-        setDraft(next); setEditing(true); setConfirmation(''); setError(''); setMessage(''); setSelection(null);
+        load(next); setEditing(true); setConfirmation(''); setError(''); setMessage(''); setSelection(null);
         focusAfterRender('name');
     };
     const back = () => {
         confirmOrigin.current = '';
-        setDraft(editDraft(settings.profiles.find(p => p.id === settings.activeProfileId)));
+        load(editDraft(settings.profiles.find(p => p.id === settings.activeProfileId)));
         setConfirmation(''); setError(''); setSelection(null);
         toList(opener.current);
     };
@@ -238,6 +250,10 @@ export function CredentialProfiles({ settings, busy, running, applyOnSwitch = fa
                 <button ref={reg('start')} className={s.primary} disabled={locked || !ready || !!confirmation} onClick={() => void operation(onStart)}><Play size={15} />啟動</button>
             </div>;
         })()}
+        {onOpenGuide && <div className={s.guideBar}>
+            <p className={s.guideText}>要申請正式 API Key、下載 CA 憑證或簽署 API 約定書？</p>
+            <button ref={reg('guide')} className={s.button} disabled={locked} onClick={onOpenGuide}><Signpost size={15} />申請／下載憑證導覽</button>
+        </div>}
         {profiles.length ? null : <div className={s.empty}>
             <span className={s.emptyIcon}><KeyRound size={20} /></span>
             <p className={s.emptyTitle}>還沒有帳號</p>
@@ -295,19 +311,19 @@ export function CredentialProfiles({ settings, busy, running, applyOnSwitch = fa
         <section className={s.card} aria-label="憑證">
             <div className={s.cardHead}>
                 <h4 className={s.cardTitle}><FileKey size={14} />CA 憑證</h4>
-                <span className={production && !draft.caPath ? s.cardAsideWarn : s.cardAside}>正式環境下單需要</span>
+                <span className={production && !caPath ? s.cardAsideWarn : s.cardAside}>正式環境下單需要</span>
             </div>
             <div className={s.fileRow}>
-                <span className={draft.caPath ? s.fileNameSet : s.fileName} title={draft.caPath || undefined}>
-                    <FileKey size={15} /><span className={s.fileNameText}>{draft.caPath ? fileName(draft.caPath) : '尚未選擇（例如 Sinopac.pfx）'}</span>
+                <span className={caPath ? s.fileNameSet : s.fileName} title={caPath || undefined}>
+                    <FileKey size={15} /><span className={s.fileNameText}>{caPath ? fileName(caPath) : '尚未選擇（例如 Sinopac.pfx）'}</span>
                 </span>
-                <button className={s.button} onClick={() => void operation(async () => { const path = await pickCaFile(); if (path) patch({ caPath: path }); })}>{draft.caPath ? '更換' : '選擇檔案'}</button>
-                {draft.caPath && <button className={s.iconButton} aria-label="清除憑證設定" title="清除憑證設定" onClick={() => patch({ caPath: '', caPassword: '' })}><X size={16} /></button>}
+                <button className={s.button} onClick={() => void operation(async () => { const path = await pickCaFile(); if (path) { patch({ caPath: path }); setCaTouched(true); } })}>{caPath ? '更換' : '選擇檔案'}</button>
+                {caPath && <button className={s.iconButton} aria-label="清除憑證設定" title="清除憑證設定" onClick={() => { patch({ caPath: '', caPassword: '' }); setCaTouched(true); }}><X size={16} /></button>}
             </div>
-            {draft.caPath && <label className={s.field}><span className={s.label}>憑證密碼</span>
+            {caPath && <label className={s.field}><span className={s.label}>憑證密碼</span>
                 <input className={s.input} type="password" autoComplete="off" placeholder={isNew ? '下載憑證時設定的密碼' : '留空保留'} value={draft.caPassword ?? ''} onChange={e => patch({ caPassword: e.target.value })} />
             </label>}
-            <p className={s.fieldNote}>憑證檔留在原位置，只記住路徑；密碼存進系統憑證庫。{!isNew && !draft.caPath && selectedProfile?.hasCA ? '儲存後會移除已存的憑證密碼。' : ''}</p>
+            <p className={s.fieldNote}>憑證檔留在原位置，只記住路徑；密碼存進系統憑證庫。{!isNew && !caPath && selectedProfile?.hasCA ? '儲存後會移除已存的憑證密碼。' : ''}</p>
         </section>
         {confirmingSave || confirmingImport ? <div className={s.saveConfirm}>
             <p className={s.confirmText}>{confirmingImport

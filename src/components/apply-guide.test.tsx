@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
     panel: vi.fn(() => null), defaults: vi.fn(), load: vi.fn(), save: vi.fn(), select: vi.fn(), start: vi.fn(),
     reload: vi.fn(), stop: vi.fn(), logout: vi.fn(), openLogs: vi.fn(), external: vi.fn(),
     open: vi.fn(), close: vi.fn(), apiPage: vi.fn(), signPage: vi.fn(), focus: vi.fn(), clearSite: vi.fn(), saveEnv: vi.fn(), card: vi.fn(),
+    saveCa: vi.fn(), importEnvironment: vi.fn(), caTarget: vi.fn(),
     handler: null as ((event: ApplyGuideEvent) => void) | null,
 }));
 vi.mock('../lib/spawn-keys', () => ({ clearStoredSpawnKeyHash: vi.fn() }));
@@ -18,7 +19,7 @@ vi.mock('../lib/tauri', async () => ({
     serverStop: mocks.stop, logoutCredentialProfile: mocks.logout, openServerLogFolder: mocks.openLogs, openExternalUrl: mocks.external,
 }));
 vi.mock('../lib/apply-guide-native', () => ({
-    openApplyWindow: mocks.open, closeApplyWindow: mocks.close, clearApplySiteData: mocks.clearSite, setApplySaveEnv: mocks.saveEnv, showApplyApiPage: mocks.apiPage, showApplySignPage: mocks.signPage, focusApplyTarget: mocks.focus, setApplyGuideCard: mocks.card,
+    openApplyWindow: mocks.open, closeApplyWindow: mocks.close, clearApplySiteData: mocks.clearSite, setApplySaveEnv: mocks.saveEnv, setApplySaveCa: mocks.saveCa, setApplyImportEnvironment: mocks.importEnvironment, setApplyCaTarget: mocks.caTarget, showApplyApiPage: mocks.apiPage, showApplySignPage: mocks.signPage, focusApplyTarget: mocks.focus, setApplyGuideCard: mocks.card,
     listenApplyGuide: async (handler: (event: ApplyGuideEvent) => void) => { mocks.handler = handler; return () => { mocks.handler = null; }; },
 }));
 import { EMPTY_DESKTOP_SETTINGS, type DesktopSettings } from '../lib/desktop-credentials';

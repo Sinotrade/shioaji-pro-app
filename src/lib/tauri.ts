@@ -76,7 +76,7 @@ import {
     subscribeTiming,
 } from './startup-timing';
 import { loadDesktopSettings, saveDesktopSettings, importCredentialEnv, type DesktopSettings, type CredentialEnvironment } from './desktop-credentials';
-export { loadDesktopSettings, saveDesktopSettings, saveCredentialProfile, selectCredentialProfile, deleteCredentialProfile, logoutCredentialProfile, EMPTY_DESKTOP_SETTINGS } from './desktop-credentials';
+export { loadDesktopSettings, reloadDesktopSettings, saveDesktopSettings, saveCredentialProfile, selectCredentialProfile, deleteCredentialProfile, logoutCredentialProfile, EMPTY_DESKTOP_SETTINGS } from './desktop-credentials';
 export type { DesktopSettings, CredentialProfile, CredentialDraft } from './desktop-credentials';
 import { isChildWindow } from './window-role';
 import { newPopoutWindowId } from './flash-account';

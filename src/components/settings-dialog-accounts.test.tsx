@@ -12,6 +12,7 @@ const fixture = vi.hoisted(() => {
     return {
         tauri: { value: false },
         open: vi.fn(async () => undefined),
+        profiles: [] as { environment: 'simulation' | 'production' }[],
         accounts: [
             { account_type: 'S', broker_id: '9A95', account_id: '1234567', signed: true, person_id: '', username: '測試甲' },
             { account_type: 'F', broker_id: 'F002000', account_id: '7654321', signed: false, person_id: '', username: '測試乙' },
@@ -29,6 +30,10 @@ vi.mock('../lib/runtime', async (orig) => ({
     ...(await orig<typeof import('../lib/runtime')>()),
     get isTauri() { return fixture.tauri.value; },
 }));
+vi.mock('../lib/desktop-credentials', async (orig) => ({
+    ...(await orig<typeof import('../lib/desktop-credentials')>()),
+    loadDesktopSettings: async () => ({ profiles: fixture.profiles }),
+}));
 vi.mock('../lib/risk', () => ({ getDailyPnl: () => 0, setRiskSettings: vi.fn(), useRiskSettings: () => ({}) }));
 vi.mock('../lib/tauri', () => ({
     openExternalUrl: fixture.open,
@@ -37,7 +42,8 @@ vi.mock('../lib/tauri', () => ({
 }));
 
 import { setPrivacyMode } from '../lib/privacy';
-import { AccountsSection } from './settings-dialog';
+import { AccountsSection, ProductionKeyShortcut } from './settings-dialog';
+import { onApplyGuideRequest } from '../lib/apply-guide-reentry';
 import { beginServerInfoRequest, forgetServerInfo, observeServerInfo } from '../lib/server-info-store';
 import { getApiBase } from '../lib/runtime';
 
@@ -48,6 +54,7 @@ afterEach(async () => {
     view = undefined;
     setPrivacyMode(false);
     fixture.tauri.value = false;
+    fixture.profiles = [];
     fixture.open.mockClear();
 });
 
@@ -134,4 +141,29 @@ it('masks account ids and holder names in privacy mode', async () => {
     expect(text()).not.toContain('測試乙');
     expect(text()).toContain('•••••67');
     expect(text()).toContain('•••');
+});
+
+it('offers 申請正式 API Key in the account selector only in the desktop app without a production profile', async () => {
+    const requests: unknown[] = [];
+    const off = onApplyGuideRequest((task) => requests.push(task));
+    try {
+        await act(async () => { view = create(createElement(ProductionKeyShortcut)); });
+        expect(view!.toJSON()).toBeNull(); // 網頁版：沒有導覽
+        await act(async () => view!.unmount());
+        fixture.tauri.value = true;
+        fixture.profiles = [{ environment: 'simulation' }];
+        await act(async () => { view = create(createElement(ProductionKeyShortcut)); });
+        expect(text()).toContain('目前只有模擬帳號');
+        await act(async () => view!.root.findByType('button').props.onClick());
+        expect(requests).toEqual(['production']);
+        await act(async () => view!.unmount());
+        fixture.profiles = [{ environment: 'simulation' }, { environment: 'production' }];
+        await act(async () => { view = create(createElement(ProductionKeyShortcut)); });
+        expect(view!.toJSON()).toBeNull();
+        // 帳號選擇區塊裡也有這個捷徑
+        await act(async () => view!.unmount());
+        fixture.profiles = [{ environment: 'simulation' }];
+        await render();
+        expect(view!.root.findAllByType(ProductionKeyShortcut)).toHaveLength(1);
+    } finally { off(); }
 });

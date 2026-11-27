@@ -66,6 +66,7 @@ import {
     getAppUpdateState,
     isTauri,
     loadDesktopSettings,
+    reloadDesktopSettings,
     openLatestRelease,
     reloadWhenHealthy,
     restartAndInstallUpdate,
@@ -88,6 +89,10 @@ import { notify } from '../lib/trade';
 import { Orb } from './orb';
 import { ServerEnvNotice } from './server-env-notice';
 import { ServerSettingsDialog, type ServerConnectionSettings } from './server-settings-dialog';
+import { ApplyGuidePanel } from './apply-guide-panel';
+import { onApplyGuideRequest, requestApplyGuide } from '../lib/apply-guide-reentry';
+import { listenApplyGuide } from '../lib/apply-guide-native';
+import type { InAppGuideTask } from '../lib/apply-guide-config';
 import * as dialogStyles from './server-settings-dialog.css';
 import { vars } from '../theme.css';
 import type { Health } from '../lib/types/health';
@@ -139,6 +144,42 @@ export function ServerManager({
     const logoutInFlight = useRef(false);
     const [settingsOpen, setSettingsOpen] = useState(false);
     const settingsButton = useRef<HTMLButtonElement>(null);
+    // App 裡的「申請／下載憑證導覽」面板：undefined＝關著；null＝先選要做的事
+    // 每次要求都是新的一次（同一件事再按一次也要切過去）；undefined：面板關著
+    const [guideRequest, setGuideRequest] = useState<{ task: InAppGuideTask | null; seq: number } | undefined>(undefined);
+    // 從導覽「到帳號設定」：打開伺服器設定並直接編輯這個帳號
+    const [editProfileId, setEditProfileId] = useState<string | undefined>(undefined);
+    const toggleRef = useRef(onToggle);
+    toggleRef.current = onToggle;
+    // 申請視窗存好金鑰或憑證：不管導覽面板還開著沒，都重新讀帳號資料
+    // （面板關掉後原生端才存完時，設定畫面也不會拿舊的資料）
+    // 重新讀取可能重疊（連續存兩次）：只有最後發出的那一次能更新畫面，較舊的結果晚到也不蓋掉
+    // 被後來的讀取取代的那一次改等最新的：回來時畫面上一定已經是最新的帳號資料
+    const settingsRead = useRef<Promise<void> | null>(null);
+    const refreshSettings = useCallback(async (): Promise<void> => {
+        const read: Promise<void> = reloadDesktopSettings().then(fresh => { if (settingsRead.current === read) setSettings(fresh); });
+        settingsRead.current = read;
+        for (let current = read; ;) {
+            await current;
+            const latest: Promise<void> = settingsRead.current ?? current;
+            if (latest === current) return;
+            current = latest;
+        }
+    }, []);
+    useEffect(() => {
+        let active = true;
+        let off: (() => void) | undefined;
+        void listenApplyGuide(event => {
+            if (event.kind === 'imported' || event.kind === 'ca-attached') {
+                void refreshSettings().catch(() => undefined);
+            }
+        }).then(unlisten => { if (active) off = unlisten; else unlisten(); });
+        return () => { active = false; off?.(); };
+    }, []);
+    useEffect(() => onApplyGuideRequest(task => {
+        setSettingsOpen(false); toggleRef.current(false);
+        setGuideRequest(current => ({ task, seq: (current?.seq ?? 0) + 1 }));
+    }), []);
     const [settingsLoaded, setSettingsLoaded] = useState(false);
     const [settingsLoadError, setSettingsLoadError] = useState('');
     const [savedForRestart, setSavedForRestart] = useState(false);
@@ -1138,10 +1179,11 @@ export function ServerManager({
                     </div>
                     {settingsOpen && <ServerSettingsDialog
                         settings={settings} status={status} busy={busy || httpsBusy}
+                        initialEditId={editProfileId} onOpenGuide={() => requestApplyGuide(null)}
                         switching={switching ? envNotice?.text : undefined} applyOnSwitch={applyOnSwitch}
                         pendingApply={savedForRestart || (!!status?.running && status.simulation === settings.production)}
                         onSave={saveConnectionSettings} onProfileAction={profileAction} onImported={setSettings} onClose={() => {
-                            setSettingsOpen(false);
+                            setSettingsOpen(false); setEditProfileId(undefined);
                             // macOS does not necessarily focus a button on click.
                             // Restore explicitly after the popover becomes visible.
                             requestAnimationFrame(() => settingsButton.current?.focus());
@@ -1177,6 +1219,19 @@ export function ServerManager({
 
                 </>
             )}
+            {guideRequest && <ApplyGuidePanel settings={settings} request={guideRequest}
+                onClose={() => setGuideRequest(undefined)}
+                onChanged={() => { void refreshSettings().catch(() => undefined); }}
+                onOpenAccount={profileId => {
+                    // 先讀最新的帳號資料（剛設定的憑證路徑），編輯畫面才不會帶著舊的路徑存回去；
+                    // 讀不到就不打開，請使用者再按一次
+                    void refreshSettings().then(() => {
+                        setEditProfileId(profileId || undefined); setReadyLines([]);
+                        toggleRef.current(true); setSettingsOpen(true);
+                    }, (e: unknown) => {
+                        notify({ kind: 'err', title: '帳號資料讀取失敗', body: `${e instanceof Error ? e.message : String(e)}。請再按一次打開帳號設定。` });
+                    });
+                }} />}
         </div>
     );
 }

@@ -3,7 +3,7 @@ const mocks = vi.hoisted(() => ({ child: false, invoke: vi.fn() }));
 vi.mock('./runtime', async original => ({ ...await original<object>(), isTauri: true }));
 vi.mock('./window-role', () => ({ isChildWindow: () => mocks.child }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke: mocks.invoke }));
-import { EMPTY_DESKTOP_SETTINGS, loadDesktopSettings, saveDesktopSettings, saveCredentialProfile, selectCredentialProfile, deleteCredentialProfile, logoutCredentialProfile, type DesktopSettings } from './desktop-credentials';
+import { EMPTY_DESKTOP_SETTINGS, loadDesktopSettings, reloadDesktopSettings, saveDesktopSettings, saveCredentialProfile, selectCredentialProfile, deleteCredentialProfile, logoutCredentialProfile, type DesktopSettings } from './desktop-credentials';
 let settings: DesktopSettings;
 beforeEach(() => {
     mocks.child = false; mocks.invoke.mockReset();
@@ -25,6 +25,21 @@ describe('native credential settings boundary', () => {
         expect(a).toBe(b); expect(mocks.invoke).toHaveBeenCalledExactlyOnceWith('credentials_status', undefined);
         expect(localStorage.setItem).toHaveBeenCalledWith('sj-desktop-configured', 'true');
         expect(a).not.toHaveProperty('apiKey'); expect(a).not.toHaveProperty('secretKey'); expect(a).not.toHaveProperty('caPassword');
+    });
+    it('reads again after a native-side change instead of reusing a read that started before it', async () => {
+        let finishOld!: (value: DesktopSettings) => void;
+        mocks.invoke.mockImplementationOnce(() => new Promise<DesktopSettings>(resolve => { finishOld = resolve; }));
+        const before = loadDesktopSettings();
+        await vi.waitFor(() => expect(mocks.invoke).toHaveBeenCalledTimes(1));
+        // 申請視窗在這次讀取之後才存好憑證
+        const saved = { ...settings, caPath: '/fixture/ca/one/Sinopac-new.pfx' };
+        mocks.invoke.mockImplementationOnce(async () => saved);
+        const after = reloadDesktopSettings();
+        await vi.waitFor(() => expect(mocks.invoke).toHaveBeenCalledTimes(2));
+        finishOld(settings);
+        expect((await after).caPath).toBe('/fixture/ca/one/Sinopac-new.pfx');
+        expect((await before).caPath).toBe('');
+        expect(mocks.invoke).toHaveBeenCalledTimes(2);
     });
     it('receives successful migration only as a non-secret profile index', async () => {
         settings.profiles = [{ id: 'one', name: '預設帳戶', environment: 'production', caPath: '/fixture/ca.pfx', createdAt: '2026-10-20', hasCA: true, apiKeyMasked: '••••1234', secretState: 'stored', credentialBackend: 'system', revision: 'native-digest' }];

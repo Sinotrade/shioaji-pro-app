@@ -82,6 +82,15 @@ export function loadDesktopSettings(): Promise<DesktopSettings> {
     return pendingRead;
 }
 
+/**
+ * 原生端自己改了帳號資料（申請視窗存好金鑰或憑證）以後用：
+ * 不沿用改之前就開始、還沒回來的那次讀取，一定重新讀一次。
+ */
+export function reloadDesktopSettings(): Promise<DesktopSettings> {
+    pendingRead = null;
+    return loadDesktopSettings();
+}
+
 async function mutate(command: string, args?: Record<string, unknown>): Promise<DesktopSettings> {
     const started = ++generation;
     pendingRead = null;
