@@ -500,14 +500,6 @@ export const tabActive = style({
     borderBottomColor: vars.color.accent,
 });
 
-export const tabBadge = style({
-    marginLeft: '4px',
-    fontFamily: vars.font.mono,
-    fontSize: '0.6rem',
-    color: vars.color.mutedForeground,
-    fontVariantNumeric: 'tabular-nums',
-});
-
 export const pane = style({
     flex: 1,
     minHeight: 0,

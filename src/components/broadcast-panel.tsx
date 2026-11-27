@@ -200,7 +200,9 @@ export function BroadcastPanel({ codes, onCodesChange }: BroadcastPanelProps) {
     const usable = probe ? probe.available : engine.available;
     const unusableReason = probe?.reason ?? engine.reason;
 
-    const tabBtn = (key: 'settings' | 'diag', label: string, badge?: number) => (
+    // 分頁籤不顯示任何計數：tick 數會隨盤中活躍度累積（實測可到 1609），
+    // 對使用者沒有意義，放在籤上只是噪音。
+    const tabBtn = (key: 'settings' | 'diag', label: string) => (
         <button
             type='button'
             role='tab'
@@ -209,9 +211,6 @@ export function BroadcastPanel({ codes, onCodesChange }: BroadcastPanelProps) {
             onClick={() => setTab(key)}
         >
             {label}
-            {badge !== undefined && (
-                <span className={styles.tabBadge}>{badge}</span>
-            )}
         </button>
     );
 
@@ -246,7 +245,7 @@ export function BroadcastPanel({ codes, onCodesChange }: BroadcastPanelProps) {
 
             <div className={styles.tabs} role='tablist'>
                 {tabBtn('settings', '設定')}
-                {tabBtn('diag', '診斷', debug.counters.ticks)}
+                {tabBtn('diag', '診斷')}
             </div>
 
             {tab === 'settings' ? (

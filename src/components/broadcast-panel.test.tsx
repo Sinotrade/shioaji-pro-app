@@ -242,6 +242,8 @@ describe('廣播面板版面', () => {
 
         const diagTab = buttonByText(r, '診斷');
         expect(diagTab.props['aria-selected']).toBe(false);
+        // 籤上不得出現計數（tick 數對使用者沒有意義）
+        expect(textOf(diagTab.props.children)).toBe('診斷');
         await act(async () => {
             diagTab.props.onClick();
         });
