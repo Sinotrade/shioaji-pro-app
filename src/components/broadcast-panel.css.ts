@@ -118,7 +118,6 @@ export const slider = style({
 });
 
 export const select = style({
-    gridColumn: '1 / -1',
     fontFamily: vars.font.body,
     fontSize: '0.7rem',
     padding: '3px 6px',
@@ -360,36 +359,166 @@ export const debugWarn = style({
     borderRadius: vars.radius.sm,
 });
 
-// ---- 事件開關列 ----
+// ---- 控制卡（把所有可調項集中在一張卡）----
 
-export const switchList = style({
+export const card = style({
     display: 'flex',
     flexDirection: 'column',
-    gap: '2px',
+    gap: vars.space.sm,
+    padding: `${vars.space.sm} ${vars.space.md}`,
+    background: vars.color.panelRaised,
+    border: `1px solid ${vars.color.borderBright}`,
+    borderRadius: vars.radius.md,
 });
 
-export const switchRow = style({
-    display: 'grid',
-    gridTemplateColumns: 'auto auto minmax(0,1fr)',
-    alignItems: 'baseline',
-    gap: vars.space.sm,
-    padding: '3px 0',
+export const cardHead = style({
+    fontFamily: vars.font.mono,
+    fontSize: '0.6rem',
+    letterSpacing: '0.08em',
+    textTransform: 'uppercase',
+    color: vars.color.mutedForeground,
+});
+
+export const chips = style({
+    display: 'flex',
+    flexWrap: 'wrap',
+    gap: vars.space.xs,
+});
+
+export const chip = style({
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '5px',
+    padding: '3px 9px',
+    fontFamily: vars.font.body,
+    fontSize: '0.7rem',
+    color: vars.color.mutedForeground,
+    background: vars.color.muted,
+    border: `1px solid ${vars.color.border}`,
+    borderRadius: '999px',
     cursor: 'pointer',
 });
 
-export const switchLabel = style({
+export const chipOn = style({
+    color: vars.color.accent,
+    background: vars.color.accentDim,
+    borderColor: vars.color.accent,
+});
+
+export const chipDot = style({
+    width: 6,
+    height: 6,
+    borderRadius: '50%',
+    background: vars.color.borderBright,
+    flexShrink: 0,
+});
+
+export const chipDotOn = style({ background: vars.color.accent });
+
+export const chipHint = style({
     fontFamily: vars.font.body,
-    fontSize: '0.72rem',
-    fontWeight: 600,
-    color: vars.color.foreground,
+    fontSize: '0.6rem',
+    lineHeight: 1.5,
+    color: vars.color.mutedForeground,
+});
+
+export const knobRow = style({
+    display: 'grid',
+    gridTemplateColumns: '2.6rem minmax(0,1fr) 3.4rem',
+    alignItems: 'center',
+    gap: vars.space.sm,
+});
+
+export const knobLabel = style({
+    fontFamily: vars.font.body,
+    fontSize: '0.68rem',
+    color: vars.color.mutedForeground,
     whiteSpace: 'nowrap',
 });
 
-export const switchHint = style({
-    fontFamily: vars.font.body,
-    fontSize: '0.62rem',
-    color: vars.color.mutedForeground,
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
+export const knobVal = style({
+    fontFamily: vars.font.mono,
+    fontSize: '0.68rem',
+    fontVariantNumeric: 'tabular-nums',
+    color: vars.color.foreground,
+    textAlign: 'right',
     whiteSpace: 'nowrap',
+});
+
+export const voiceRow = style({
+    display: 'grid',
+    gridTemplateColumns: '2.6rem minmax(0,1fr)',
+    alignItems: 'center',
+    gap: vars.space.sm,
+});
+
+export const testBtn = style({
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: '5px',
+    marginTop: '2px',
+    padding: '4px',
+    fontFamily: vars.font.body,
+    fontSize: '0.68rem',
+    color: vars.color.mutedForeground,
+    background: 'transparent',
+    border: `1px dashed ${vars.color.borderBright}`,
+    borderRadius: vars.radius.sm,
+    cursor: 'pointer',
+    ':hover': {
+        color: vars.color.accent,
+        borderColor: vars.color.accent,
+        background: vars.color.accentDim,
+    },
+});
+
+// ---- 可收合的診斷區 ----
+
+export const diag = style({
+    marginTop: vars.space.md,
+    background: vars.color.panelRaised,
+    border: `1px solid ${vars.color.border}`,
+    borderRadius: vars.radius.sm,
+});
+
+export const diagSummary = style({
+    display: 'flex',
+    alignItems: 'center',
+    gap: vars.space.sm,
+    padding: '5px 8px',
+    fontFamily: vars.font.display,
+    fontSize: '0.62rem',
+    fontWeight: 600,
+    letterSpacing: '0.08em',
+    textTransform: 'uppercase',
+    color: vars.color.mutedForeground,
+    cursor: 'pointer',
+    listStyle: 'none',
+    selectors: { '&::-webkit-details-marker': { display: 'none' } },
+});
+
+export const diagArrow = style({
+    fontSize: '0.55rem',
+    transition: 'transform 120ms ease',
+    selectors: {
+        'details[open] &': { transform: 'rotate(90deg)' },
+    },
+});
+
+export const diagKv = style({
+    marginLeft: 'auto',
+    fontFamily: vars.font.mono,
+    fontSize: '0.62rem',
+    letterSpacing: 0,
+    textTransform: 'none',
+    color: vars.color.foreground,
+    fontVariantNumeric: 'tabular-nums',
+});
+
+export const diagBody = style({
+    display: 'flex',
+    flexDirection: 'column',
+    padding: `${vars.space.sm} 8px ${vars.space.sm}`,
+    borderTop: `1px solid ${vars.color.border}`,
 });

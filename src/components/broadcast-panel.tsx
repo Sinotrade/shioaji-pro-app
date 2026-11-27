@@ -11,7 +11,7 @@
 // 面板持有自己的商品清單與播報開關，但全域共用同一個語音引擎與去重表：
 // 設定集中在一處，去重與佇列才能跨商品、跨面板正確運作。
 
-import { Volume2, VolumeX, X } from 'lucide-react';
+import { Volume2, X } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { useContract } from '../lib/contracts-cache';
 import { useQuote } from '../hooks/use-stream';
@@ -228,92 +228,135 @@ export function BroadcastPanel({ codes, onCodesChange }: BroadcastPanelProps) {
             </div>
 
             <div className={styles.scroller}>
-                {!usable && unusableReason && (
-                    <span className={styles.notice}>{unusableReason}</span>
-                )}
-                {!settings.enabled && (
-                    <span className={styles.warn}>
-                        語音播報目前是關閉的 —— 打開右上角的開關才會播報。
-                        （「測試語音」不受這個開關影響，所以測試有聲不代表播報有開。）
-                    </span>
-                )}
-                {settings.enabled && !settings.quoteEnabled && !settings.dealEnabled && !settings.noticeEnabled && (
-                    <span className={styles.warn}>
-                        總開關已開，但三種事件都沒勾 —— 勾選想聽的那一種。
-                    </span>
-                )}
+                {/* 所有可調項集中在同一張卡：事件類別 / 語速 / 冷卻 / 語音 / 測試語音 */}
+                <div className={styles.card}>
+                    <span className={styles.cardHead}>播報控制</span>
 
-                <span className={styles.sectionTitle}>播報事件</span>
-                <div className={styles.switchList}>
-                    {EVENT_ROWS.map((row) => (
-                        <label className={styles.switchRow} key={row.key}>
-                            <input
-                                type='checkbox'
-                                checked={settings[row.key]}
-                                onChange={(e) =>
+                    {!usable && unusableReason && (
+                        <span className={styles.notice}>{unusableReason}</span>
+                    )}
+                    {!settings.enabled && (
+                        <span className={styles.warn}>
+                            語音播報目前是關閉的 —— 打開右上角的開關才會播報。
+                            （「測試語音」不受這個開關影響，所以測試有聲不代表播報有開。）
+                        </span>
+                    )}
+                    {settings.enabled &&
+                        !settings.quoteEnabled &&
+                        !settings.dealEnabled &&
+                        !settings.noticeEnabled && (
+                            <span className={styles.warn}>
+                                總開關已開，但三種事件都沒勾 —— 勾選想聽的那一種。
+                            </span>
+                        )}
+
+                    <div className={styles.chips}>
+                        {EVENT_ROWS.map((row) => (
+                            <button
+                                key={row.key}
+                                type='button'
+                                title={row.hint}
+                                aria-pressed={settings[row.key]}
+                                className={
+                                    settings[row.key]
+                                        ? `${styles.chip} ${styles.chipOn}`
+                                        : styles.chip
+                                }
+                                onClick={() =>
                                     setBroadcastSettings({
-                                        [row.key]: e.target.checked,
+                                        [row.key]: !settings[row.key],
                                     })
                                 }
-                            />
-                            <span className={styles.switchLabel}>
+                            >
+                                <span
+                                    className={
+                                        settings[row.key]
+                                            ? `${styles.chipDot} ${styles.chipDotOn}`
+                                            : styles.chipDot
+                                    }
+                                />
                                 {row.label}
-                            </span>
-                            <span className={styles.switchHint}>{row.hint}</span>
-                        </label>
-                    ))}
-                </div>
-
-                <span className={styles.sectionTitle}>播報設定</span>
-                <div className={styles.settingsGrid}>
-                    <span className={styles.settingLabel}>語速</span>
-                    <input
-                        className={styles.slider}
-                        type='range'
-                        min={RATE_MIN}
-                        max={RATE_MAX}
-                        step={1}
-                        value={settings.rate}
-                        onChange={(e) =>
-                            setBroadcastSettings({ rate: Number(e.target.value) })
-                        }
-                    />
-                    <span className={styles.settingValue}>{settings.rate}</span>
-
-                    <span className={styles.settingLabel}>冷卻</span>
-                    <input
-                        className={styles.slider}
-                        type='range'
-                        min={COOLDOWN_MIN}
-                        max={COOLDOWN_MAX}
-                        step={1}
-                        value={settings.cooldownSec}
-                        onChange={(e) =>
-                            setBroadcastSettings({
-                                cooldownSec: Number(e.target.value),
-                            })
-                        }
-                    />
-                    <span className={styles.settingValue}>
-                        {settings.cooldownSec} 秒
+                            </button>
+                        ))}
+                    </div>
+                    <span className={styles.chipHint}>
+                        {EVENT_ROWS.filter((row) => settings[row.key])
+                            .map((row) => row.hint)
+                            .join('　') || '尚未勾選任何事件類別'}
                     </span>
 
-                    {showVoicePicker && (
-                        <select
-                            className={styles.select}
-                            value={settings.voiceUri}
+                    <div className={styles.knobRow}>
+                        <span className={styles.knobLabel}>語速</span>
+                        <input
+                            className={styles.slider}
+                            type='range'
+                            min={RATE_MIN}
+                            max={RATE_MAX}
+                            step={1}
+                            value={settings.rate}
                             onChange={(e) =>
-                                setBroadcastSettings({ voiceUri: e.target.value })
+                                setBroadcastSettings({
+                                    rate: Number(e.target.value),
+                                })
                             }
-                        >
-                            <option value=''>語音：自動挑選中文語音</option>
-                            {voices.map((v) => (
-                                <option key={v.uri} value={v.uri}>
-                                    語音：{v.name}（{v.lang}）
-                                </option>
-                            ))}
-                        </select>
+                        />
+                        <span className={styles.knobVal}>{settings.rate}</span>
+                    </div>
+
+                    <div className={styles.knobRow}>
+                        <span className={styles.knobLabel}>冷卻</span>
+                        <input
+                            className={styles.slider}
+                            type='range'
+                            min={COOLDOWN_MIN}
+                            max={COOLDOWN_MAX}
+                            step={1}
+                            value={settings.cooldownSec}
+                            onChange={(e) =>
+                                setBroadcastSettings({
+                                    cooldownSec: Number(e.target.value),
+                                })
+                            }
+                        />
+                        <span className={styles.knobVal}>
+                            {settings.cooldownSec} 秒
+                        </span>
+                    </div>
+
+                    {showVoicePicker && (
+                        <div className={styles.voiceRow}>
+                            <span className={styles.knobLabel}>語音</span>
+                            <select
+                                className={styles.select}
+                                value={settings.voiceUri}
+                                onChange={(e) =>
+                                    setBroadcastSettings({
+                                        voiceUri: e.target.value,
+                                    })
+                                }
+                            >
+                                <option value=''>自動挑選中文語音</option>
+                                {voices.map((v) => (
+                                    <option key={v.uri} value={v.uri}>
+                                        {v.name}（{v.lang}）
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
                     )}
+
+                    <button
+                        type='button'
+                        className={styles.testBtn}
+                        title='不受總開關影響：這裡驗的是「發聲管道」，不是播報規則'
+                        onClick={() =>
+                            broadcastUrgent(
+                                `語音測試，目前語速 ${settings.rate}`,
+                            )
+                        }
+                    >
+                        <Volume2 size={12} /> 測試語音（不受總開關限制）
+                    </button>
                 </div>
 
                 <span className={styles.sectionTitle}>
@@ -396,114 +439,110 @@ export function BroadcastPanel({ codes, onCodesChange }: BroadcastPanelProps) {
                     </div>
                 ))}
 
-                <div className={styles.addRow}>
-                    <button
-                        className={`${styles.toggle} ${styles.toggleOff}`}
-                        onClick={() =>
-                            broadcastUrgent(
-                                `語音測試，目前語速 ${settings.rate}`,
-                            )
-                        }
-                    >
-                        {settings.enabled ? (
-                            <Volume2 size={12} />
-                        ) : (
-                            <VolumeX size={12} />
-                        )}{' '}
-                        測試語音
-                    </button>
-                </div>
-
-                <span className={styles.sectionTitle}>除錯</span>
-                <div className={styles.debugGrid}>
-                    <span className={styles.debugKey}>開關</span>
-                    <span className={styles.debugVal}>
-                        總={debug.switches.enabled ? '開' : '關'} · 行情=
-                        {debug.switches.quote ? '開' : '關'} · 成交=
-                        {debug.switches.deal ? '開' : '關'} · 通知=
-                        {debug.switches.notice ? '開' : '關'}
-                    </span>
-
-                    <span className={styles.debugKey}>佇列</span>
-                    <span className={styles.debugVal}>
-                        待播 {debug.queue.pending} ·{' '}
-                        {debug.queue.speakingText
-                            ? `正在念「${debug.queue.speakingText}」`
-                            : '閒置'}
-                    </span>
-
-                    <span className={styles.debugKey}>計數</span>
-                    <span className={styles.debugVal}>
-                        tick {debug.counters.ticks} · 判定{' '}
-                        {debug.counters.decisions} · 已播{' '}
-                        {debug.counters.spoke} · 一般報價{' '}
-                        {debug.counters.generalQuotes} · 冷卻擋{' '}
-                        {debug.counters.blockedCooldown} · 去重擋{' '}
-                        {debug.counters.duplicateSuppressed} · 過時丟棄{' '}
-                        {debug.counters.droppedStale} · 成交事件{' '}
-                        {debug.counters.dealEvents} · 通知事件{' '}
-                        {debug.counters.noticeEvents} · 測試{' '}
-                        {debug.counters.testAnnouncements}
-                    </span>
-                </div>
-
-                {Object.values(debug.targets).map((t) => (
-                    <div className={styles.debugTarget} key={t.code}>
-                        <span className={styles.debugTargetCode}>{t.code}</span>
-                        <span className={styles.debugTargetName}>{t.name}</span>
-                        <span className={styles.debugTargetDetail}>
-                            合約=
-                            {t.contractResolved
-                                ? 'OK'
-                                : `失敗${t.contractError ? `(${t.contractError})` : ''}`}{' '}
-                            · 訂閱={t.subscribedTypes.join('/') || '無'} · tick=
-                            {t.tickCount} · 價={t.lastPrice ?? '—'} · 判定=
-                            {t.lastStatus ?? '—'} · 未播=
-                            {t.lastSkipReason ?? '—'} · 已播=
-                            {t.lastSpokeText ?? '—'}
+                {/* 診斷預設收合：日常只留一行摘要，要查問題時再展開 */}
+                <details className={styles.diag}>
+                    <summary className={styles.diagSummary}>
+                        <span className={styles.diagArrow}>▶</span>
+                        診斷
+                        <span className={styles.diagKv}>
+                            tick {debug.counters.ticks} · 已播{' '}
+                            {debug.counters.spoke}
                         </span>
-                        {t.noQuote && (
-                            <span className={styles.debugWarn}>
-                                ⚠ {t.noQuoteReason}
+                    </summary>
+                    <div className={styles.diagBody}>
+                        <div className={styles.debugGrid}>
+                            <span className={styles.debugKey}>開關</span>
+                            <span className={styles.debugVal}>
+                                總={debug.switches.enabled ? '開' : '關'} · 行情=
+                                {debug.switches.quote ? '開' : '關'} · 成交=
+                                {debug.switches.deal ? '開' : '關'} · 通知=
+                                {debug.switches.notice ? '開' : '關'}
                             </span>
-                        )}
-                    </div>
-                ))}
 
-                <div className={styles.addRow}>
-                    <button
-                        className={`${styles.toggle} ${
-                            traceOn ? styles.toggleOn : styles.toggleOff
-                        }`}
-                        onClick={() => {
-                            const next = !traceOn;
-                            setBroadcastTraceEnabled(next);
-                            setTraceOn(next);
-                        }}
-                        title="診斷用。平常關掉即可；要查「為什麼沒聲音」時再打開來記錄時間軸。"
-                    >
-                        {traceOn ? '記錄 trace：開' : '記錄 trace：關'}
-                    </button>
-                    <button
-                        className={`${styles.toggle} ${styles.toggleOff}`}
-                        onClick={() => dumpBroadcastDebug()}
-                    >
-                        診斷（丟到 console）
-                    </button>
-                    <button
-                        className={`${styles.toggle} ${styles.toggleOff}`}
-                        disabled={traceCount === 0}
-                        onClick={() => downloadBroadcastTrace()}
-                        title="下載這段時間的時間軸與目前狀態（純文字，可直接貼給別人看）"
-                    >
-                        匯出 trace.txt
-                    </button>
-                </div>
+                            <span className={styles.debugKey}>佇列</span>
+                            <span className={styles.debugVal}>
+                                待播 {debug.queue.pending} ·{' '}
+                                {debug.queue.speakingText
+                                    ? `正在念「${debug.queue.speakingText}」`
+                                    : '閒置'}
+                            </span>
+
+                            <span className={styles.debugKey}>計數</span>
+                            <span className={styles.debugVal}>
+                                判定 {debug.counters.decisions} · 一般報價{' '}
+                                {debug.counters.generalQuotes} · 冷卻擋{' '}
+                                {debug.counters.blockedCooldown} · 去重擋{' '}
+                                {debug.counters.duplicateSuppressed} · 過時丟棄{' '}
+                                {debug.counters.droppedStale} · 成交事件{' '}
+                                {debug.counters.dealEvents} · 通知事件{' '}
+                                {debug.counters.noticeEvents} · 測試{' '}
+                                {debug.counters.testAnnouncements}
+                            </span>
+                        </div>
+
+                        {Object.values(debug.targets).map((t) => (
+                            <div className={styles.debugTarget} key={t.code}>
+                                <span className={styles.debugTargetCode}>
+                                    {t.code}
+                                </span>
+                                <span className={styles.debugTargetName}>
+                                    {t.name}
+                                </span>
+                                <span className={styles.debugTargetDetail}>
+                                    合約=
+                                    {t.contractResolved
+                                        ? 'OK'
+                                        : `失敗${t.contractError ? `(${t.contractError})` : ''}`}{' '}
+                                    · 訂閱={t.subscribedTypes.join('/') || '無'}{' '}
+                                    · tick={t.tickCount} · 價=
+                                    {t.lastPrice ?? '—'} · 判定=
+                                    {t.lastStatus ?? '—'} · 未播=
+                                    {t.lastSkipReason ?? '—'} · 已播=
+                                    {t.lastSpokeText ?? '—'}
+                                </span>
+                                {t.noQuote && (
+                                    <span className={styles.debugWarn}>
+                                        ⚠ {t.noQuoteReason}
+                                    </span>
+                                )}
+                            </div>
+                        ))}
+
+                        <div className={styles.addRow}>
+                            <button
+                                className={`${styles.toggle} ${
+                                    traceOn ? styles.toggleOn : styles.toggleOff
+                                }`}
+                                onClick={() => {
+                                    const next = !traceOn;
+                                    setBroadcastTraceEnabled(next);
+                                    setTraceOn(next);
+                                }}
+                                title='診斷用。平常關掉即可；要查「為什麼沒聲音」時再打開來記錄時間軸。'
+                            >
+                                {traceOn ? '記錄 trace：開' : '記錄 trace：關'}
+                            </button>
+                            <button
+                                className={`${styles.toggle} ${styles.toggleOff}`}
+                                onClick={() => dumpBroadcastDebug()}
+                            >
+                                診斷（丟到 console）
+                            </button>
+                            <button
+                                className={`${styles.toggle} ${styles.toggleOff}`}
+                                disabled={traceCount === 0}
+                                onClick={() => downloadBroadcastTrace()}
+                                title='下載這段時間的時間軸與目前狀態（純文字，可直接貼給別人看）'
+                            >
+                                匯出 trace.txt
+                            </button>
+                        </div>
+                    </div>
+                </details>
             </div>
         </div>
     );
 }
-
 function TargetRow({
     code,
     onRemove,
