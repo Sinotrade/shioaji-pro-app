@@ -7,6 +7,7 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { searchProducts, type ProductSuggestion } from '../lib/product-search';
 import { ensureUsContracts, subscribeUsContracts, usCatalogStatus } from '../lib/us/us-contracts';
+import { hasUsNameHit } from '../lib/us/us-names';
 import { getProductCatalogVersion, useProductCatalogVersion } from '../lib/product-catalog-version';
 import { getProductNamesVersion } from '../lib/product-names-version';
 import { PRODUCT_SEARCH_DEBOUNCE_MS } from '../lib/search-request';
@@ -40,10 +41,10 @@ export function useProductSearch(query: string, { limit, enabled = true, resetKe
     const rowsScope = useRef('');
     const catalogVersion = useProductCatalogVersion();
     const namesVersion = useProductNamesVersion();
-    // 美股清單（約 1.3 萬檔代碼）在第一次輸入像美股代碼的字時才載入；
+    // 美股清單（約 1.3 萬檔代碼）在第一次輸入像美股代碼、或命中美股名稱（apple、蘋果）時才載入；
     // 載入完成後重查一次，讓美股命中併進結果
     const usReady = useSyncExternalStore(subscribeUsContracts, usCatalogReady, usCatalogReady);
-    const wantsUs = enabled && looksLikeUsCode(query);
+    const wantsUs = enabled && (looksLikeUsCode(query) || hasUsNameHit(query));
     useEffect(() => {
         if (wantsUs && !usReady) void ensureUsContracts().catch(() => undefined);
     }, [wantsUs, usReady]);

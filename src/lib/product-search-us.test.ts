@@ -97,7 +97,74 @@ describe('US hits in product search', () => {
         expect(rows.indexOf(tw!)).toBeLessThan(rows.indexOf(usT!));
     });
 
-    it('does not look up US for Chinese names or numeric TW codes', async () => {
+    it('finds a US stock by English or Chinese company name once the catalog is loaded', async () => {
+        const { us, search } = await load();
+        us.setUsContractsForTest(usRows);
+        for (const query of ['apple', 'Apple Inc', '蘋果']) {
+            const rows = await search.searchProducts(query, 8);
+            const us0 = rows.filter(row => row.region === 'US');
+            expect(us0.map(row => row.key), query).toEqual(['US:AAPL']);
+            expect(us0[0]).toMatchObject({ exchange: 'NASDAQ', security_type: 'STK', detail: '美股 · NASDAQ' });
+        }
+    });
+
+    it('does not suggest a name hit whose code is not in the US catalog', async () => {
+        const { us, search } = await load();
+        us.setUsContractsForTest(usRows);
+        // 名稱表有 Microsoft，但這份美股清單沒有 MSFT
+        const rows = await search.searchProducts('microsoft', 8);
+        expect(rows.some(row => row.region === 'US')).toBe(false);
+    });
+
+    it('still shows the name hits that are in the catalog when others are missing from it', async () => {
+        const { us, search } = await load();
+        // 名稱表裡 micro 開頭的 MU、MCHP、MSFT、MSTR 都不在這份清單，只剩單字開頭的 AMD
+        us.setUsContractsForTest([...usRows, { code: 'AMD', exchange: 'NASDAQ', region: 'US', security_type: 'STK' }]);
+        const rows = await search.searchProducts('micro', 8);
+        expect(rows.filter(row => row.region === 'US').map(row => row.key)).toEqual(['US:AMD']);
+    });
+
+    it('adds nothing for a name while the US catalog is not loaded (and never loads it itself)', async () => {
+        const { search } = await load();
+        const rows = await search.searchProducts('apple', 8);
+        expect(rows.some(row => row.region === 'US')).toBe(false);
+        expect(mocks.usList).not.toHaveBeenCalled();
+    });
+
+    it('lists a code once when it matches by both code and name', async () => {
+        const { us, search } = await load();
+        us.setUsContractsForTest([...usRows, { code: 'ON', exchange: 'NASDAQ', region: 'US', security_type: 'STK' }]);
+        const rows = await search.searchProducts('on', 8);
+        expect(rows.filter(row => row.key === 'US:ON')).toHaveLength(1);
+    });
+
+    it('keeps TW first and adds the US ADR below when a Chinese name matches both', async () => {
+        const { us, search } = await load();
+        us.setUsContractsForTest([...usRows, { code: 'TSM', exchange: 'NYSE', region: 'US', security_type: 'STK' }]);
+        mocks.catalog.mockResolvedValue([{ code: '2330', name: '台積電', exchange: 'TSE', category: '' }]);
+        const keys = (await search.searchProducts('台積電', 8)).map(row => row.key ?? row.code);
+        expect(keys).toContain('US:TSM');
+        expect(keys.indexOf('2330')).toBeGreaterThanOrEqual(0);
+        expect(keys.indexOf('2330')).toBeLessThan(keys.indexOf('US:TSM'));
+    });
+
+    it('keeps Taiwan futures for a generic two-character word that is also a US name prefix', async () => {
+        const { us, search } = await load();
+        // 美國電力（AEP）、美國銀行（BAC）、美國運通（AXP）的名稱開頭都是「美國」
+        us.setUsContractsForTest(['AEP', 'BAC', 'AXP', 'AIG'].map(code => ({ code, exchange: 'NYSE', region: 'US', security_type: 'STK' }) as UsContractRecord));
+        const roots = [['UNF', '美國那斯達克100期貨'], ['SPF', '美國標普500期貨'], ['UDF', '美國道瓊期貨'], ['SXF', '美國費城半導體期貨']];
+        mocks.futureRoots.mockResolvedValue(roots.map(([root, name]) => ({ root, name: `${name} 202612` })));
+        mocks.futures.mockImplementation(async ({ root }: { root: string }) => [{
+            code: `${root}L6`, name: `${roots.find(([r]) => r === root)![1]} 202612`, security_type: 'FUT', exchange: 'TAIFEX',
+            root, delivery_month: '202612', region: 'TW',
+        }]);
+        const rows = await search.searchProducts('美國', 8);
+        expect(rows.map(row => row.code)).toEqual(expect.arrayContaining(['UNFL6', 'SPFL6', 'UDFL6', 'SXFL6']));
+        expect(rows.some(row => row.region === 'US')).toBe(false);
+        expect(mocks.usInfo).not.toHaveBeenCalled();
+    });
+
+    it('does not look up US codes for Chinese names or numeric TW codes', async () => {
         const { us, search } = await load();
         us.setUsContractsForTest(usRows);
         mocks.catalog.mockResolvedValue([{ code: '2330', name: '台積電', exchange: 'TSE', category: '' }]);
